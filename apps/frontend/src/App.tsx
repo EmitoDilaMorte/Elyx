@@ -173,6 +173,7 @@ function App() {
           <div className="login-brand">
             <p className="brand-kicker">Plataforma condominal</p>
             <h1>Elyx</h1>
+            <p><strong>Finanzas condominales claras y sin papeles</strong></p>
             <p>Accede para consultar pagos, reportes y comunicacion interna.</p>
           </div>
 
@@ -248,6 +249,7 @@ function App() {
           <div className="brand-block">
             <p className="brand-kicker">Plataforma condominal</p>
             <h2>Elyx</h2>
+            <p><strong>Finanzas condominales claras y sin papeles</strong></p>
             <p>Consulta, pago y comunicacion interna en pocos pasos.</p>
           </div>
 
