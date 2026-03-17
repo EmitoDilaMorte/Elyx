@@ -47,6 +47,9 @@ services:
       - backend
     environment:
       VITE_API_URL: http://localhost:${BACKEND_PORT:-3000}
+      CHOKIDAR_USEPOLLING: "true"
+      CHOKIDAR_INTERVAL: "120"
+      WATCHPACK_POLLING: "true"
     ports:
       - "${FRONTEND_PORT:-5173}:5173"
     volumes:
