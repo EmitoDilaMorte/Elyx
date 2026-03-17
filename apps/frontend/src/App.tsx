@@ -270,6 +270,13 @@ function App() {
           </nav>
         </aside>
 
+        <button
+          className={`menu-backdrop ${menuOpen ? 'open' : ''}`}
+          aria-label="Cerrar menu"
+          onClick={closeMobileMenu}
+          type="button"
+        />
+
         <main className="content">
           <section className="welcome-card animate-in">
             <h3>{role === 'condomino' ? 'Panel de Condominio' : 'Panel de Administrador'}</h3>
