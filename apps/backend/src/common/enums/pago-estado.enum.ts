@@ -1,0 +1,5 @@
+export enum PagoEstado {
+  CAPTURADO = 'CAPTURADO',
+  VALIDADO = 'VALIDADO',
+  RECHAZADO = 'RECHAZADO',
+}

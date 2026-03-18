@@ -2,9 +2,18 @@ import { useEffect, useMemo, useState } from 'react';
 import { navAdministrador, navCondomino } from './constants/navigation';
 import { statusLabel } from './constants/status';
 import { ActiveCondominioProvider, useActiveCondominio } from './contexts/ActiveCondominioContext';
-import { formatShortDate, loadAppData, persistAppData, todayIso } from './lib/appData';
+import { formatShortDate, seedData } from './lib/appData';
 import { DashboardPage } from './pages/DashboardPage';
 import { LoginPage } from './pages/LoginPage';
+import { backendApi } from './services/backendApi.service';
+import {
+  closeVotacionInCondominio,
+  getCobranzaProgreso,
+  getCondominioScope,
+  getVotacionesPendientes,
+  voteInCondominio,
+  type CondominioScope,
+} from './services/multiCondominio.service';
 import type {
   AppData,
   Aviso,
@@ -16,7 +25,6 @@ import type {
   MantenimientoReporte,
   MantenimientoStatus,
   Pago,
-  PagoStatus,
   ReporteFinanciero,
   RoleKey,
   UserMembership,
@@ -52,10 +60,20 @@ function persistActiveCondominio(correo: string, condominioId: number) {
   window.localStorage.setItem(getActiveCondominioStorageKey(correo), String(condominioId));
 }
 
+const EMPTY_SCOPE: CondominioScope = {
+  cuotas: [],
+  pagos: [],
+  avisos: [],
+  votacionesActivas: [],
+  mantenimientos: [],
+  gastos: [],
+  reportes: [],
+};
+
 function AppContent() {
   const { activeCondominioId, setActiveCondominioId } = useActiveCondominio();
 
-  const [appData, setAppData] = useState<AppData>(() => loadAppData());
+  const [appData, setAppData] = useState<AppData>(() => seedData());
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [role, setRole] = useState<RoleKey>('condomino');
   const [sessionUser, setSessionUser] = useState<DemoUser | null>(null);
@@ -121,67 +139,23 @@ function AppContent() {
     return memberships.find((item: UserMembership) => item.idCondominio === effectiveActiveCondominioId);
   }, [effectiveActiveCondominioId, memberships]);
 
-  const cuotasScoped = useMemo(() => {
+  const condominioScope = useMemo(() => {
     if (!effectiveActiveCondominioId) {
-      return [] as Cuota[];
+      return EMPTY_SCOPE;
     }
 
-    return appData.cuotas.filter((item: Cuota) => item.idCondominio === effectiveActiveCondominioId);
-  }, [appData.cuotas, effectiveActiveCondominioId]);
+    return getCondominioScope(appData, effectiveActiveCondominioId);
+  }, [appData, effectiveActiveCondominioId]);
 
-  const pagosScoped = useMemo(() => {
-    if (!effectiveActiveCondominioId) {
-      return [] as Pago[];
-    }
-
-    return appData.pagos.filter((item: Pago) => item.idCondominio === effectiveActiveCondominioId);
-  }, [appData.pagos, effectiveActiveCondominioId]);
-
-  const avisosScoped = useMemo(() => {
-    if (!effectiveActiveCondominioId) {
-      return [] as Aviso[];
-    }
-
-    return appData.avisos
-      .filter((item: Aviso) => item.idCondominio === effectiveActiveCondominioId)
-      .slice()
-      .reverse();
-  }, [appData.avisos, effectiveActiveCondominioId]);
-
-  const votacionesScoped = useMemo(() => {
-    if (!effectiveActiveCondominioId) {
-      return [] as VotacionActiva[];
-    }
-
-    return appData.votacionesActivas.filter((item: VotacionActiva) => item.idCondominio === effectiveActiveCondominioId);
-  }, [appData.votacionesActivas, effectiveActiveCondominioId]);
-
-  const mantenimientosScoped = useMemo(() => {
-    if (!effectiveActiveCondominioId) {
-      return [] as MantenimientoReporte[];
-    }
-
-    return appData.mantenimientos.filter((item: MantenimientoReporte) => item.idCondominio === effectiveActiveCondominioId);
-  }, [appData.mantenimientos, effectiveActiveCondominioId]);
-
-  const gastosScoped = useMemo(() => {
-    if (!effectiveActiveCondominioId) {
-      return [] as Gasto[];
-    }
-
-    return appData.gastos
-      .filter((item: Gasto) => item.idCondominio === effectiveActiveCondominioId)
-      .slice()
-      .reverse();
-  }, [appData.gastos, effectiveActiveCondominioId]);
-
-  const reportesScoped = useMemo(() => {
-    if (!effectiveActiveCondominioId) {
-      return [] as ReporteFinanciero[];
-    }
-
-    return appData.reportes.filter((item: ReporteFinanciero) => item.idCondominio === effectiveActiveCondominioId);
-  }, [appData.reportes, effectiveActiveCondominioId]);
+  const {
+    cuotas: cuotasScoped,
+    pagos: pagosScoped,
+    avisos: avisosScoped,
+    votacionesActivas: votacionesScoped,
+    mantenimientos: mantenimientosScoped,
+    gastos: gastosScoped,
+    reportes: reportesScoped,
+  } = condominioScope;
 
   const cuotasPendientes = useMemo(
     () => cuotasScoped.filter((cuota: Cuota) => cuota.status !== 'PAGADA'),
@@ -193,24 +167,16 @@ function AppContent() {
     [pagosScoped],
   );
 
-  const cuotasPagadas = useMemo(
-    () => cuotasScoped.filter((cuota: Cuota) => cuota.status === 'PAGADA').length,
-    [cuotasScoped],
-  );
-
-  const cobranzaProgreso = useMemo(() => {
-    if (cuotasScoped.length === 0) {
-      return 0;
-    }
-    return Math.round((cuotasPagadas / cuotasScoped.length) * 100);
-  }, [cuotasPagadas, cuotasScoped.length]);
+  const cobranzaResumen = useMemo(() => getCobranzaProgreso(cuotasScoped), [cuotasScoped]);
+  const cuotasPagadas = cobranzaResumen.pagadas;
+  const cobranzaProgreso = cobranzaResumen.porcentaje;
 
   const votacionesPendientesUsuario = useMemo(() => {
     if (!sessionUser) {
       return 0;
     }
 
-    return votacionesScoped.filter((item: VotacionActiva) => !item.votosPorUsuario[sessionUser.correo]).length;
+    return getVotacionesPendientes(votacionesScoped, sessionUser.correo);
   }, [sessionUser, votacionesScoped]);
 
   const gastosRecientes = useMemo(() => gastosScoped.slice(0, 6), [gastosScoped]);
@@ -302,12 +268,78 @@ function AppContent() {
   };
 
   const patchAppData = (updater: (prev: AppData) => AppData) => {
-    setAppData((prev: AppData) => {
-      const next = updater(prev);
-      persistAppData(next);
-      return next;
-    });
+    setAppData((prev: AppData) => updater(prev));
   };
+
+  useEffect(() => {
+    if (!isAuthenticated || !effectiveActiveCondominioId) {
+      return;
+    }
+
+    let isCancelled = false;
+
+    const syncScopeFromBackend = async () => {
+      try {
+        const [cuotasApi, avisosApi, votacionesApi, pagosApi, mantenimientosApi, gastosApi, reportesApi] = await Promise.all([
+          backendApi.listCuotas(effectiveActiveCondominioId),
+          backendApi.listAvisos(effectiveActiveCondominioId),
+          backendApi.listVotaciones(effectiveActiveCondominioId),
+          backendApi.listPagos(effectiveActiveCondominioId),
+          backendApi.listReportesMantenimiento(effectiveActiveCondominioId),
+          backendApi.listGastos(effectiveActiveCondominioId),
+          backendApi.listReportesFinancieros(effectiveActiveCondominioId),
+        ]);
+
+        if (isCancelled) {
+          return;
+        }
+
+        setAppData((prev: AppData) => {
+          const votosPrevios = new Map(
+            prev.votacionesActivas
+              .filter((item: VotacionActiva) => item.idCondominio === effectiveActiveCondominioId)
+              .map((item: VotacionActiva) => [item.id, item.votosPorUsuario]),
+          );
+
+          const votacionesMerge = votacionesApi.map((item) => ({
+            ...item,
+            votosPorUsuario: votosPrevios.get(item.id) ?? {},
+          }));
+
+          const next: AppData = {
+            ...prev,
+            cuotas: [...prev.cuotas.filter((item: Cuota) => item.idCondominio !== effectiveActiveCondominioId), ...cuotasApi],
+            avisos: [...prev.avisos.filter((item: Aviso) => item.idCondominio !== effectiveActiveCondominioId), ...avisosApi],
+            pagos: [...prev.pagos.filter((item: Pago) => item.idCondominio !== effectiveActiveCondominioId), ...pagosApi],
+            votacionesActivas: [
+              ...prev.votacionesActivas.filter(
+                (item: VotacionActiva) => item.idCondominio !== effectiveActiveCondominioId,
+              ),
+              ...votacionesMerge,
+            ],
+            mantenimientos: [
+              ...prev.mantenimientos.filter((item: MantenimientoReporte) => item.idCondominio !== effectiveActiveCondominioId),
+              ...mantenimientosApi,
+            ],
+            gastos: [...prev.gastos.filter((item: Gasto) => item.idCondominio !== effectiveActiveCondominioId), ...gastosApi],
+            reportes: [
+              ...prev.reportes.filter((item: ReporteFinanciero) => item.idCondominio !== effectiveActiveCondominioId),
+              ...reportesApi,
+            ],
+          };
+          return next;
+        });
+      } catch (error) {
+        console.error('No se pudo sincronizar con backend para el condominio activo:', error);
+      }
+    };
+
+    void syncScopeFromBackend();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [effectiveActiveCondominioId, isAuthenticated]);
 
   const closeMobileMenu = () => setMenuOpen(false);
 
@@ -369,119 +401,94 @@ function AppContent() {
     setLoginError(null);
   };
 
-  const registrarPagoCondomino = (cuotaId: number) => {
-    if (!sessionUser || !effectiveActiveCondominioId) {
+  const registrarPagoCondomino = async (cuotaId: number) => {
+    if (!sessionUser || !effectiveActiveCondominioId || !activeMembership) {
       return;
     }
 
-    patchAppData((prev) => {
-      const cuota = prev.cuotas.find(
-        (item: Cuota) => item.id === cuotaId && item.idCondominio === effectiveActiveCondominioId,
-      );
-      if (!cuota || cuota.status !== 'PENDIENTE') {
-        return prev;
-      }
-
-      const updatedCuotas = prev.cuotas.map((item: Cuota) =>
-        item.id === cuotaId ? { ...item, status: 'EN_VALIDACION' as CuotaStatus } : item,
-      );
-
-      const membershipPaga = sessionUser.membresias.find(
-        (item: UserMembership) => item.idCondominio === effectiveActiveCondominioId,
-      );
-
-      const nuevoPago: Pago = {
-        id: prev.nextIds.pago,
+    try {
+      const pago = await backendApi.capturarPago({
         idCondominio: effectiveActiveCondominioId,
-        cuotaId,
-        condominio: sessionUser.nombre,
-        monto: cuota.monto,
-        fecha: todayIso(),
-        status: 'PENDIENTE',
-        idUsuarioCondominioPaga: membershipPaga?.idUsuarioCondominio,
-      };
+        idCuota: cuotaId,
+        idUsuarioCondominioPaga: activeMembership.idUsuarioCondominio,
+      });
 
-      return {
+      patchAppData((prev) => ({
         ...prev,
-        cuotas: updatedCuotas,
-        pagos: [...prev.pagos, nuevoPago],
-        nextIds: {
-          ...prev.nextIds,
-          pago: prev.nextIds.pago + 1,
-        },
-      };
-    });
+        pagos: [pago, ...prev.pagos],
+        cuotas: prev.cuotas.map((item: Cuota) =>
+          item.id === cuotaId && item.idCondominio === effectiveActiveCondominioId
+            ? { ...item, status: 'EN_VALIDACION' as CuotaStatus }
+            : item,
+        ),
+      }));
 
-    runAction('Registrando pago...', 'Pago enviado para validacion');
+      runAction('Registrando pago...', 'Pago enviado para validacion');
+    } catch (error) {
+      console.error(error);
+      setFeedback('No se pudo registrar el pago en backend');
+      window.setTimeout(() => setFeedback(null), 2200);
+    }
   };
 
-  const aprobarPago = (idPago: number) => {
-    if (!effectiveActiveCondominioId) {
+  const aprobarPago = async (idPago: number) => {
+    if (!effectiveActiveCondominioId || !activeMembership) {
       return;
     }
 
-    patchAppData((prev) => {
-      const pago = prev.pagos.find(
-        (item: Pago) => item.id === idPago && item.idCondominio === effectiveActiveCondominioId,
-      );
-      if (!pago || pago.status !== 'PENDIENTE') {
-        return prev;
-      }
+    try {
+      const pagoActualizado = await backendApi.aprobarPago({
+        idCondominio: effectiveActiveCondominioId,
+        idPago,
+        idUsuarioCondominioAdmin: activeMembership.idUsuarioCondominio,
+      });
 
-      return {
+      patchAppData((prev) => ({
         ...prev,
-        pagos: prev.pagos.map((item: Pago) =>
-          item.id === idPago
-            ? {
-                ...item,
-                status: 'APROBADO' as PagoStatus,
-                idUsuarioCondominioAdmin: activeMembership?.idUsuarioCondominio,
-              }
-            : item,
-        ),
+        pagos: prev.pagos.map((item: Pago) => (item.id === idPago ? pagoActualizado : item)),
         cuotas: prev.cuotas.map((item: Cuota) =>
-          item.id === pago.cuotaId ? { ...item, status: 'PAGADA' as CuotaStatus, recargo: 0 } : item,
+          item.id === pagoActualizado.cuotaId ? { ...item, status: 'PAGADA' as CuotaStatus, recargo: 0 } : item,
         ),
-      };
-    });
+      }));
 
-    runAction('Validando pago...', 'Pago validado con exito');
+      runAction('Validando pago...', 'Pago validado con exito');
+    } catch (error) {
+      console.error(error);
+      setFeedback('No se pudo validar el pago en backend');
+      window.setTimeout(() => setFeedback(null), 2200);
+    }
   };
 
-  const rechazarPago = (idPago: number) => {
-    if (!effectiveActiveCondominioId) {
+  const rechazarPago = async (idPago: number) => {
+    if (!effectiveActiveCondominioId || !activeMembership) {
       return;
     }
 
-    patchAppData((prev) => {
-      const pago = prev.pagos.find(
-        (item: Pago) => item.id === idPago && item.idCondominio === effectiveActiveCondominioId,
-      );
-      if (!pago || pago.status !== 'PENDIENTE') {
-        return prev;
-      }
+    try {
+      const pagoActualizado = await backendApi.rechazarPago({
+        idCondominio: effectiveActiveCondominioId,
+        idPago,
+        idUsuarioCondominioAdmin: activeMembership.idUsuarioCondominio,
+        motivoRechazo: 'No cumple validacion documental',
+      });
 
-      return {
+      patchAppData((prev) => ({
         ...prev,
-        pagos: prev.pagos.map((item: Pago) =>
-          item.id === idPago
-            ? {
-                ...item,
-                status: 'RECHAZADO' as PagoStatus,
-                idUsuarioCondominioAdmin: activeMembership?.idUsuarioCondominio,
-              }
-            : item,
-        ),
+        pagos: prev.pagos.map((item: Pago) => (item.id === idPago ? pagoActualizado : item)),
         cuotas: prev.cuotas.map((item: Cuota) =>
-          item.id === pago.cuotaId ? { ...item, status: 'PENDIENTE' as CuotaStatus } : item,
+          item.id === pagoActualizado.cuotaId ? { ...item, status: 'PENDIENTE' as CuotaStatus } : item,
         ),
-      };
-    });
+      }));
 
-    runAction('Actualizando estado...', 'Pago rechazado y notificado');
+      runAction('Actualizando estado...', 'Pago rechazado y notificado');
+    } catch (error) {
+      console.error(error);
+      setFeedback('No se pudo rechazar el pago en backend');
+      window.setTimeout(() => setFeedback(null), 2200);
+    }
   };
 
-  const publicarAviso = () => {
+  const publicarAviso = async () => {
     if (!effectiveActiveCondominioId || !activeMembership) {
       return;
     }
@@ -495,68 +502,75 @@ function AppContent() {
       return;
     }
 
-    patchAppData((prev) => {
-      const nuevoAviso: Aviso = {
-        id: prev.nextIds.aviso,
+    try {
+      const nuevoAviso = await backendApi.createAviso({
         idCondominio: effectiveActiveCondominioId,
-        titulo,
-        mensaje,
-        fecha: formatShortDate(todayIso()),
         idUsuarioCondominioAdmin: activeMembership.idUsuarioCondominio,
-      };
+        titulo,
+        contenido: mensaje,
+      });
 
-      return {
+      patchAppData((prev) => ({
         ...prev,
         avisos: [...prev.avisos, nuevoAviso],
-        nextIds: {
-          ...prev.nextIds,
-          aviso: prev.nextIds.aviso + 1,
-        },
-      };
-    });
+      }));
 
-    setAvisoTitulo('');
-    setAvisoMensaje('');
-    runAction('Publicando aviso...', 'Aviso publicado con exito');
+      setAvisoTitulo('');
+      setAvisoMensaje('');
+      runAction('Publicando aviso...', 'Aviso publicado con exito');
+    } catch (error) {
+      console.error(error);
+      setFeedback('No se pudo publicar el aviso en backend');
+      window.setTimeout(() => setFeedback(null), 2200);
+    }
   };
 
-  const votar = (votacionId: number, choice: VoteChoice) => {
-    if (!sessionUser || !effectiveActiveCondominioId) {
+  const votar = async (votacionId: number, choice: VoteChoice) => {
+    if (!sessionUser || !effectiveActiveCondominioId || !activeMembership) {
       return;
     }
 
-    patchAppData((prev) => {
-      const votacion = prev.votacionesActivas.find(
-        (item: VotacionActiva) => item.idCondominio === effectiveActiveCondominioId && item.id === votacionId,
+    try {
+      const resumen = await backendApi.votar({
+        idCondominio: effectiveActiveCondominioId,
+        idVotacion: votacionId,
+        idUsuarioCondominio: activeMembership.idUsuarioCondominio,
+        choice,
+      });
+
+      patchAppData((prev) =>
+        voteInCondominio(
+          {
+            ...prev,
+            votacionesActivas: prev.votacionesActivas.map((item) =>
+              item.id === votacionId
+                ? {
+                    ...item,
+                    aFavor: resumen.aFavor,
+                    enContra: resumen.enContra,
+                  }
+                : item,
+            ),
+          },
+          {
+            idCondominio: effectiveActiveCondominioId,
+            idVotacion: votacionId,
+            correoUsuario: sessionUser.correo,
+            choice,
+          },
+        ),
       );
 
-      if (!votacion || votacion.votosPorUsuario[sessionUser.correo]) {
-        return prev;
-      }
-
-      return {
-        ...prev,
-        votacionesActivas: prev.votacionesActivas.map((item: VotacionActiva) =>
-          item.id === votacion.id
-            ? {
-                ...item,
-                aFavor: item.aFavor + (choice === 'favor' ? 1 : 0),
-                enContra: item.enContra + (choice === 'contra' ? 1 : 0),
-                votosPorUsuario: {
-                  ...item.votosPorUsuario,
-                  [sessionUser.correo]: choice,
-                },
-              }
-            : item,
-        ),
-      };
-    });
-
-    runAction('Registrando voto...', 'Voto registrado con exito');
+      runAction('Registrando voto...', 'Voto registrado con exito');
+    } catch (error) {
+      console.error(error);
+      setFeedback('No se pudo registrar el voto en backend');
+      window.setTimeout(() => setFeedback(null), 2200);
+    }
   };
 
-  const crearVotacion = () => {
-    if (!effectiveActiveCondominioId) {
+  const crearVotacion = async () => {
+    if (!effectiveActiveCondominioId || !activeMembership) {
       return;
     }
 
@@ -567,46 +581,54 @@ function AppContent() {
       return;
     }
 
-    patchAppData((prev) => {
-      const nuevaVotacion: VotacionActiva = {
-        id: prev.nextIds.votacion,
+    try {
+      const votacion = await backendApi.createVotacion({
         idCondominio: effectiveActiveCondominioId,
+        idUsuarioCondominioAdmin: activeMembership.idUsuarioCondominio,
         pregunta,
-        aFavor: 0,
-        enContra: 0,
-        votosPorUsuario: {},
-      };
+      });
 
-      return {
+      patchAppData((prev) => ({
         ...prev,
-        votacionesActivas: [nuevaVotacion, ...prev.votacionesActivas],
-        nextIds: {
-          ...prev.nextIds,
-          votacion: prev.nextIds.votacion + 1,
-        },
-      };
-    });
+        votacionesActivas: [votacion, ...prev.votacionesActivas],
+      }));
 
-    setVotacionPregunta('');
-    runAction('Publicando votacion...', 'Votacion creada con exito');
+      setVotacionPregunta('');
+      runAction('Publicando votacion...', 'Votacion creada con exito');
+    } catch (error) {
+      console.error(error);
+      setFeedback('No se pudo crear la votacion en backend');
+      window.setTimeout(() => setFeedback(null), 2200);
+    }
   };
 
-  const cerrarVotacion = (votacionId: number) => {
+  const cerrarVotacion = async (votacionId: number) => {
     if (!effectiveActiveCondominioId) {
       return;
     }
 
-    patchAppData((prev) => ({
-      ...prev,
-      votacionesActivas: prev.votacionesActivas.filter(
-        (item: VotacionActiva) => !(item.idCondominio === effectiveActiveCondominioId && item.id === votacionId),
-      ),
-    }));
+    try {
+      await backendApi.cerrarVotacion({
+        idCondominio: effectiveActiveCondominioId,
+        idVotacion: votacionId,
+      });
 
-    runAction('Cerrando votacion...', 'Votacion cerrada y archivada');
+      patchAppData((prev) =>
+        closeVotacionInCondominio(prev, {
+          idCondominio: effectiveActiveCondominioId,
+          idVotacion: votacionId,
+        }),
+      );
+
+      runAction('Cerrando votacion...', 'Votacion cerrada y archivada');
+    } catch (error) {
+      console.error(error);
+      setFeedback('No se pudo cerrar la votacion en backend');
+      window.setTimeout(() => setFeedback(null), 2200);
+    }
   };
 
-  const enviarReporteMantenimiento = () => {
+  const enviarReporteMantenimiento = async () => {
     if (!sessionUser || !effectiveActiveCondominioId || !activeMembership) {
       return;
     }
@@ -616,48 +638,57 @@ function AppContent() {
       return;
     }
 
-    patchAppData((prev) => {
-      const nuevoReporte: MantenimientoReporte = {
-        id: prev.nextIds.mantenimiento,
+    try {
+      const reporte = await backendApi.createReporteMantenimiento({
         idCondominio: effectiveActiveCondominioId,
+        idUsuarioCondominioReporta: activeMembership.idUsuarioCondominio,
         unidad: sessionUser.nombre,
         descripcion,
-        fecha: formatShortDate(todayIso()),
-        estado: 'NUEVO',
-        idUsuarioCondominioReporta: activeMembership.idUsuarioCondominio,
-      };
+      });
 
-      return {
+      patchAppData((prev) => ({
         ...prev,
-        mantenimientos: [nuevoReporte, ...prev.mantenimientos],
-        nextIds: {
-          ...prev.nextIds,
-          mantenimiento: prev.nextIds.mantenimiento + 1,
-        },
-      };
-    });
+        mantenimientos: [reporte, ...prev.mantenimientos],
+      }));
 
-    setFalla('');
-    runAction('Enviando reporte...', 'Reporte de mantenimiento enviado');
+      setFalla('');
+      runAction('Enviando reporte...', 'Reporte de mantenimiento enviado');
+    } catch (error) {
+      console.error(error);
+      setFeedback('No se pudo enviar el reporte en backend');
+      window.setTimeout(() => setFeedback(null), 2200);
+    }
   };
 
-  const actualizarEstadoMantenimiento = (id: number, estado: MantenimientoStatus) => {
-    if (!effectiveActiveCondominioId) {
+  const actualizarEstadoMantenimiento = async (id: number, estado: MantenimientoStatus) => {
+    if (!effectiveActiveCondominioId || !activeMembership) {
       return;
     }
 
-    patchAppData((prev) => ({
-      ...prev,
-      mantenimientos: prev.mantenimientos.map((item: MantenimientoReporte) =>
-        item.id === id && item.idCondominio === effectiveActiveCondominioId
-          ? { ...item, estado, idUsuarioCondominioAdmin: activeMembership?.idUsuarioCondominio }
-          : item,
-      ),
-    }));
-    runAction('Actualizando estado...', `Estado actualizado a ${statusLabel[estado]}`);
+    try {
+      const actualizado = await backendApi.updateReporteMantenimientoEstado({
+        idCondominio: effectiveActiveCondominioId,
+        idReporte: id,
+        idUsuarioCondominioAdmin: activeMembership.idUsuarioCondominio,
+        estado,
+      });
+
+      patchAppData((prev) => ({
+        ...prev,
+        mantenimientos: prev.mantenimientos.map((item: MantenimientoReporte) =>
+          item.id === id && item.idCondominio === effectiveActiveCondominioId ? actualizado : item,
+        ),
+      }));
+
+      runAction('Actualizando estado...', `Estado actualizado a ${statusLabel[estado]}`);
+    } catch (error) {
+      console.error(error);
+      setFeedback('No se pudo actualizar el estado en backend');
+      window.setTimeout(() => setFeedback(null), 2200);
+    }
   };
 
-  const registrarGasto = () => {
+  const registrarGasto = async () => {
     if (!effectiveActiveCondominioId) {
       return;
     }
@@ -672,30 +703,28 @@ function AppContent() {
       return;
     }
 
-    patchAppData((prev) => {
-      const gasto: Gasto = {
-        id: prev.nextIds.gasto,
+    try {
+      const gasto = await backendApi.createGasto({
         idCondominio: effectiveActiveCondominioId,
         concepto,
         categoria,
         monto,
-        fecha: todayIso(),
-      };
+      });
 
-      return {
+      patchAppData((prev) => ({
         ...prev,
         gastos: [gasto, ...prev.gastos],
-        nextIds: {
-          ...prev.nextIds,
-          gasto: prev.nextIds.gasto + 1,
-        },
-      };
-    });
+      }));
 
-    setGastoConcepto('');
-    setGastoCategoria('');
-    setGastoMonto('');
-    runAction('Guardando gasto...', 'Gasto registrado con exito');
+      setGastoConcepto('');
+      setGastoCategoria('');
+      setGastoMonto('');
+      runAction('Guardando gasto...', 'Gasto registrado con exito');
+    } catch (error) {
+      console.error(error);
+      setFeedback('No se pudo registrar el gasto en backend');
+      window.setTimeout(() => setFeedback(null), 2200);
+    }
   };
 
   if (!isAuthenticated) {
@@ -731,7 +760,7 @@ function AppContent() {
       }}
       cobranzaProgreso={cobranzaProgreso}
       cobranzaPagadas={cuotasPagadas}
-      cobranzaTotal={cuotasScoped.length}
+      cobranzaTotal={cobranzaResumen.total}
       panelReminders={panelReminders}
       saldoActual={saldoActual}
       balanceMensual={balanceMensual}
