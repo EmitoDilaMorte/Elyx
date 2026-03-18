@@ -1,9 +1,11 @@
 export type RoleKey = 'condomino' | 'administrador';
+export type MembershipState = 'ACTIVO' | 'INACTIVO';
 
 export type ViewKey =
   | 'inicio'
   | 'pagos'
   | 'avisos'
+  | 'votaciones'
   | 'mantenimiento'
   | 'reportes'
   | 'validaciones'
@@ -18,6 +20,7 @@ export type IconName =
   | 'home'
   | 'payments'
   | 'megaphone'
+  | 'vote'
   | 'tools'
   | 'report'
   | 'approve'
@@ -34,15 +37,31 @@ export type NavItem = {
   icon: IconName;
 };
 
+export type Condominio = {
+  idCondominio: number;
+  nombre: string;
+  direccion: string;
+};
+
+export type UserMembership = {
+  idUsuarioCondominio: number;
+  idCondominio: number;
+  rol: RoleKey;
+  estado: MembershipState;
+};
+
 export type DemoUser = {
+  idUsuario: number;
   correo: string;
   password: string;
   role: RoleKey;
   nombre: string;
+  membresias: UserMembership[];
 };
 
 export type Cuota = {
   id: number;
+  idCondominio: number;
   periodo: string;
   monto: number;
   fechaLimite: string;
@@ -52,22 +71,28 @@ export type Cuota = {
 
 export type Pago = {
   id: number;
+  idCondominio: number;
   cuotaId: number;
   condominio: string;
   monto: number;
   fecha: string;
   status: PagoStatus;
+  idUsuarioCondominioPaga?: number;
+  idUsuarioCondominioAdmin?: number;
 };
 
 export type Aviso = {
   id: number;
+  idCondominio: number;
   titulo: string;
   mensaje: string;
   fecha: string;
+  idUsuarioCondominioAdmin: number;
 };
 
 export type VotacionActiva = {
   id: number;
+  idCondominio: number;
   pregunta: string;
   aFavor: number;
   enContra: number;
@@ -76,14 +101,18 @@ export type VotacionActiva = {
 
 export type MantenimientoReporte = {
   id: number;
+  idCondominio: number;
   unidad: string;
   descripcion: string;
   fecha: string;
   estado: MantenimientoStatus;
+  idUsuarioCondominioReporta?: number;
+  idUsuarioCondominioAdmin?: number;
 };
 
 export type Gasto = {
   id: number;
+  idCondominio: number;
   concepto: string;
   categoria: string;
   monto: number;
@@ -91,6 +120,7 @@ export type Gasto = {
 };
 
 export type ReporteFinanciero = {
+  idCondominio: number;
   periodo: string;
   ingresos: number;
   gastos: number;
@@ -98,17 +128,19 @@ export type ReporteFinanciero = {
 };
 
 export type AppData = {
+  condominios: Condominio[];
   users: DemoUser[];
   cuotas: Cuota[];
   pagos: Pago[];
   avisos: Aviso[];
-  votacionActiva: VotacionActiva;
+  votacionesActivas: VotacionActiva[];
   mantenimientos: MantenimientoReporte[];
   gastos: Gasto[];
   reportes: ReporteFinanciero[];
   nextIds: {
     pago: number;
     aviso: number;
+    votacion: number;
     mantenimiento: number;
     gasto: number;
   };

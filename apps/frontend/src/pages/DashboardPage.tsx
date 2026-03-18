@@ -1,5 +1,6 @@
 import type {
   AppData,
+  Condominio,
   DemoUser,
   MantenimientoStatus,
   RoleKey,
@@ -8,6 +9,7 @@ import type {
 } from '../types/app';
 import type { NavItem } from '../types/app';
 import { statusLabel } from '../constants/status';
+import { CondominioSwitcher } from '../components/CondominioSwitcher';
 import { Icon } from '../components/Icon';
 
 type DashboardPageProps = {
@@ -17,32 +19,49 @@ type DashboardPageProps = {
   activeView: ViewKey;
   menuOpen: boolean;
   appData: AppData;
+  condominiosDisponibles: Condominio[];
+  activeCondominioId: number;
+  panelStats: {
+    avisos: number;
+    votaciones: number;
+    cuotasPendientes: number;
+    mantenimientosAbiertos: number;
+  };
+  cobranzaProgreso: number;
+  cobranzaPagadas: number;
+  cobranzaTotal: number;
+  panelReminders: string[];
   saldoActual: number;
   balanceMensual: number;
   pagosPendientesAdminCount: number;
   avisosRecientes: AppData['avisos'];
+  votacionesActivas: AppData['votacionesActivas'];
   gastosRecientes: AppData['gastos'];
-  votoUsuario?: VoteChoice;
   falla: string;
   avisoTitulo: string;
   avisoMensaje: string;
+  votacionPregunta: string;
   gastoConcepto: string;
   gastoCategoria: string;
   gastoMonto: string;
   loadingLabel: string | null;
   feedback: string | null;
   onToggleMenu: () => void;
+  onChangeCondominio: (condominioId: number) => void;
   onCloseMenu: () => void;
   onSetView: (view: ViewKey) => void;
   onLogout: () => void;
   onRegistrarPago: (cuotaId: number) => void;
   onAprobarPago: (idPago: number) => void;
   onRechazarPago: (idPago: number) => void;
-  onVotar: (choice: VoteChoice) => void;
+  onVotar: (votacionId: number, choice: VoteChoice) => void;
+  onCrearVotacion: () => void;
+  onCerrarVotacion: (votacionId: number) => void;
   onPublicarAviso: () => void;
   onFallaChange: (value: string) => void;
   onAvisoTituloChange: (value: string) => void;
   onAvisoMensajeChange: (value: string) => void;
+  onVotacionPreguntaChange: (value: string) => void;
   onEnviarReporteMantenimiento: () => void;
   onActualizarEstadoMantenimiento: (id: number, estado: MantenimientoStatus) => void;
   onGastoConceptoChange: (value: string) => void;
@@ -60,21 +79,30 @@ export function DashboardPage({
   activeView,
   menuOpen,
   appData,
+  condominiosDisponibles,
+  activeCondominioId,
+  panelStats,
+  cobranzaProgreso,
+  cobranzaPagadas,
+  cobranzaTotal,
+  panelReminders,
   saldoActual,
   balanceMensual,
   pagosPendientesAdminCount,
   avisosRecientes,
+  votacionesActivas,
   gastosRecientes,
-  votoUsuario,
   falla,
   avisoTitulo,
   avisoMensaje,
+  votacionPregunta,
   gastoConcepto,
   gastoCategoria,
   gastoMonto,
   loadingLabel,
   feedback,
   onToggleMenu,
+  onChangeCondominio,
   onCloseMenu,
   onSetView,
   onLogout,
@@ -82,10 +110,13 @@ export function DashboardPage({
   onAprobarPago,
   onRechazarPago,
   onVotar,
+  onCrearVotacion,
+  onCerrarVotacion,
   onPublicarAviso,
   onFallaChange,
   onAvisoTituloChange,
   onAvisoMensajeChange,
+  onVotacionPreguntaChange,
   onEnviarReporteMantenimiento,
   onActualizarEstadoMantenimiento,
   onGastoConceptoChange,
@@ -95,6 +126,22 @@ export function DashboardPage({
   onRunAction,
   formatShortDate,
 }: DashboardPageProps) {
+  const quickViewButtons =
+    role === 'condomino'
+      ? ([
+          { key: 'pagos' as ViewKey, label: 'Pagos' },
+          { key: 'avisos' as ViewKey, label: 'Avisos' },
+          { key: 'votaciones' as ViewKey, label: 'Votaciones' },
+          { key: 'mantenimiento' as ViewKey, label: 'Mantenimiento' },
+          { key: 'reportes' as ViewKey, label: 'Reportes' },
+        ] as const)
+      : ([
+          { key: 'validaciones' as ViewKey, label: 'Validaciones' },
+          { key: 'avisos' as ViewKey, label: 'Avisos' },
+          { key: 'votaciones' as ViewKey, label: 'Votaciones' },
+          { key: 'finanzas' as ViewKey, label: 'Reportes' },
+        ] as const);
+
   return (
     <div className="app-bg">
       <div className="app-shell">
@@ -142,11 +189,62 @@ export function DashboardPage({
         <main className="content">
           <section className="welcome-card animate-in">
             <h3>{role === 'condomino' ? 'Panel de Condominio' : 'Panel de Administrador'}</h3>
-            <p>
+            <CondominioSwitcher
+              condominios={condominiosDisponibles}
+              activeCondominioId={activeCondominioId}
+              onChange={onChangeCondominio}
+            />
+            <p className="welcome-intro">
               {role === 'condomino'
                 ? 'Aqui puedes pagar cuotas, votar en asambleas, reportar incidencias y descargar comprobantes.'
                 : 'Aqui puedes validar pagos, publicar avisos y mantener al dia la operacion financiera.'}
             </p>
+            <div className="welcome-meta-grid">
+              <div className="context-pill">
+                <span>Votaciones activas</span>
+                <strong>{panelStats.votaciones}</strong>
+              </div>
+              <div className="context-pill">
+                <span>Avisos activos</span>
+                <strong>{panelStats.avisos}</strong>
+              </div>
+              <div className="context-pill">
+                <span>{role === 'condomino' ? 'Cuotas pendientes' : 'Mantenimientos abiertos'}</span>
+                <strong>{role === 'condomino' ? panelStats.cuotasPendientes : panelStats.mantenimientosAbiertos}</strong>
+              </div>
+            </div>
+            <div className="progress-block" aria-label="Progreso de cobranza del condominio">
+              <div className="progress-header">
+                <strong>Progreso de cobranza</strong>
+                <span>{cobranzaProgreso}%</span>
+              </div>
+              <div className="progress-track" role="progressbar" aria-valuenow={cobranzaProgreso} aria-valuemin={0} aria-valuemax={100}>
+                <div className="progress-fill" style={{ width: `${cobranzaProgreso}%` }} />
+              </div>
+              <small className="helper-text">
+                Cuotas pagadas: {cobranzaPagadas} de {cobranzaTotal}
+              </small>
+            </div>
+            <div className="quick-links" role="tablist" aria-label="Accesos rapidos del panel">
+              {quickViewButtons.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={`quick-link-btn ${activeView === item.key ? 'active' : ''}`}
+                  onClick={() => onSetView(item.key)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+            <div className="reminder-box" aria-live="polite">
+              <p className="reminder-title">Recordatorios de hoy</p>
+              <ul className="reminder-list">
+                {panelReminders.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
             <p className="muted-text" style={{ marginTop: '0.3rem' }}>
               Sesion activa: {sessionUser?.nombre} ({sessionUser?.correo})
             </p>
@@ -188,10 +286,16 @@ export function DashboardPage({
                     Reportar falla
                   </button>
                 ) : (
-                  <button className="soft-btn" onClick={() => onSetView('avisos')}>
-                    Publicar aviso
-                  </button>
+                  <div className="btn-row">
+                    <button className="soft-btn" onClick={() => onSetView('avisos')}>
+                      Publicar aviso
+                    </button>
+                    <button className="soft-btn" onClick={() => onSetView('votaciones')}>
+                      Nueva votacion
+                    </button>
+                  </div>
                 )}
+                <p className="helper-text">Avisos activos: {panelStats.avisos}.</p>
               </article>
             </section>
           )}
@@ -281,52 +385,107 @@ export function DashboardPage({
               </article>
 
               <article className="panel animate-in stagger-1">
-                <h4>{role === 'condomino' ? 'Votacion activa' : 'Publicacion rapida'}</h4>
-                {role === 'condomino' ? (
-                  <>
-                    <p>{appData.votacionActiva.pregunta}</p>
-                    <div className="stats-row">
-                      <span className="status-pill status-aprobado">A favor: {appData.votacionActiva.aFavor}</span>
-                      <span className="status-pill status-rechazado">En contra: {appData.votacionActiva.enContra}</span>
-                    </div>
-                    <div className="btn-row">
-                      <button className="primary-btn" onClick={() => onVotar('favor')} disabled={Boolean(votoUsuario)}>
-                        Votar a favor
-                      </button>
-                      <button className="soft-btn" onClick={() => onVotar('contra')} disabled={Boolean(votoUsuario)}>
-                        Votar en contra
-                      </button>
-                    </div>
-                    {votoUsuario && <p className="helper-text">Tu voto ya fue registrado: {votoUsuario}.</p>}
-                  </>
-                ) : (
-                  <>
-                    <label className="field-label" htmlFor="aviso-titulo">
-                      Titulo del aviso
-                    </label>
-                    <input
-                      id="aviso-titulo"
-                      value={avisoTitulo}
-                      onChange={(event) => onAvisoTituloChange(event.target.value)}
-                      placeholder="Ejemplo: Corte de energia programado"
-                    />
-                    <label className="field-label" htmlFor="aviso-mensaje">
-                      Mensaje
-                    </label>
-                    <textarea
-                      id="aviso-mensaje"
-                      rows={4}
-                      value={avisoMensaje}
-                      onChange={(event) => onAvisoMensajeChange(event.target.value)}
-                      placeholder="Describe fecha, hora y recomendaciones para residentes"
-                    />
-                    <div className="btn-row">
-                      <button className="primary-btn" onClick={onPublicarAviso}>
-                        Publicar aviso
-                      </button>
-                    </div>
-                  </>
+                <h4>Publicacion rapida</h4>
+                <label className="field-label" htmlFor="aviso-titulo">
+                  Titulo del aviso
+                </label>
+                <input
+                  id="aviso-titulo"
+                  value={avisoTitulo}
+                  onChange={(event) => onAvisoTituloChange(event.target.value)}
+                  placeholder="Ejemplo: Corte de energia programado"
+                  disabled={role !== 'administrador'}
+                />
+                <label className="field-label" htmlFor="aviso-mensaje">
+                  Mensaje
+                </label>
+                <textarea
+                  id="aviso-mensaje"
+                  rows={4}
+                  value={avisoMensaje}
+                  onChange={(event) => onAvisoMensajeChange(event.target.value)}
+                  placeholder="Describe fecha, hora y recomendaciones para residentes"
+                  disabled={role !== 'administrador'}
+                />
+                <div className="btn-row">
+                  <button className="primary-btn" onClick={onPublicarAviso} disabled={role !== 'administrador'}>
+                    Publicar aviso
+                  </button>
+                  {role === 'condomino' && (
+                    <button className="soft-btn" onClick={() => onSetView('votaciones')}>
+                      Ir a votaciones
+                    </button>
+                  )}
+                </div>
+                {role === 'condomino' && (
+                  <p className="helper-text">Solo administracion puede crear avisos. Aqui puedes consultar los publicados.</p>
                 )}
+              </article>
+            </section>
+          )}
+
+          {activeView === 'votaciones' && (
+            <section className="grid-cards">
+              {role === 'administrador' && (
+                <article className="panel animate-in">
+                  <h4>Crear votacion</h4>
+                  <label className="field-label" htmlFor="votacion-pregunta">
+                    Pregunta a votar
+                  </label>
+                  <textarea
+                    id="votacion-pregunta"
+                    rows={4}
+                    value={votacionPregunta}
+                    onChange={(event) => onVotacionPreguntaChange(event.target.value)}
+                    placeholder="Ejemplo: Aprobar presupuesto para impermeabilizacion del edificio A"
+                  />
+                  <div className="btn-row">
+                    <button className="primary-btn" onClick={onCrearVotacion}>
+                      Publicar votacion
+                    </button>
+                  </div>
+                </article>
+              )}
+
+              <article className={`panel animate-in ${role === 'administrador' ? 'stagger-1' : ''}`}>
+                <h4>{role === 'condomino' ? 'Votaciones activas' : 'Administrar votaciones activas'}</h4>
+                <div className="payment-list">
+                  {votacionesActivas.length === 0 && <p className="empty-state">No hay votaciones activas para este condominio.</p>}
+                  {votacionesActivas.map((votacion) => {
+                    const votoUsuario = sessionUser ? votacion.votosPorUsuario[sessionUser.correo] : undefined;
+
+                    return (
+                      <article key={votacion.id} className="payment-item">
+                        <p className="item-title">Votacion #{votacion.id}</p>
+                        <p className="helper-text" style={{ marginBottom: '0.55rem' }}>
+                          {votacion.pregunta}
+                        </p>
+                        <div className="stats-row">
+                          <span className="status-pill status-aprobado">A favor: {votacion.aFavor}</span>
+                          <span className="status-pill status-rechazado">En contra: {votacion.enContra}</span>
+                        </div>
+
+                        {role === 'condomino' ? (
+                          <div className="btn-row">
+                            <button className="primary-btn" onClick={() => onVotar(votacion.id, 'favor')} disabled={Boolean(votoUsuario)}>
+                              Votar a favor
+                            </button>
+                            <button className="soft-btn" onClick={() => onVotar(votacion.id, 'contra')} disabled={Boolean(votoUsuario)}>
+                              Votar en contra
+                            </button>
+                            {votoUsuario && <p className="helper-text">Tu voto ya fue registrado: {votoUsuario}.</p>}
+                          </div>
+                        ) : (
+                          <div className="btn-row">
+                            <button className="soft-btn" onClick={() => onCerrarVotacion(votacion.id)}>
+                              Cerrar votacion
+                            </button>
+                          </div>
+                        )}
+                      </article>
+                    );
+                  })}
+                </div>
               </article>
             </section>
           )}

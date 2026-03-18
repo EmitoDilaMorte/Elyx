@@ -9,6 +9,7 @@ export function Icon({ name }: IconProps) {
     home: 'M3 11.5L12 4l9 7.5v8a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z',
     payments: 'M3 7h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zm0 3h18M7 15h3',
     megaphone: 'M3 10v4h4l6 4V6l-6 4zm10-2h3m0 0l4-2m-4 2l4 2',
+    vote: 'M4 5h16v14H4zM8 9h8M8 13h5M16 16l2 2 3-3',
     tools: 'M21 3l-6 6m-2 2l-8 8m7-12l3 3m-5 5l3 3M8 4a4 4 0 0 0 4 4',
     report: 'M5 3h10l4 4v14H5zM15 3v4h4M8 12h8M8 16h8',
     approve: 'M4 12l5 5L20 6M3 4h18M3 20h18',
