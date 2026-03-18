@@ -1,4 +1,4 @@
--- Elyx schema (single condominium scope)
+-- Elyx schema (multi condominium scope)
 
 CREATE TABLE IF NOT EXISTS usuarios (
   id_usuario SERIAL PRIMARY KEY,
@@ -6,24 +6,60 @@ CREATE TABLE IF NOT EXISTS usuarios (
   primer_apellido VARCHAR(80) NOT NULL,
   segundo_apellido VARCHAR(80),
   correo VARCHAR(150) NOT NULL UNIQUE,
-  password_hash TEXT NOT NULL,
-  rol VARCHAR(20) NOT NULL CHECK (rol IN ('CONDOMINO', 'ADMINISTRADOR'))
+  password_hash TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS condominos (
-  id_usuario INT PRIMARY KEY,
-  numero_departamento VARCHAR(20) NOT NULL,
-  telefono VARCHAR(20),
-  CONSTRAINT fk_condominos_usuario
+CREATE TABLE IF NOT EXISTS condominios (
+  id_condominio SERIAL PRIMARY KEY,
+  nombre VARCHAR(150) NOT NULL,
+  direccion TEXT,
+  estado VARCHAR(20) NOT NULL DEFAULT 'ACTIVO' CHECK (estado IN ('ACTIVO', 'INACTIVO')),
+  fecha_alta TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS usuarios_condominios (
+  id_usuario_condominio SERIAL PRIMARY KEY,
+  rol VARCHAR(20) NOT NULL CHECK (rol IN ('CONDOMINO', 'ADMINISTRADOR')),
+  estado VARCHAR(20) NOT NULL DEFAULT 'ACTIVO' CHECK (estado IN ('ACTIVO', 'INACTIVO')),
+  fecha_alta TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  id_usuario INT NOT NULL,
+  id_condominio INT NOT NULL,
+  CONSTRAINT uq_usuario_condominio UNIQUE (id_usuario, id_condominio),
+  CONSTRAINT fk_usuarios_condominios_usuario
     FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_usuarios_condominios_condominio
+    FOREIGN KEY (id_condominio) REFERENCES condominios(id_condominio)
     ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS administradores (
-  id_usuario INT PRIMARY KEY,
-  CONSTRAINT fk_administradores_usuario
-    FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario)
+CREATE TABLE IF NOT EXISTS unidades (
+  id_unidad SERIAL PRIMARY KEY,
+  clave_unidad VARCHAR(30) NOT NULL,
+  tipo_unidad VARCHAR(30) NOT NULL CHECK (tipo_unidad IN ('CASA', 'DEPARTAMENTO', 'LOCAL', 'OTRO')),
+  estado VARCHAR(20) NOT NULL DEFAULT 'ACTIVA' CHECK (estado IN ('ACTIVA', 'INACTIVA')),
+  fecha_alta TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  id_condominio INT NOT NULL,
+  CONSTRAINT uq_unidad_clave_por_condominio UNIQUE (id_condominio, clave_unidad),
+  CONSTRAINT fk_unidades_condominio
+    FOREIGN KEY (id_condominio) REFERENCES condominios(id_condominio)
     ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS unidades_ocupantes (
+  id_ocupacion SERIAL PRIMARY KEY,
+  tipo_ocupacion VARCHAR(20) NOT NULL CHECK (tipo_ocupacion IN ('PROPIETARIO', 'INQUILINO', 'HABITANTE')),
+  fecha_inicio DATE NOT NULL,
+  fecha_fin DATE,
+  id_usuario_condominio INT NOT NULL,
+  id_unidad INT NOT NULL,
+  CONSTRAINT fk_unidades_ocupantes_usuario_condominio
+    FOREIGN KEY (id_usuario_condominio) REFERENCES usuarios_condominios(id_usuario_condominio)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_unidades_ocupantes_unidad
+    FOREIGN KEY (id_unidad) REFERENCES unidades(id_unidad)
+    ON DELETE CASCADE,
+  CONSTRAINT ck_unidades_ocupantes_fechas CHECK (fecha_fin IS NULL OR fecha_fin >= fecha_inicio)
 );
 
 CREATE TABLE IF NOT EXISTS estado_cuenta (
@@ -32,9 +68,9 @@ CREATE TABLE IF NOT EXISTS estado_cuenta (
   total_adeudo NUMERIC(12,2) NOT NULL DEFAULT 0,
   recargos_estimados NUMERIC(12,2) NOT NULL DEFAULT 0,
   fecha_corte DATE,
-  id_condomino INT NOT NULL UNIQUE,
-  CONSTRAINT fk_estado_cuenta_condomino
-    FOREIGN KEY (id_condomino) REFERENCES condominos(id_usuario)
+  id_unidad INT NOT NULL UNIQUE,
+  CONSTRAINT fk_estado_cuenta_unidad
+    FOREIGN KEY (id_unidad) REFERENCES unidades(id_unidad)
     ON DELETE CASCADE
 );
 
@@ -45,25 +81,25 @@ CREATE TABLE IF NOT EXISTS config_notificaciones (
   usar_email BOOLEAN NOT NULL DEFAULT TRUE,
   usar_interna BOOLEAN NOT NULL DEFAULT TRUE,
   activo BOOLEAN NOT NULL DEFAULT TRUE,
-  id_condomino INT NOT NULL UNIQUE,
-  CONSTRAINT fk_config_notif_condomino
-    FOREIGN KEY (id_condomino) REFERENCES condominos(id_usuario)
+  id_usuario_condominio INT NOT NULL UNIQUE,
+  CONSTRAINT fk_config_notif_usuario_condominio
+    FOREIGN KEY (id_usuario_condominio) REFERENCES usuarios_condominios(id_usuario_condominio)
     ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS notificaciones (
   id_notificacion SERIAL PRIMARY KEY,
-  tipo VARCHAR(50) NOT NULL CHECK (tipo IN ('RECORDATORIO_ANTES_VENCIMIENTO', 'RECORDATORIO_DESPUES_VENCIMIENTO', 'AVISO_GENERAL')),
+  tipo VARCHAR(50) NOT NULL CHECK (tipo IN ('RECORDATORIO_ANTES_VENCIMIENTO', 'RECORDATORIO_DESPUES_VENCIMIENTO')),
   canal VARCHAR(20) NOT NULL CHECK (canal IN ('EMAIL', 'INTERNA')),
   asunto VARCHAR(150) NOT NULL,
   mensaje TEXT NOT NULL,
   fecha_programada TIMESTAMP NOT NULL,
   fecha_envio TIMESTAMP,
   estado VARCHAR(20) NOT NULL CHECK (estado IN ('PROGRAMADA', 'ENVIADA', 'FALLIDA', 'LEIDA')),
-  id_condomino INT NOT NULL,
+  id_usuario_condominio INT NOT NULL,
   id_config INT,
-  CONSTRAINT fk_notif_condomino
-    FOREIGN KEY (id_condomino) REFERENCES condominos(id_usuario)
+  CONSTRAINT fk_notif_usuario_condominio
+    FOREIGN KEY (id_usuario_condominio) REFERENCES usuarios_condominios(id_usuario_condominio)
     ON DELETE CASCADE,
   CONSTRAINT fk_notif_config
     FOREIGN KEY (id_config) REFERENCES config_notificaciones(id_config)
@@ -77,9 +113,14 @@ CREATE TABLE IF NOT EXISTS cuotas (
   fecha_limite DATE NOT NULL,
   recargo_por_dia NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (recargo_por_dia >= 0),
   estado VARCHAR(20) NOT NULL CHECK (estado IN ('PENDIENTE', 'PAGADA', 'VENCIDA')),
-  id_condomino INT NOT NULL,
-  CONSTRAINT fk_cuota_condomino
-    FOREIGN KEY (id_condomino) REFERENCES condominos(id_usuario)
+  id_condominio INT NOT NULL,
+  id_unidad INT NOT NULL,
+  CONSTRAINT uq_cuota_unidad_periodo UNIQUE (id_unidad, periodo),
+  CONSTRAINT fk_cuota_condominio
+    FOREIGN KEY (id_condominio) REFERENCES condominios(id_condominio)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_cuota_unidad
+    FOREIGN KEY (id_unidad) REFERENCES unidades(id_unidad)
     ON DELETE CASCADE
 );
 
@@ -91,16 +132,16 @@ CREATE TABLE IF NOT EXISTS pagos (
   referencia VARCHAR(120),
   motivo_rechazo TEXT,
   id_cuota INT NOT NULL UNIQUE,
-  id_condomino INT,
-  id_administrador INT,
+  id_usuario_condominio_paga INT,
+  id_usuario_condominio_admin INT,
   CONSTRAINT fk_pago_cuota
     FOREIGN KEY (id_cuota) REFERENCES cuotas(id_cuota)
     ON DELETE RESTRICT,
-  CONSTRAINT fk_pago_condomino
-    FOREIGN KEY (id_condomino) REFERENCES condominos(id_usuario)
+  CONSTRAINT fk_pago_usuario_condominio_paga
+    FOREIGN KEY (id_usuario_condominio_paga) REFERENCES usuarios_condominios(id_usuario_condominio)
     ON DELETE SET NULL,
-  CONSTRAINT fk_pago_admin
-    FOREIGN KEY (id_administrador) REFERENCES administradores(id_usuario)
+  CONSTRAINT fk_pago_usuario_condominio_admin
+    FOREIGN KEY (id_usuario_condominio_admin) REFERENCES usuarios_condominios(id_usuario_condominio)
     ON DELETE SET NULL
 );
 
@@ -109,7 +150,7 @@ CREATE TABLE IF NOT EXISTS evidencias_pago (
   nombre_archivo VARCHAR(180) NOT NULL,
   url_archivo TEXT NOT NULL,
   fecha_carga TIMESTAMP NOT NULL,
-  id_pago INT NOT NULL UNIQUE,
+  id_pago INT NOT NULL,
   CONSTRAINT fk_evidencia_pago
     FOREIGN KEY (id_pago) REFERENCES pagos(id_pago)
     ON DELETE CASCADE
@@ -132,13 +173,17 @@ CREATE TABLE IF NOT EXISTS reportes_mantenimiento (
   fecha_reporte TIMESTAMP NOT NULL,
   estado VARCHAR(20) NOT NULL CHECK (estado IN ('ABIERTO', 'EN_PROCESO', 'RESUELTO', 'CERRADO')),
   comentario_admin TEXT,
-  id_condomino INT NOT NULL,
-  id_administrador INT,
-  CONSTRAINT fk_rep_mant_condomino
-    FOREIGN KEY (id_condomino) REFERENCES condominos(id_usuario)
+  id_condominio INT NOT NULL,
+  id_usuario_condominio_reporta INT NOT NULL,
+  id_usuario_condominio_admin INT,
+  CONSTRAINT fk_rep_mant_condominio
+    FOREIGN KEY (id_condominio) REFERENCES condominios(id_condominio)
     ON DELETE CASCADE,
-  CONSTRAINT fk_rep_mant_admin
-    FOREIGN KEY (id_administrador) REFERENCES administradores(id_usuario)
+  CONSTRAINT fk_rep_mant_usuario_condominio_reporta
+    FOREIGN KEY (id_usuario_condominio_reporta) REFERENCES usuarios_condominios(id_usuario_condominio)
+    ON DELETE RESTRICT,
+  CONSTRAINT fk_rep_mant_usuario_condominio_admin
+    FOREIGN KEY (id_usuario_condominio_admin) REFERENCES usuarios_condominios(id_usuario_condominio)
     ON DELETE SET NULL
 );
 
@@ -147,9 +192,13 @@ CREATE TABLE IF NOT EXISTS avisos (
   titulo VARCHAR(150) NOT NULL,
   contenido TEXT NOT NULL,
   fecha_publicacion TIMESTAMP NOT NULL,
-  id_administrador INT NOT NULL,
-  CONSTRAINT fk_aviso_admin
-    FOREIGN KEY (id_administrador) REFERENCES administradores(id_usuario)
+  id_condominio INT NOT NULL,
+  id_usuario_condominio_admin INT NOT NULL,
+  CONSTRAINT fk_aviso_condominio
+    FOREIGN KEY (id_condominio) REFERENCES condominios(id_condominio)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_aviso_usuario_condominio_admin
+    FOREIGN KEY (id_usuario_condominio_admin) REFERENCES usuarios_condominios(id_usuario_condominio)
     ON DELETE RESTRICT
 );
 
@@ -159,10 +208,15 @@ CREATE TABLE IF NOT EXISTS votaciones (
   fecha_inicio TIMESTAMP NOT NULL,
   fecha_fin TIMESTAMP NOT NULL,
   estado VARCHAR(20) NOT NULL CHECK (estado IN ('ABIERTA', 'CERRADA')),
-  id_administrador INT NOT NULL,
-  CONSTRAINT fk_votacion_admin
-    FOREIGN KEY (id_administrador) REFERENCES administradores(id_usuario)
-    ON DELETE RESTRICT
+  id_condominio INT NOT NULL,
+  id_usuario_condominio_admin INT NOT NULL,
+  CONSTRAINT fk_votacion_condominio
+    FOREIGN KEY (id_condominio) REFERENCES condominios(id_condominio)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_votacion_usuario_condominio_admin
+    FOREIGN KEY (id_usuario_condominio_admin) REFERENCES usuarios_condominios(id_usuario_condominio)
+    ON DELETE RESTRICT,
+  CONSTRAINT ck_votacion_fechas CHECK (fecha_fin >= fecha_inicio)
 );
 
 CREATE TABLE IF NOT EXISTS votos (
@@ -170,14 +224,14 @@ CREATE TABLE IF NOT EXISTS votos (
   opcion VARCHAR(100) NOT NULL,
   fecha_emision TIMESTAMP NOT NULL,
   id_votacion INT NOT NULL,
-  id_condomino INT NOT NULL,
+  id_usuario_condominio INT NOT NULL,
   CONSTRAINT fk_voto_votacion
     FOREIGN KEY (id_votacion) REFERENCES votaciones(id_votacion)
     ON DELETE CASCADE,
-  CONSTRAINT fk_voto_condomino
-    FOREIGN KEY (id_condomino) REFERENCES condominos(id_usuario)
+  CONSTRAINT fk_voto_usuario_condominio
+    FOREIGN KEY (id_usuario_condominio) REFERENCES usuarios_condominios(id_usuario_condominio)
     ON DELETE CASCADE,
-  CONSTRAINT uq_voto_unico_por_condomino UNIQUE (id_votacion, id_condomino)
+  CONSTRAINT uq_voto_unico_por_usuario_condominio UNIQUE (id_votacion, id_usuario_condominio)
 );
 
 CREATE TABLE IF NOT EXISTS gastos (
@@ -189,25 +243,26 @@ CREATE TABLE IF NOT EXISTS gastos (
   proveedor VARCHAR(120),
   nota TEXT,
   url_comprobante TEXT,
-  id_administrador INT NOT NULL,
-  CONSTRAINT fk_gasto_admin
-    FOREIGN KEY (id_administrador) REFERENCES administradores(id_usuario)
+  id_condominio INT NOT NULL,
+  CONSTRAINT fk_gasto_condominio
+    FOREIGN KEY (id_condominio) REFERENCES condominios(id_condominio)
     ON DELETE RESTRICT
 );
 
 CREATE TABLE IF NOT EXISTS reportes_financieros (
   id_reporte_financiero SERIAL PRIMARY KEY,
-  periodo VARCHAR(20) NOT NULL UNIQUE,
+  periodo VARCHAR(20) NOT NULL,
   fecha_generacion TIMESTAMP NOT NULL,
   total_ingresos NUMERIC(14,2) NOT NULL DEFAULT 0,
   total_gastos NUMERIC(14,2) NOT NULL DEFAULT 0,
   total_adeudos NUMERIC(14,2) NOT NULL DEFAULT 0,
   url_pdf TEXT,
   url_excel TEXT,
-  id_administrador INT,
-  CONSTRAINT fk_reporte_fin_admin
-    FOREIGN KEY (id_administrador) REFERENCES administradores(id_usuario)
-    ON DELETE SET NULL
+  id_condominio INT NOT NULL,
+  CONSTRAINT uq_reporte_financiero_periodo_por_condominio UNIQUE (id_condominio, periodo),
+  CONSTRAINT fk_reporte_fin_condominio
+    FOREIGN KEY (id_condominio) REFERENCES condominios(id_condominio)
+    ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS reporte_financiero_detalle (
