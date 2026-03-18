@@ -453,6 +453,54 @@ nav {
   font-weight: 800;
 }
 
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 0.2rem 0.65rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  border: 1px solid transparent;
+  margin-bottom: 0.55rem;
+}
+
+.status-pendiente {
+  background: #fff2de;
+  color: #8f5a25;
+  border-color: #efcfaa;
+}
+
+.status-en_validacion,
+.status-en_proceso {
+  background: #fbe9d3;
+  color: #8b4e1c;
+  border-color: #e7bd8c;
+}
+
+.status-pagada,
+.status-aprobado,
+.status-resuelto {
+  background: #e6f2e0;
+  color: #416a3b;
+  border-color: #b9d2ae;
+}
+
+.status-rechazado,
+.status-nuevo {
+  background: #fde5df;
+  color: #a13e32;
+  border-color: #eab9af;
+}
+
+.stats-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-bottom: 0.65rem;
+}
+
 .btn-row {
   display: flex;
   flex-wrap: wrap;
@@ -533,6 +581,21 @@ textarea:focus-visible {
   font-weight: 700;
   margin-bottom: 0.45rem;
   display: inline-block;
+}
+
+.helper-text {
+  margin: 0.2rem 0 0;
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+}
+
+.empty-state {
+  margin: 0;
+  border: 1px dashed #e7ceb0;
+  background: #fff4e6;
+  border-radius: 12px;
+  padding: 0.8rem;
+  color: #8b5a2a;
 }
 
 textarea {
