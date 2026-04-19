@@ -1,4 +1,4 @@
-export type RoleKey = 'condomino' | 'administrador';
+export type RoleKey = 'condomino' | 'administrador' | 'superusuario';
 export type MembershipState = 'ACTIVO' | 'INACTIVO';
 
 export type ViewKey =
@@ -9,7 +9,9 @@ export type ViewKey =
   | 'mantenimiento'
   | 'reportes'
   | 'validaciones'
-  | 'finanzas';
+  | 'finanzas'
+  | 'perfil'
+  | 'solicitudes';
 
 export type CuotaStatus = 'PENDIENTE' | 'EN_VALIDACION' | 'PAGADA';
 export type PagoStatus = 'PENDIENTE' | 'APROBADO' | 'RECHAZADO';
@@ -53,7 +55,7 @@ export type UserMembership = {
 export type DemoUser = {
   idUsuario: number;
   correo: string;
-  password: string;
+  password?: string;
   role: RoleKey;
   nombre: string;
   membresias: UserMembership[];
@@ -94,6 +96,16 @@ export type VotacionActiva = {
   id: number;
   idCondominio: number;
   pregunta: string;
+  tipo?: 'GENERAL' | 'CAMBIO_CUOTA';
+  cambioCuota?: {
+    montoPropuesto: number;
+    recargoPropuesto: number;
+    diaLimitePropuesto: number;
+    periodoAplicacion: string;
+    estadoPropuesta: 'PENDIENTE' | 'APROBADA' | 'RECHAZADA' | 'EJECUTADA';
+    motivo: string | null;
+    ejecutable: boolean;
+  } | null;
   aFavor: number;
   enContra: number;
   votosPorUsuario: Record<string, VoteChoice>;

@@ -6,7 +6,9 @@ CREATE TABLE IF NOT EXISTS usuarios (
   primer_apellido VARCHAR(80) NOT NULL,
   segundo_apellido VARCHAR(80),
   correo VARCHAR(150) NOT NULL UNIQUE,
-  password_hash TEXT NOT NULL
+  password_hash TEXT NOT NULL,
+  es_superusuario BOOLEAN NOT NULL DEFAULT FALSE,
+  requiere_cambio_password BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 CREATE TABLE IF NOT EXISTS condominios (
@@ -89,7 +91,15 @@ CREATE TABLE IF NOT EXISTS config_notificaciones (
 
 CREATE TABLE IF NOT EXISTS notificaciones (
   id_notificacion SERIAL PRIMARY KEY,
-  tipo VARCHAR(50) NOT NULL CHECK (tipo IN ('RECORDATORIO_ANTES_VENCIMIENTO', 'RECORDATORIO_DESPUES_VENCIMIENTO')),
+  tipo VARCHAR(50) NOT NULL CHECK (tipo IN (
+    'RECORDATORIO_ANTES_VENCIMIENTO',
+    'RECORDATORIO_DESPUES_VENCIMIENTO',
+    'SOLICITUD_CAMBIO_CREADA',
+    'SOLICITUD_CAMBIO_APROBADA',
+    'SOLICITUD_CAMBIO_RECHAZADA',
+    'SOLICITUD_CAMBIO_EJECUTADA',
+    'ALTA_INICIAL_USUARIO'
+  )),
   canal VARCHAR(20) NOT NULL CHECK (canal IN ('EMAIL', 'INTERNA')),
   asunto VARCHAR(150) NOT NULL,
   mensaje TEXT NOT NULL,
@@ -234,6 +244,20 @@ CREATE TABLE IF NOT EXISTS votos (
   CONSTRAINT uq_voto_unico_por_usuario_condominio UNIQUE (id_votacion, id_usuario_condominio)
 );
 
+CREATE TABLE IF NOT EXISTS votaciones_cambio_cuota (
+  id_votacion INT PRIMARY KEY,
+  monto_propuesto NUMERIC(12,2) NOT NULL CHECK (monto_propuesto > 0),
+  recargo_propuesto NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (recargo_propuesto >= 0),
+  dia_limite_propuesto INT NOT NULL DEFAULT 10 CHECK (dia_limite_propuesto BETWEEN 1 AND 28),
+  estado_propuesta VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE' CHECK (estado_propuesta IN ('PENDIENTE', 'APROBADA', 'RECHAZADA', 'EJECUTADA')),
+  periodo_aplicacion VARCHAR(20) NOT NULL,
+  motivo TEXT,
+  fecha_ejecucion TIMESTAMP,
+  CONSTRAINT fk_votacion_cambio_cuota
+    FOREIGN KEY (id_votacion) REFERENCES votaciones(id_votacion)
+    ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS gastos (
   id_gasto SERIAL PRIMARY KEY,
   concepto VARCHAR(160) NOT NULL,
@@ -286,4 +310,32 @@ CREATE TABLE IF NOT EXISTS reporte_financiero_detalle (
     (id_pago IS NOT NULL AND id_gasto IS NULL) OR
     (id_pago IS NULL AND id_gasto IS NOT NULL)
   )
+);
+
+CREATE TABLE IF NOT EXISTS solicitudes_cambio_condomino (
+  id_solicitud SERIAL PRIMARY KEY,
+  id_condominio INT NOT NULL,
+  id_usuario_condominio_solicitante INT NOT NULL,
+  id_usuario_condominio_objetivo INT NOT NULL,
+  tipo VARCHAR(40) NOT NULL CHECK (tipo IN ('BAJA_CONDOMINO', 'CAMBIO_OCUPACION', 'CAMBIO_UNIDAD')),
+  estado VARCHAR(20) NOT NULL CHECK (estado IN ('PENDIENTE', 'APROBADA', 'RECHAZADA', 'EJECUTADA')),
+  motivo TEXT NOT NULL,
+  detalle JSONB,
+  id_usuario_condominio_aprobador INT,
+  comentario_resolucion TEXT,
+  fecha_solicitud TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  fecha_resolucion TIMESTAMP,
+  fecha_ejecucion TIMESTAMP,
+  CONSTRAINT fk_sol_cambio_condominio
+    FOREIGN KEY (id_condominio) REFERENCES condominios(id_condominio)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_sol_cambio_solicitante
+    FOREIGN KEY (id_usuario_condominio_solicitante) REFERENCES usuarios_condominios(id_usuario_condominio)
+    ON DELETE RESTRICT,
+  CONSTRAINT fk_sol_cambio_objetivo
+    FOREIGN KEY (id_usuario_condominio_objetivo) REFERENCES usuarios_condominios(id_usuario_condominio)
+    ON DELETE RESTRICT,
+  CONSTRAINT fk_sol_cambio_aprobador
+    FOREIGN KEY (id_usuario_condominio_aprobador) REFERENCES usuarios_condominios(id_usuario_condominio)
+    ON DELETE SET NULL
 );

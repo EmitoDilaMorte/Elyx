@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AppController } from './app.controller';
 import { AdministradoresModule } from './modules/administradores/administradores.module';
 import { AvisosModule } from './modules/avisos/avisos.module';
+import { AuthModule } from './modules/auth/auth.module';
 import { CondominosModule } from './modules/condominos/condominos.module';
 import { ConfigNotificacionesModule } from './modules/config-notificaciones/config-notificaciones.module';
 import { CuotasModule } from './modules/cuotas/cuotas.module';
@@ -16,7 +17,6 @@ import { ReportesFinancierosModule } from './modules/reportes-financieros/report
 import { ReportesMantenimientoModule } from './modules/reportes-mantenimiento/reportes-mantenimiento.module';
 import { UsuariosModule } from './modules/usuarios/usuarios.module';
 import { VotacionesModule } from './modules/votaciones/votaciones.module';
-import { VotosModule } from './modules/votos/votos.module';
 
 @Module({
   imports: [
@@ -28,6 +28,7 @@ import { VotosModule } from './modules/votos/votos.module';
       synchronize: false,
       logging: false,
     }),
+    AuthModule,
     UsuariosModule,
     CondominosModule,
     AdministradoresModule,
@@ -37,7 +38,6 @@ import { VotosModule } from './modules/votos/votos.module';
     EvidenciasPagoModule,
     AvisosModule,
     VotacionesModule,
-    VotosModule,
     ReportesMantenimientoModule,
     ConfigNotificacionesModule,
     NotificacionesModule,

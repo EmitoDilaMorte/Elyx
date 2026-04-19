@@ -1,5 +1,7 @@
 import type { PagoStatus, VoteChoice } from '../types/app';
 
+let authToken: string | null = null;
+
 type BackendCuota = {
   idCuota: number;
   idCondominio: number;
@@ -23,12 +25,22 @@ type BackendVotacion = {
   idVotacion: number;
   idCondominio: number;
   pregunta: string;
+  tipo?: 'GENERAL' | 'CAMBIO_CUOTA';
   estado: 'ABIERTA' | 'CERRADA';
   fechaInicio: string;
   fechaFin: string;
   aFavor: number;
   enContra: number;
   totalVotos: number;
+  cambioCuota?: {
+    montoPropuesto: number;
+    recargoPropuesto: number;
+    diaLimitePropuesto: number;
+    periodoAplicacion: string;
+    estadoPropuesta: 'PENDIENTE' | 'APROBADA' | 'RECHAZADA' | 'EJECUTADA';
+    motivo: string | null;
+    ejecutable: boolean;
+  } | null;
 };
 
 type BackendPago = {
@@ -71,16 +83,105 @@ type BackendReporteFinanciero = {
   adeudos: number;
 };
 
+type BackendLoginMembership = {
+  idUsuarioCondominio: number;
+  idCondominio: number;
+  rol: 'CONDOMINO' | 'ADMINISTRADOR';
+  estado: 'ACTIVO' | 'INACTIVO' | string;
+};
+
+type BackendLoginUser = {
+  idUsuario: number;
+  nombre: string;
+  correo: string;
+  role: 'condomino' | 'administrador' | 'superusuario';
+  requiereCambioPassword: boolean;
+  membresias: BackendLoginMembership[];
+};
+
+type BackendLoginResponse = {
+  accessToken: string;
+  tokenType: 'Bearer';
+  user: BackendLoginUser;
+};
+
+type BackendEvidenciaPago = {
+  idEvidencia: number;
+  idPago: number;
+  idCondominio: number;
+  nombreArchivo: string;
+  urlArchivo: string;
+  fechaCarga: string;
+};
+
+type BackendRecibo = {
+  idRecibo: number;
+  idPago: number;
+  idCondominio: number;
+  folio: string;
+  fechaGeneracion: string;
+  urlPdf: string;
+};
+
+type BackendConfigNotificaciones = {
+  idConfig: number;
+  idUsuarioCondominio: number;
+  idCondominio: number;
+  diasAntes: number;
+  diasDespues: number;
+  usarEmail: boolean;
+  usarInterna: boolean;
+  activo: boolean;
+};
+
+type BackendNotificacion = {
+  idNotificacion: number;
+  idCondominio: number;
+  idUsuarioCondominio: number;
+  tipo: string;
+  canal: string;
+  asunto: string;
+  mensaje: string;
+  fechaProgramada: string;
+  fechaEnvio: string | null;
+  estado: string;
+  idConfig: number | null;
+};
+
+type BackendSolicitudCambio = {
+  idSolicitud: number;
+  idCondominio: number;
+  idUsuarioCondominioSolicitante: number;
+  idUsuarioCondominioObjetivo: number;
+  tipo: 'BAJA_CONDOMINO' | 'CAMBIO_UNIDAD' | 'CAMBIO_OCUPACION' | string;
+  estado: 'PENDIENTE' | 'APROBADA' | 'RECHAZADA' | 'EJECUTADA' | string;
+  motivo: string;
+  detalle: Record<string, unknown> | null;
+  comentarioResolucion: string | null;
+  fechaSolicitud: string;
+  fechaResolucion: string | null;
+  fechaEjecucion: string | null;
+};
+
 function getApiBaseUrl() {
   const raw = (import.meta.env.VITE_API_URL as string | undefined)?.trim();
   const base = raw && raw.length > 0 ? raw : 'http://localhost:3000';
   return base.endsWith('/api') ? base : `${base}/api`;
 }
 
+export function getApiHostUrl() {
+  const raw = (import.meta.env.VITE_API_URL as string | undefined)?.trim();
+  const base = raw && raw.length > 0 ? raw : 'http://localhost:3000';
+  return base.endsWith('/api') ? base.slice(0, -4) : base;
+}
+
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const hasFormDataBody = init?.body instanceof FormData;
+
   const response = await fetch(`${getApiBaseUrl()}${path}`, {
     headers: {
-      'Content-Type': 'application/json',
+      ...(hasFormDataBody ? {} : { 'Content-Type': 'application/json' }),
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
       ...(init?.headers ?? {}),
     },
     ...init,
@@ -113,6 +214,34 @@ function mapPagoStatus(status: BackendPago['estado']): PagoStatus {
 }
 
 export const backendApi = {
+  setAccessToken(token: string | null) {
+    authToken = token;
+  },
+
+  async login(correo: string, password: string): Promise<BackendLoginResponse> {
+    const response = await requestJson<BackendLoginResponse>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ correo, password }),
+    });
+
+    this.setAccessToken(response.accessToken);
+    return response;
+  },
+
+  async updatePerfilCorreo(correo: string) {
+    return requestJson<{ idUsuario: number; correo: string }>('/auth/perfil', {
+      method: 'PATCH',
+      body: JSON.stringify({ correo }),
+    });
+  },
+
+  async changePassword(passwordActual: string, passwordNueva: string) {
+    return requestJson<{ ok: boolean; message: string }>('/auth/password', {
+      method: 'PATCH',
+      body: JSON.stringify({ passwordActual, passwordNueva }),
+    });
+  },
+
   async listCuotas(idCondominio: number) {
     const data = await requestJson<BackendCuota[]>(`/cuotas?idCondominio=${idCondominio}`);
 
@@ -168,6 +297,8 @@ export const backendApi = {
       id: item.idVotacion,
       idCondominio: item.idCondominio,
       pregunta: item.pregunta,
+      tipo: item.tipo ?? 'GENERAL',
+      cambioCuota: item.cambioCuota ?? null,
       aFavor: item.aFavor,
       enContra: item.enContra,
       votosPorUsuario: {},
@@ -188,6 +319,33 @@ export const backendApi = {
       id: item.idVotacion,
       idCondominio: item.idCondominio,
       pregunta: item.pregunta,
+      tipo: item.tipo ?? 'GENERAL',
+      cambioCuota: item.cambioCuota ?? null,
+      aFavor: item.aFavor,
+      enContra: item.enContra,
+      votosPorUsuario: {},
+    };
+  },
+
+  async createVotacionCambioCuota(input: {
+    idCondominio: number;
+    idUsuarioCondominioAdmin: number;
+    montoPropuesto: number;
+    recargoPropuesto?: number;
+    diaLimitePropuesto?: number;
+    motivo?: string;
+  }) {
+    const item = await requestJson<BackendVotacion>('/votaciones/cambio-cuota', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+
+    return {
+      id: item.idVotacion,
+      idCondominio: item.idCondominio,
+      pregunta: item.pregunta,
+      tipo: item.tipo ?? 'CAMBIO_CUOTA',
+      cambioCuota: item.cambioCuota ?? null,
       aFavor: item.aFavor,
       enContra: item.enContra,
       votosPorUsuario: {},
@@ -214,6 +372,8 @@ export const backendApi = {
       id: item.idVotacion,
       idCondominio: item.idCondominio,
       pregunta: item.pregunta,
+      tipo: item.tipo ?? 'GENERAL',
+      cambioCuota: item.cambioCuota ?? null,
       aFavor: item.aFavor,
       enContra: item.enContra,
       votosPorUsuario: {},
@@ -221,7 +381,32 @@ export const backendApi = {
   },
 
   async cerrarVotacion(input: { idCondominio: number; idVotacion: number }) {
-    await requestJson<BackendVotacion>('/votaciones/cerrar', {
+    return requestJson<BackendVotacion>('/votaciones/cerrar', {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    });
+  },
+
+  async listCambiosCuota(idCondominio: number) {
+    const data = await requestJson<BackendVotacion[]>(`/votaciones/cambios-cuota?idCondominio=${idCondominio}`);
+    return data.map((item) => ({
+      id: item.idVotacion,
+      idCondominio: item.idCondominio,
+      pregunta: item.pregunta,
+      tipo: item.tipo ?? 'CAMBIO_CUOTA',
+      cambioCuota: item.cambioCuota ?? null,
+      aFavor: item.aFavor,
+      enContra: item.enContra,
+      votosPorUsuario: {},
+    }));
+  },
+
+  async ejecutarCambioCuota(input: {
+    idCondominio: number;
+    idVotacion: number;
+    idUsuarioCondominioAdmin: number;
+  }) {
+    return requestJson<BackendVotacion>('/votaciones/cambio-cuota/ejecutar', {
       method: 'PATCH',
       body: JSON.stringify(input),
     });
@@ -308,7 +493,9 @@ export const backendApi = {
   async listReportesMantenimiento(idCondominio: number) {
     const data = await requestJson<BackendMantenimiento[]>(`/reportes-mantenimiento?idCondominio=${idCondominio}`);
 
-    return data.map((item) => ({
+    return data
+      .filter((item) => Number(item.idReporte) > 0)
+      .map((item) => ({
       id: item.idReporte,
       idCondominio: item.idCondominio,
       unidad: item.unidad,
@@ -317,7 +504,7 @@ export const backendApi = {
       estado: item.estado,
       idUsuarioCondominioReporta: item.idUsuarioCondominioReporta,
       idUsuarioCondominioAdmin: item.idUsuarioCondominioAdmin ?? undefined,
-    }));
+      }));
   },
 
   async createReporteMantenimiento(input: {
@@ -397,5 +584,232 @@ export const backendApi = {
 
   async listReportesFinancieros(idCondominio: number) {
     return requestJson<BackendReporteFinanciero[]>(`/reportes-financieros?idCondominio=${idCondominio}`);
+  },
+
+  async createEvidenciaPago(input: {
+    idCondominio: number;
+    idPago: number;
+    archivo: File;
+    nombreArchivo?: string;
+  }) {
+    const body = new FormData();
+    body.append('idCondominio', String(input.idCondominio));
+    body.append('idPago', String(input.idPago));
+    body.append('nombreArchivo', input.nombreArchivo ?? input.archivo.name);
+    body.append('archivo', input.archivo);
+
+    return requestJson<BackendEvidenciaPago>('/evidencias-pago', {
+      method: 'POST',
+      body,
+    });
+  },
+
+  async listEvidenciasPago(input: { idCondominio: number; idPago?: number }) {
+    const params = new URLSearchParams({ idCondominio: String(input.idCondominio) });
+    if (input.idPago) {
+      params.set('idPago', String(input.idPago));
+    }
+
+    return requestJson<BackendEvidenciaPago[]>(`/evidencias-pago?${params.toString()}`);
+  },
+
+  async generarRecibo(input: { idCondominio: number; idPago: number }) {
+    return requestJson<BackendRecibo>('/recibos/generar', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  },
+
+  async listRecibos(input: { idCondominio: number; idPago?: number }) {
+    const params = new URLSearchParams({ idCondominio: String(input.idCondominio) });
+    if (input.idPago) {
+      params.set('idPago', String(input.idPago));
+    }
+    return requestJson<BackendRecibo[]>(`/recibos?${params.toString()}`);
+  },
+
+  async getConfigNotificaciones(input: { idCondominio: number; idUsuarioCondominio: number }) {
+    const params = new URLSearchParams({
+      idCondominio: String(input.idCondominio),
+      idUsuarioCondominio: String(input.idUsuarioCondominio),
+    });
+    return requestJson<BackendConfigNotificaciones>(`/config-notificaciones?${params.toString()}`);
+  },
+
+  async upsertConfigNotificaciones(input: {
+    idCondominio: number;
+    idUsuarioCondominio: number;
+    diasAntes: number;
+    diasDespues: number;
+    usarEmail: boolean;
+    usarInterna: boolean;
+    activo: boolean;
+  }) {
+    return requestJson<BackendConfigNotificaciones>('/config-notificaciones/guardar', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  },
+
+  async listNotificaciones(input: { idCondominio: number; idUsuarioCondominio: number; estado?: string }) {
+    const params = new URLSearchParams({
+      idCondominio: String(input.idCondominio),
+      idUsuarioCondominio: String(input.idUsuarioCondominio),
+    });
+    if (input.estado) {
+      params.set('estado', input.estado);
+    }
+    return requestJson<BackendNotificacion[]>(`/notificaciones?${params.toString()}`);
+  },
+
+  async marcarNotificacionLeida(input: { idCondominio: number; idNotificacion: number }) {
+    return requestJson<BackendNotificacion>('/notificaciones/leer', {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    });
+  },
+
+  async createOnboardingInicial(input: {
+    nombreCondominio: string;
+    direccionCondominio?: string;
+    nombreAdmin: string;
+    apellidoPaternoAdmin: string;
+    apellidoMaternoAdmin?: string;
+    correoAdmin: string;
+    nombreCondomino: string;
+    apellidoPaternoCondomino: string;
+    apellidoMaternoCondomino?: string;
+    correoCondomino: string;
+    admins?: Array<{
+      nombre: string;
+      apellidoPaterno: string;
+      apellidoMaterno?: string;
+      correo: string;
+    }>;
+    condominos?: Array<{
+      nombre: string;
+      apellidoPaterno: string;
+      apellidoMaterno?: string;
+      correo: string;
+    }>;
+    idUnidadExistenteCondomino?: number;
+  }) {
+    return requestJson<{
+      idCondominio: number;
+      idUsuarioAdmin: number;
+      idUsuarioCondomino: number;
+      idUsuarioCondominioAdmin: number;
+      idUsuarioCondominioCondomino: number;
+      passwordTemporalAdmin: string | null;
+      passwordTemporalCondomino: string | null;
+      adminsCreados: Array<{
+        idUsuario: number;
+        idUsuarioCondominio: number;
+        correo: string;
+        passwordTemporal: string | null;
+        reutilizado: boolean;
+      }>;
+      condominosCreados: Array<{
+        idUsuario: number;
+        idUsuarioCondominio: number;
+        correo: string;
+        passwordTemporal: string | null;
+        reutilizado: boolean;
+      }>;
+    }>('/usuarios/onboarding-inicial', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  },
+
+  async listSuperCondominios() {
+    return requestJson<
+      Array<{
+        idCondominio: number;
+        nombre: string;
+        direccion: string | null;
+        estado: 'ACTIVO' | 'INACTIVO';
+        fechaAlta: string;
+        totalAdmins: number;
+        totalCondominos: number;
+        totalUsuarios: number;
+      }>
+    >('/usuarios/super/condominios');
+  },
+
+  async updateSuperCondominioEstado(input: { idCondominio: number; estado: 'ACTIVO' | 'INACTIVO' }) {
+    return requestJson<{
+      idCondominio: number;
+      nombre: string;
+      direccion: string | null;
+      estado: 'ACTIVO' | 'INACTIVO';
+      fechaAlta: string;
+      totalAdmins: number;
+      totalCondominos: number;
+      totalUsuarios: number;
+    }>(`/usuarios/super/condominios/${input.idCondominio}/estado`, {
+      method: 'PATCH',
+      body: JSON.stringify({ estado: input.estado }),
+    });
+  },
+
+  async createSolicitudCambio(input: {
+    idCondominio: number;
+    idUsuarioCondominioSolicitante: number;
+    idUsuarioCondominioObjetivo: number;
+    tipo: 'BAJA_CONDOMINO' | 'CAMBIO_UNIDAD' | 'CAMBIO_OCUPACION';
+    motivo: string;
+    detalle?: Record<string, unknown>;
+  }) {
+    return requestJson<BackendSolicitudCambio>('/condominos/solicitudes-cambio', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  },
+
+  async listSolicitudesCambio(input: { idCondominio: number; estado?: string }) {
+    const params = new URLSearchParams({
+      idCondominio: String(input.idCondominio),
+    });
+    if (input.estado) {
+      params.set('estado', input.estado);
+    }
+    return requestJson<BackendSolicitudCambio[]>(`/condominos/solicitudes-cambio?${params.toString()}`);
+  },
+
+  async aprobarSolicitudCambio(input: {
+    idCondominio: number;
+    idSolicitud: number;
+    idUsuarioCondominioAdmin: number;
+    comentario?: string;
+  }) {
+    return requestJson<BackendSolicitudCambio>('/condominos/solicitudes-cambio/aprobar', {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    });
+  },
+
+  async rechazarSolicitudCambio(input: {
+    idCondominio: number;
+    idSolicitud: number;
+    idUsuarioCondominioAdmin: number;
+    comentario?: string;
+  }) {
+    return requestJson<BackendSolicitudCambio>('/condominos/solicitudes-cambio/rechazar', {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    });
+  },
+
+  async ejecutarSolicitudCambio(input: {
+    idCondominio: number;
+    idSolicitud: number;
+    idUsuarioCondominioAdmin: number;
+    comentario?: string;
+  }) {
+    return requestJson<BackendSolicitudCambio>('/condominos/solicitudes-cambio/ejecutar', {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    });
   },
 };

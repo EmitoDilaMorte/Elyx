@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { DataSource } from 'typeorm';
 
 type ReporteFinancieroRecord = {
   idCondominio: number;
@@ -10,14 +11,30 @@ type ReporteFinancieroRecord = {
 
 @Injectable()
 export class ReportesFinancierosService {
-  private readonly reportes: ReporteFinancieroRecord[] = [
-    { idCondominio: 101, periodo: 'Enero 2026', ingresos: 92500, gastos: 23300, adeudos: 10400 },
-    { idCondominio: 101, periodo: 'Febrero 2026', ingresos: 91150, gastos: 27500, adeudos: 12200 },
-    { idCondominio: 202, periodo: 'Enero 2026', ingresos: 68100, gastos: 20100, adeudos: 8600 },
-    { idCondominio: 202, periodo: 'Febrero 2026', ingresos: 70400, gastos: 21950, adeudos: 9100 },
-  ];
+  constructor(private readonly dataSource: DataSource) {}
 
-  listByCondominio(idCondominio: number): ReporteFinancieroRecord[] {
-    return this.reportes.filter((item) => item.idCondominio === idCondominio);
+  async listByCondominio(idCondominio: number): Promise<ReporteFinancieroRecord[]> {
+    const rows = await this.dataSource.query(
+      `
+      SELECT
+        id_condominio,
+        periodo,
+        total_ingresos,
+        total_gastos,
+        total_adeudos
+      FROM reportes_financieros
+      WHERE id_condominio = $1
+      ORDER BY fecha_generacion DESC
+      `,
+      [idCondominio],
+    );
+
+    return rows.map((row: Record<string, unknown>) => ({
+      idCondominio: Number(row.id_condominio),
+      periodo: String(row.periodo),
+      ingresos: Number(row.total_ingresos),
+      gastos: Number(row.total_gastos),
+      adeudos: Number(row.total_adeudos),
+    }));
   }
 }

@@ -31,6 +31,9 @@ services:
       NODE_ENV: development
       PORT: ${BACKEND_PORT:-3000}
       DATABASE_URL: ${DATABASE_URL:-postgres://elyx_user:elyx_pass@postgres:5432/elyx}
+      AUTH_REQUIRED: ${AUTH_REQUIRED:-true}
+      JWT_SECRET: ${JWT_SECRET:-Elyx_2026_Strong_JWT_Secret_Change_Me_92f4bca67f7e}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-8h}
     ports:
       - "${BACKEND_PORT:-3000}:3000"
     volumes:

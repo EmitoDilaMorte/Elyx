@@ -1,7 +1,10 @@
-import { Controller, Get, ParseIntPipe, Query } from '@nestjs/common';
+import { Controller, Get, ParseIntPipe, Query, UseGuards } from '@nestjs/common';
+import { CondominioAccessGuard } from '../../common/auth/condominio-access.guard';
+import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { CuotasService } from './cuotas.service';
 
 @Controller('cuotas')
+@UseGuards(JwtAuthGuard, CondominioAccessGuard)
 export class CuotasController {
   constructor(private readonly cuotasService: CuotasService) {}
 

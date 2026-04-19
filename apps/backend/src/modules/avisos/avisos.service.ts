@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { CreateAvisoDto } from './dto/create-aviso.dto';
+import { DataSource } from 'typeorm';
+import { AvisosGateway } from './avisos.gateway';
 
 type AvisoRecord = {
   idAviso: number;
@@ -12,45 +14,63 @@ type AvisoRecord = {
 
 @Injectable()
 export class AvisosService {
-  private nextAvisoId = 3;
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly avisosGateway: AvisosGateway,
+  ) {}
 
-  private readonly avisos: AvisoRecord[] = [
-    {
-      idAviso: 1,
-      idCondominio: 101,
-      idUsuarioCondominioAdmin: 2001,
-      titulo: 'Mantenimiento de cisterna',
-      contenido: 'Habra suspension de agua de 10:00 a 12:00.',
-      fechaPublicacion: '2026-03-13T09:00:00.000Z',
-    },
-    {
-      idAviso: 2,
-      idCondominio: 202,
-      idUsuarioCondominioAdmin: 2002,
-      titulo: 'Asamblea extraordinaria',
-      contenido: 'Reunion en salon comun el sabado a las 18:00.',
-      fechaPublicacion: '2026-03-18T09:00:00.000Z',
-    },
-  ];
+  async findByCondominio(idCondominio: number): Promise<AvisoRecord[]> {
+    const rows = await this.dataSource.query(
+      `
+      SELECT
+        id_aviso,
+        id_condominio,
+        id_usuario_condominio_admin,
+        titulo,
+        contenido,
+        fecha_publicacion
+      FROM avisos
+      WHERE id_condominio = $1
+      ORDER BY fecha_publicacion DESC
+      `,
+      [idCondominio],
+    );
 
-  findByCondominio(idCondominio: number): AvisoRecord[] {
-    return this.avisos
-      .filter((item) => item.idCondominio === idCondominio)
-      .sort((a, b) => b.fechaPublicacion.localeCompare(a.fechaPublicacion));
+    return rows.map((row: Record<string, unknown>) => this.toAvisoRecord(row));
   }
 
-  create(input: CreateAvisoDto): AvisoRecord {
-    const nuevoAviso: AvisoRecord = {
-      idAviso: this.nextAvisoId,
-      idCondominio: input.idCondominio,
-      idUsuarioCondominioAdmin: input.idUsuarioCondominioAdmin,
-      titulo: input.titulo.trim(),
-      contenido: input.contenido.trim(),
-      fechaPublicacion: new Date().toISOString(),
-    };
+  async create(input: CreateAvisoDto): Promise<AvisoRecord> {
+    const rows = await this.dataSource.query(
+      `
+      INSERT INTO avisos (
+        titulo,
+        contenido,
+        fecha_publicacion,
+        id_condominio,
+        id_usuario_condominio_admin
+      )
+      VALUES ($1, $2, NOW(), $3, $4)
+      RETURNING id_aviso, id_condominio, id_usuario_condominio_admin, titulo, contenido, fecha_publicacion
+      `,
+      [input.titulo.trim(), input.contenido.trim(), input.idCondominio, input.idUsuarioCondominioAdmin],
+    );
 
-    this.nextAvisoId += 1;
-    this.avisos.push(nuevoAviso);
-    return nuevoAviso;
+    const aviso = this.toAvisoRecord(rows[0] as Record<string, unknown>);
+    this.avisosGateway.emitAvisoChanged(aviso.idCondominio, {
+      tipo: 'CREADO',
+      aviso,
+    });
+    return aviso;
+  }
+
+  private toAvisoRecord(row: Record<string, unknown>): AvisoRecord {
+    return {
+      idAviso: Number(row.id_aviso),
+      idCondominio: Number(row.id_condominio),
+      idUsuarioCondominioAdmin: Number(row.id_usuario_condominio_admin),
+      titulo: String(row.titulo),
+      contenido: String(row.contenido),
+      fechaPublicacion: new Date(String(row.fecha_publicacion)).toISOString(),
+    };
   }
 }

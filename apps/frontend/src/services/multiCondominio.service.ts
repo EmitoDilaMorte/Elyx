@@ -88,6 +88,8 @@ export function createVotacionInCondominio(data: AppData, input: CrearVotacionIn
     id: data.nextIds.votacion,
     idCondominio: input.idCondominio,
     pregunta: input.pregunta,
+    tipo: 'GENERAL',
+    cambioCuota: null,
     aFavor: 0,
     enContra: 0,
     votosPorUsuario: {},

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { CreateGastoDto } from './dto/create-gasto.dto';
+import { DataSource } from 'typeorm';
 
 type GastoRecord = {
   idGasto: number;
@@ -12,39 +13,52 @@ type GastoRecord = {
 
 @Injectable()
 export class GastosService {
-  private nextGastoId = 4;
+  constructor(private readonly dataSource: DataSource) {}
 
-  private readonly gastos: GastoRecord[] = [
-    { idGasto: 1, idCondominio: 101, concepto: 'Jardineria', categoria: 'Servicios', monto: 5400, fecha: '2026-03-08T12:00:00.000Z' },
-    {
-      idGasto: 2,
-      idCondominio: 101,
-      concepto: 'Mantenimiento elevador',
-      categoria: 'Mantenimiento',
-      monto: 9100,
-      fecha: '2026-03-11T12:00:00.000Z',
-    },
-    { idGasto: 3, idCondominio: 202, concepto: 'Limpieza de alberca', categoria: 'Servicios', monto: 4700, fecha: '2026-03-10T12:00:00.000Z' },
-  ];
+  async listByCondominio(idCondominio: number): Promise<GastoRecord[]> {
+    const rows = await this.dataSource.query(
+      `
+      SELECT id_gasto, id_condominio, concepto, categoria, monto, fecha
+      FROM gastos
+      WHERE id_condominio = $1
+      ORDER BY fecha DESC
+      `,
+      [idCondominio],
+    );
 
-  listByCondominio(idCondominio: number): GastoRecord[] {
-    return this.gastos
-      .filter((item) => item.idCondominio === idCondominio)
-      .sort((a, b) => b.fecha.localeCompare(a.fecha));
+    return rows.map((row: Record<string, unknown>) => this.toGastoRecord(row));
   }
 
-  create(input: CreateGastoDto): GastoRecord {
-    const gasto: GastoRecord = {
-      idGasto: this.nextGastoId,
-      idCondominio: input.idCondominio,
-      concepto: input.concepto.trim(),
-      categoria: input.categoria.trim(),
-      monto: input.monto,
-      fecha: new Date().toISOString(),
-    };
+  async create(input: CreateGastoDto): Promise<GastoRecord> {
+    const rows = await this.dataSource.query(
+      `
+      INSERT INTO gastos (
+        concepto,
+        categoria,
+        monto,
+        fecha,
+        proveedor,
+        nota,
+        url_comprobante,
+        id_condominio
+      )
+      VALUES ($1, $2, $3, NOW(), NULL, NULL, NULL, $4)
+      RETURNING id_gasto, id_condominio, concepto, categoria, monto, fecha
+      `,
+      [input.concepto.trim(), input.categoria.trim(), input.monto, input.idCondominio],
+    );
 
-    this.nextGastoId += 1;
-    this.gastos.unshift(gasto);
-    return gasto;
+    return this.toGastoRecord(rows[0] as Record<string, unknown>);
+  }
+
+  private toGastoRecord(row: Record<string, unknown>): GastoRecord {
+    return {
+      idGasto: Number(row.id_gasto),
+      idCondominio: Number(row.id_condominio),
+      concepto: String(row.concepto),
+      categoria: String(row.categoria),
+      monto: Number(row.monto),
+      fecha: new Date(String(row.fecha)).toISOString(),
+    };
   }
 }

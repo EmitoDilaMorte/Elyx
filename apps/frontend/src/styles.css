@@ -153,6 +153,106 @@ body {
   justify-content: center;
 }
 
+.super-shell {
+  width: min(1120px, 100%);
+  margin: 0 auto;
+  display: grid;
+  gap: 1rem;
+  position: relative;
+  z-index: 1;
+}
+
+.super-nav-panel {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.super-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.super-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.7rem;
+  margin-bottom: 0.9rem;
+}
+
+.super-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.super-block {
+  margin-top: 1rem;
+}
+
+.super-block h3 {
+  margin: 0;
+}
+
+.super-block-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.6rem;
+}
+
+.super-user-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.2fr auto;
+  gap: 0.55rem;
+  margin-bottom: 0.5rem;
+}
+
+.super-condo-list {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.super-condo-card {
+  border: 1px solid #eadfcd;
+  background: #fffcf7;
+  border-radius: 12px;
+  padding: 0.85rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+.super-condo-card h4 {
+  margin: 0;
+}
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 98px;
+  height: 30px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 0.8rem;
+  border: 1px solid transparent;
+}
+
+.status-ok {
+  color: #15603f;
+  background: #e7f8ed;
+  border-color: #bce8ca;
+}
+
+.status-warning {
+  color: #91541b;
+  background: #fff1df;
+  border-color: #f2d3ae;
+}
+
 .app-shell {
   position: relative;
   min-height: calc(100vh - 1.6rem);
@@ -168,6 +268,26 @@ body {
   border: 1px solid rgba(255, 245, 235, 0.64);
   box-shadow: var(--shadow);
   z-index: 1;
+}
+
+@media (max-width: 900px) {
+  .super-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .super-user-row {
+    grid-template-columns: 1fr;
+  }
+
+  .super-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .super-condo-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }
 
 .app-shell::before {
@@ -525,6 +645,10 @@ nav {
   box-shadow: 0 0 0 3px rgba(245, 159, 90, 0.18);
 }
 
+.solicitud-select {
+  margin-bottom: 0.7rem;
+}
+
 .grid-cards {
   display: grid;
   gap: 0.85rem;
@@ -756,6 +880,75 @@ textarea:focus-visible {
   color: var(--ink-soft);
 }
 
+.readonly-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 0.55rem;
+  margin-bottom: 0.8rem;
+}
+
+.readonly-field {
+  border: 1px solid #e8ddcc;
+  border-radius: 12px;
+  background: #fffaf4;
+  padding: 0.55rem 0.7rem;
+  display: grid;
+  gap: 0.1rem;
+}
+
+.readonly-field span {
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #886546;
+  font-weight: 700;
+}
+
+.readonly-field strong {
+  font-size: 0.93rem;
+  color: #2b2f3e;
+}
+
+.profile-track-block {
+  margin-top: 1rem;
+  border-top: 1px solid #ecdcc7;
+  padding-top: 0.9rem;
+}
+
+.profile-track-block h5 {
+  margin: 0 0 0.6rem;
+  font-size: 0.95rem;
+}
+
+.compact-item {
+  padding: 0.75rem;
+}
+
+.mantenimiento-condomino-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.8rem;
+}
+
+.panel-subsection {
+  border: 1px solid #eadfce;
+  border-radius: 14px;
+  background: #fffdf9;
+  padding: 0.8rem;
+}
+
+.panel-subsection h5 {
+  margin: 0 0 0.6rem;
+  font-size: 0.95rem;
+}
+
+@media (min-width: 960px) {
+  .mantenimiento-condomino-grid {
+    grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+    align-items: start;
+  }
+}
+
 .empty-state {
   margin: 0;
   border: 1px dashed #e7ceb0;
@@ -821,6 +1014,24 @@ tbody tr:nth-child(even) {
 
 tbody tr:hover {
   background: rgba(222, 245, 242, 0.6);
+}
+
+.period-toggle {
+  min-height: 30px;
+  border-radius: 999px;
+  border: 1px solid #e1ccb0;
+  background: #fff7ea;
+  color: #75502a;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0.25rem 0.65rem;
+}
+
+.period-toggle.active {
+  border-color: #78c4ba;
+  background: #e3f5f2;
+  color: #085a52;
 }
 
 th {
