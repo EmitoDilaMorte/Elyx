@@ -5,7 +5,11 @@ import { Role } from '../../common/auth/role.enum';
 import { Roles } from '../../common/auth/roles.decorator';
 import { RolesGuard } from '../../common/auth/roles.guard';
 import { CondominosService } from './condominos.service';
-import { CreateSolicitudCambioDto, ResolverSolicitudCambioDto } from './dto/create-solicitud-cambio.dto';
+import {
+  CreateAltaCondominoAdminDto,
+  CreateSolicitudCambioDto,
+  ResolverSolicitudCambioDto,
+} from './dto/create-solicitud-cambio.dto';
 
 type AuthRequest = {
   user?: {
@@ -58,5 +62,22 @@ export class CondominosController {
   @Roles(Role.ADMINISTRADOR)
   ejecutarSolicitud(@Body() dto: ResolverSolicitudCambioDto) {
     return this.condominosService.ejecutarSolicitud(dto);
+  }
+
+  @Get('unidades-disponibles')
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMINISTRADOR)
+  listUnidadesDisponibles(@Query('idCondominio', ParseIntPipe) idCondominio: number) {
+    return this.condominosService.listUnidadesDisponibles(idCondominio);
+  }
+
+  @Post('altas')
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMINISTRADOR)
+  crearAltaCondomino(@Req() req: AuthRequest, @Body() dto: CreateAltaCondominoAdminDto) {
+    return this.condominosService.crearAltaCondomino(dto, {
+      idUsuario: Number(req.user?.sub),
+      memberships: req.user?.memberships ?? [],
+    });
   }
 }

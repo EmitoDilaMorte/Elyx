@@ -1,9 +1,14 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import * as bcrypt from 'bcryptjs';
 import { DataSource, EntityManager } from 'typeorm';
 import { SolicitudCambioEstado } from '../../common/enums/solicitud-cambio-estado.enum';
 import { SolicitudCambioTipo } from '../../common/enums/solicitud-cambio-tipo.enum';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
-import { CreateSolicitudCambioDto, ResolverSolicitudCambioDto } from './dto/create-solicitud-cambio.dto';
+import {
+  CreateAltaCondominoAdminDto,
+  CreateSolicitudCambioDto,
+  ResolverSolicitudCambioDto,
+} from './dto/create-solicitud-cambio.dto';
 
 type SolicitudRecord = {
   idSolicitud: number;
@@ -28,6 +33,12 @@ type SolicitudActor = {
     idCondominio: number;
     rol: string;
   }>;
+};
+
+type UnidadDisponibleRecord = {
+  idUnidad: number;
+  claveUnidad: string;
+  tipoUnidad: string;
 };
 
 @Injectable()
@@ -133,12 +144,231 @@ export class CondominosService {
           created.idCondominio,
           'SOLICITUD_CAMBIO_CREADA',
           'Solicitud pendiente por revisar',
-          `Se recibio una solicitud ${created.tipo}. Revisa la seccion de bajas y cambios para aprobar o rechazar.`,
+          `Se recibio una solicitud ${created.tipo}. Revisa la seccion de altas, bajas y cambios para aprobar o rechazar.`,
         );
       }
 
       this.emitChanged(created, 'CREADA');
       return created;
+    });
+  }
+
+  async listUnidadesDisponibles(idCondominio: number): Promise<UnidadDisponibleRecord[]> {
+    const rawRows = await this.dataSource.query(
+      `
+      SELECT u.id_unidad AS "idUnidad", u.clave_unidad AS "claveUnidad", u.tipo_unidad AS "tipoUnidad"
+      FROM unidades u
+      WHERE u.id_condominio = $1
+        AND u.estado = 'ACTIVA'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM unidades_ocupantes uo
+          WHERE uo.id_unidad = u.id_unidad
+            AND uo.fecha_fin IS NULL
+        )
+      ORDER BY u.clave_unidad ASC
+      `,
+      [idCondominio],
+    );
+
+    const rows = this.normalizeQueryRows(rawRows);
+    return rows.map((row) => ({
+      idUnidad: Number(row.idUnidad ?? row.id_unidad),
+      claveUnidad: String(row.claveUnidad ?? row.clave_unidad ?? ''),
+      tipoUnidad: String(row.tipoUnidad ?? row.tipo_unidad ?? 'OTRO'),
+    }));
+  }
+
+  async crearAltaCondomino(
+    input: CreateAltaCondominoAdminDto,
+    actor: SolicitudActor,
+  ): Promise<{
+    idUsuario: number;
+    idUsuarioCondominio: number;
+    idUnidad: number;
+    correo: string;
+    passwordTemporal: string | null;
+    reutilizado: boolean;
+  }> {
+    if (!Number.isInteger(actor.idUsuario) || actor.idUsuario <= 0) {
+      throw new BadRequestException('No fue posible identificar al usuario autenticado.');
+    }
+
+    const membershipAdmin = actor.memberships.find(
+      (item) =>
+        Number(item.idUsuarioCondominio) === input.idUsuarioCondominioAdmin &&
+        Number(item.idCondominio) === input.idCondominio,
+    );
+
+    if (!membershipAdmin || String(membershipAdmin.rol) !== 'ADMINISTRADOR') {
+      throw new BadRequestException('Solo un administrador activo del condominio puede dar de alta condominos.');
+    }
+
+    return this.dataSource.transaction(async (manager) => {
+      await this.assertMembershipInCondominio(
+        manager,
+        input.idCondominio,
+        input.idUsuarioCondominioAdmin,
+        'El admin no pertenece al condominio indicado.',
+      );
+
+      const unidadRows = this.normalizeQueryRows(
+        await manager.query(
+          `
+          SELECT id_unidad
+          FROM unidades
+          WHERE id_unidad = $1
+            AND id_condominio = $2
+            AND estado = 'ACTIVA'
+          LIMIT 1
+          `,
+          [input.idUnidad, input.idCondominio],
+        ),
+      );
+
+      if (unidadRows.length === 0) {
+        throw new BadRequestException('La unidad seleccionada no existe o no pertenece al condominio.');
+      }
+
+      const ocupadaRows = this.normalizeQueryRows(
+        await manager.query(
+          `
+          SELECT id_unidad_ocupante
+          FROM unidades_ocupantes
+          WHERE id_unidad = $1
+            AND fecha_fin IS NULL
+          LIMIT 1
+          `,
+          [input.idUnidad],
+        ),
+      );
+
+      if (ocupadaRows.length > 0) {
+        throw new BadRequestException('La unidad seleccionada ya tiene un ocupante activo.');
+      }
+
+      const correo = input.correo.trim().toLowerCase();
+      const existingRows = this.normalizeQueryRows(
+        await manager.query(
+          `
+          SELECT id_usuario
+          FROM usuarios
+          WHERE LOWER(correo) = $1
+          LIMIT 1
+          `,
+          [correo],
+        ),
+      );
+
+      let idUsuario = 0;
+      let passwordTemporal: string | null = null;
+      let reutilizado = false;
+
+      if (existingRows.length > 0) {
+        idUsuario = Number(existingRows[0].id_usuario ?? existingRows[0].idUsuario);
+        reutilizado = true;
+
+        const adminRows = this.normalizeQueryRows(
+          await manager.query(
+            `
+            SELECT 1
+            FROM usuarios_condominios
+            WHERE id_usuario = $1
+              AND rol = 'ADMINISTRADOR'
+            LIMIT 1
+            `,
+            [idUsuario],
+          ),
+        );
+
+        if (adminRows.length > 0) {
+          throw new BadRequestException(
+            'Este correo ya esta registrado como administrador. Las cuentas de administrador solo pueden usarse como administrador.',
+          );
+        }
+      } else {
+        passwordTemporal = this.generateTemporalPassword();
+        const hash = await bcrypt.hash(passwordTemporal, 10);
+
+        const createdRows = this.normalizeQueryRows(
+          await manager.query(
+            `
+            INSERT INTO usuarios (
+              nombre,
+              primer_apellido,
+              segundo_apellido,
+              correo,
+              password_hash,
+              es_superusuario,
+              requiere_cambio_password
+            )
+            VALUES ($1, $2, $3, $4, $5, FALSE, TRUE)
+            RETURNING id_usuario
+            `,
+            [
+              input.nombre.trim(),
+              input.apellidoPaterno.trim(),
+              input.apellidoMaterno?.trim() ?? null,
+              correo,
+              hash,
+            ],
+          ),
+        );
+
+        idUsuario = Number(createdRows[0]?.id_usuario ?? createdRows[0]?.idUsuario);
+      }
+
+      if (!Number.isInteger(idUsuario) || idUsuario <= 0) {
+        throw new BadRequestException('No fue posible crear o recuperar el usuario condomino.');
+      }
+
+      const membershipRows = this.normalizeQueryRows(
+        await manager.query(
+          `
+          INSERT INTO usuarios_condominios (rol, estado, id_usuario, id_condominio)
+          VALUES ('CONDOMINO', 'ACTIVO', $1, $2)
+          ON CONFLICT (id_usuario, id_condominio)
+          DO UPDATE SET rol = EXCLUDED.rol, estado = 'ACTIVO'
+          RETURNING id_usuario_condominio
+          `,
+          [idUsuario, input.idCondominio],
+        ),
+      );
+
+      const idUsuarioCondominio = Number(
+        membershipRows[0]?.id_usuario_condominio ?? membershipRows[0]?.idUsuarioCondominio,
+      );
+      if (!Number.isInteger(idUsuarioCondominio) || idUsuarioCondominio <= 0) {
+        throw new BadRequestException('No fue posible crear o actualizar la membresia condomino.');
+      }
+
+      await manager.query(
+        `
+        INSERT INTO unidades_ocupantes (tipo_ocupacion, fecha_inicio, fecha_fin, id_usuario_condominio, id_unidad)
+        VALUES ($1, CURRENT_DATE, NULL, $2, $3)
+        `,
+        [input.tipoOcupacion ?? 'PROPIETARIO', idUsuarioCondominio, input.idUnidad],
+      );
+
+      await this.insertInternalNotification(
+        manager,
+        idUsuarioCondominio,
+        input.idCondominio,
+        'ALTA_INICIAL_USUARIO',
+        'Alta de condomino registrada',
+        reutilizado
+          ? 'Se activo tu acceso como condomino en este condominio y se te asigno una unidad.'
+          : 'Tu cuenta de condomino fue creada con password temporal. Debes cambiarla al iniciar sesion.',
+      );
+
+      return {
+        idUsuario,
+        idUsuarioCondominio,
+        idUnidad: input.idUnidad,
+        correo,
+        passwordTemporal,
+        reutilizado,
+      };
     });
   }
 
@@ -575,5 +805,14 @@ export class CondominosService {
       return parsed.toISOString();
     }
     return new Date().toISOString();
+  }
+
+  private generateTemporalPassword() {
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789@#*';
+    let out = 'Elyx!';
+    for (let i = 0; i < 8; i += 1) {
+      out += alphabet[Math.floor(Math.random() * alphabet.length)];
+    }
+    return out;
   }
 }

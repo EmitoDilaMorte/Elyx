@@ -96,6 +96,18 @@ type DashboardPageProps = {
     motivo: string;
     idUnidadDestino: string;
   };
+  altaCondominoForm: {
+    nombre: string;
+    apellidoPaterno: string;
+    correo: string;
+    idUnidad: string;
+    tipoOcupacion: 'PROPIETARIO' | 'INQUILINO' | 'HABITANTE';
+  };
+  unidadesDisponibles: Array<{
+    idUnidad: number;
+    claveUnidad: string;
+    tipoUnidad: string;
+  }>;
   solicitudesCambio: Array<{
     idSolicitud: number;
     idCondominio: number;
@@ -178,6 +190,15 @@ type DashboardPageProps = {
   onCrearSolicitudCambio: () => void;
   onRefreshSolicitudesCambio: () => void;
   onResolverSolicitudCambio: (idSolicitud: number, accion: 'aprobar' | 'rechazar' | 'ejecutar') => void;
+  onAltaCondominoFormChange: (value: {
+    nombre: string;
+    apellidoPaterno: string;
+    correo: string;
+    idUnidad: string;
+    tipoOcupacion: 'PROPIETARIO' | 'INQUILINO' | 'HABITANTE';
+  }) => void;
+  onCrearAltaCondomino: () => void;
+  onRefreshUnidadesDisponibles: () => void;
   periodosSeleccionados: string[];
   periodosDisponibles: string[];
   onAlternarPeriodoReporte: (value: string) => void;
@@ -224,6 +245,8 @@ export function DashboardPage({
   onboardingForm,
   perfil,
   solicitudForm,
+  altaCondominoForm,
+  unidadesDisponibles,
   solicitudesCambio,
   loadingLabel,
   feedback,
@@ -267,6 +290,9 @@ export function DashboardPage({
   onCrearSolicitudCambio,
   onRefreshSolicitudesCambio,
   onResolverSolicitudCambio,
+  onAltaCondominoFormChange,
+  onCrearAltaCondomino,
+  onRefreshUnidadesDisponibles,
   periodosSeleccionados,
   periodosDisponibles,
   onAlternarPeriodoReporte,
@@ -290,7 +316,7 @@ export function DashboardPage({
       : ([
           { key: 'validaciones' as ViewKey, label: 'Validaciones' },
           { key: 'perfil' as ViewKey, label: 'Datos personales' },
-          { key: 'solicitudes' as ViewKey, label: 'Bajas y cambios' },
+          { key: 'solicitudes' as ViewKey, label: 'Altas, bajas y cambios' },
           { key: 'avisos' as ViewKey, label: 'Avisos' },
           { key: 'votaciones' as ViewKey, label: 'Votaciones' },
           { key: 'finanzas' as ViewKey, label: 'Reportes' },
@@ -1343,11 +1369,131 @@ export function DashboardPage({
           {role !== 'condomino' && activeView === 'solicitudes' && (
             <section className="panel animate-in">
               <div className="super-block-header">
-                <h4>Bajas y cambios</h4>
-                <button className="soft-btn" onClick={onRefreshSolicitudesCambio}>
-                  Actualizar
-                </button>
+                <h4>Altas, bajas y cambios</h4>
+                <div className="btn-row">
+                  <button className="soft-btn" onClick={onRefreshUnidadesDisponibles}>
+                    Actualizar unidades vacias
+                  </button>
+                  <button className="soft-btn" onClick={onRefreshSolicitudesCambio}>
+                    Actualizar solicitudes
+                  </button>
+                </div>
               </div>
+
+              <article className="payment-item" style={{ marginBottom: '0.8rem' }}>
+                <h5 style={{ marginTop: 0 }}>Alta de condomino con unidad vacia</h5>
+                <p className="helper-text" style={{ marginTop: '0.2rem' }}>
+                  El administrador crea el condomino y lo asigna a una unidad activa sin ocupante.
+                </p>
+
+                <div className="grid-cards super-grid" style={{ marginTop: '0.5rem' }}>
+                  <div>
+                    <label className="field-label" htmlFor="alta-condomino-nombre">
+                      Nombre
+                    </label>
+                    <input
+                      id="alta-condomino-nombre"
+                      value={altaCondominoForm.nombre}
+                      onChange={(event) =>
+                        onAltaCondominoFormChange({
+                          ...altaCondominoForm,
+                          nombre: event.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label className="field-label" htmlFor="alta-condomino-apellido">
+                      Apellido paterno
+                    </label>
+                    <input
+                      id="alta-condomino-apellido"
+                      value={altaCondominoForm.apellidoPaterno}
+                      onChange={(event) =>
+                        onAltaCondominoFormChange({
+                          ...altaCondominoForm,
+                          apellidoPaterno: event.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label className="field-label" htmlFor="alta-condomino-correo">
+                      Correo
+                    </label>
+                    <input
+                      id="alta-condomino-correo"
+                      value={altaCondominoForm.correo}
+                      onChange={(event) =>
+                        onAltaCondominoFormChange({
+                          ...altaCondominoForm,
+                          correo: event.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label className="field-label" htmlFor="alta-condomino-unidad">
+                      Unidad vacia disponible
+                    </label>
+                    <select
+                      id="alta-condomino-unidad"
+                      className="condominio-switcher-select"
+                      value={altaCondominoForm.idUnidad}
+                      onChange={(event) =>
+                        onAltaCondominoFormChange({
+                          ...altaCondominoForm,
+                          idUnidad: event.target.value,
+                        })
+                      }
+                    >
+                      <option value="">Selecciona una unidad</option>
+                      {unidadesDisponibles.map((unidad) => (
+                        <option key={unidad.idUnidad} value={unidad.idUnidad}>
+                          {unidad.claveUnidad} ({unidad.tipoUnidad})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="field-label" htmlFor="alta-condomino-ocupacion">
+                      Tipo de ocupacion
+                    </label>
+                    <select
+                      id="alta-condomino-ocupacion"
+                      className="condominio-switcher-select"
+                      value={altaCondominoForm.tipoOcupacion}
+                      onChange={(event) =>
+                        onAltaCondominoFormChange({
+                          ...altaCondominoForm,
+                          tipoOcupacion:
+                            event.target.value === 'INQUILINO'
+                              ? 'INQUILINO'
+                              : event.target.value === 'HABITANTE'
+                                ? 'HABITANTE'
+                                : 'PROPIETARIO',
+                        })
+                      }
+                    >
+                      <option value="PROPIETARIO">PROPIETARIO</option>
+                      <option value="INQUILINO">INQUILINO</option>
+                      <option value="HABITANTE">HABITANTE</option>
+                    </select>
+                  </div>
+                </div>
+
+                {unidadesDisponibles.length === 0 ? (
+                  <p className="helper-text" style={{ marginTop: '0.6rem' }}>
+                    No hay unidades vacias disponibles para asignar en este condominio.
+                  </p>
+                ) : null}
+
+                <div className="btn-row" style={{ marginTop: '0.75rem' }}>
+                  <button className="primary-btn" onClick={onCrearAltaCondomino}>
+                    Crear condomino y asignar unidad
+                  </button>
+                </div>
+              </article>
 
               <div className="payment-list">
                 {solicitudesCambio.length === 0 && <p className="empty-state">No hay solicitudes registradas.</p>}

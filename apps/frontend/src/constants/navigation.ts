@@ -14,7 +14,7 @@ export const navAdministrador: NavItem[] = [
   { key: 'inicio', label: 'Panel admin', icon: 'users' },
   { key: 'validaciones', label: 'Validar pagos', icon: 'approve' },
   { key: 'perfil', label: 'Datos personales', icon: 'users' },
-  { key: 'solicitudes', label: 'Bajas y cambios', icon: 'tools' },
+  { key: 'solicitudes', label: 'Altas, bajas y cambios', icon: 'tools' },
   { key: 'avisos', label: 'Avisos', icon: 'megaphone' },
   { key: 'votaciones', label: 'Votaciones', icon: 'vote' },
   { key: 'mantenimiento', label: 'Reportes mantenimiento', icon: 'tools' },

@@ -153,19 +153,43 @@ type SuperOnboardingUserState = {
   nombre: string;
   apellidoPaterno: string;
   correo: string;
+  claveUnidad: string;
+  tipoUnidad: 'CASA' | 'DEPARTAMENTO' | 'LOCAL' | 'OTRO';
+};
+
+type SuperOnboardingUnitState = {
+  claveUnidad: string;
+  tipoUnidad: 'CASA' | 'DEPARTAMENTO' | 'LOCAL' | 'OTRO';
 };
 
 type SuperOnboardingState = {
   nombreCondominio: string;
   direccionCondominio: string;
+  montoCuotaInicial: string;
+  diaLimitePago: string;
+  recargoFijoPorDia: string;
+  periodoAplicacionInicial: string;
+  fechaInicioCobro: string;
   admins: SuperOnboardingUserState[];
   condominos: SuperOnboardingUserState[];
+  unidades: SuperOnboardingUnitState[];
 };
 
 type SuperOnboardingResult = {
   idCondominio: number;
   adminsCreados: Array<{ correo: string; passwordTemporal: string | null; reutilizado: boolean }>;
   condominosCreados: Array<{ correo: string; passwordTemporal: string | null; reutilizado: boolean }>;
+  unidadesCreadas: number;
+  ocupacionesCreadas: number;
+  cuotasInicialesCreadas: number;
+  cuotaInicial: {
+    montoCuotaInicial: number;
+    diaLimitePago: number;
+    recargoFijoPorDia: number;
+    periodoAplicacionInicial: string;
+    fechaInicioCobro: string;
+  };
+  advertenciaCuotas?: string;
 };
 
 type SuperCondominioState = {
@@ -189,6 +213,20 @@ type SolicitudFormState = {
   tipo: 'BAJA_CONDOMINO' | 'CAMBIO_UNIDAD';
   motivo: string;
   idUnidadDestino: string;
+};
+
+type AltaCondominoAdminFormState = {
+  nombre: string;
+  apellidoPaterno: string;
+  correo: string;
+  idUnidad: string;
+  tipoOcupacion: 'PROPIETARIO' | 'INQUILINO' | 'HABITANTE';
+};
+
+type UnidadDisponibleState = {
+  idUnidad: number;
+  claveUnidad: string;
+  tipoUnidad: string;
 };
 
 type SolicitudCambioState = {
@@ -236,13 +274,26 @@ const EMPTY_SUPER_USER: SuperOnboardingUserState = {
   nombre: '',
   apellidoPaterno: '',
   correo: '',
+  claveUnidad: '',
+  tipoUnidad: 'DEPARTAMENTO',
+};
+
+const EMPTY_SUPER_UNIDAD: SuperOnboardingUnitState = {
+  claveUnidad: '',
+  tipoUnidad: 'DEPARTAMENTO',
 };
 
 const DEFAULT_SUPER_ONBOARDING: SuperOnboardingState = {
   nombreCondominio: '',
   direccionCondominio: '',
+  montoCuotaInicial: '0',
+  diaLimitePago: '10',
+  recargoFijoPorDia: '0',
+  periodoAplicacionInicial: `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`,
+  fechaInicioCobro: `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`,
   admins: [{ ...EMPTY_SUPER_USER }],
   condominos: [{ ...EMPTY_SUPER_USER }],
+  unidades: [],
 };
 
 const DEFAULT_PERFIL: PerfilState = {
@@ -255,6 +306,14 @@ const DEFAULT_SOLICITUD_FORM: SolicitudFormState = {
   tipo: 'BAJA_CONDOMINO',
   motivo: '',
   idUnidadDestino: '',
+};
+
+const DEFAULT_ALTA_CONDOMINO_FORM: AltaCondominoAdminFormState = {
+  nombre: '',
+  apellidoPaterno: '',
+  correo: '',
+  idUnidad: '',
+  tipoOcupacion: 'PROPIETARIO',
 };
 
 const DEFAULT_CUOTA_CAMBIO_FORM: CuotaCambioVotacionFormState = {
@@ -298,6 +357,9 @@ function AppContent() {
   const [superCondominios, setSuperCondominios] = useState<SuperCondominioState[]>([]);
   const [perfil, setPerfil] = useState<PerfilState>(DEFAULT_PERFIL);
   const [solicitudForm, setSolicitudForm] = useState<SolicitudFormState>(DEFAULT_SOLICITUD_FORM);
+  const [altaCondominoForm, setAltaCondominoForm] =
+    useState<AltaCondominoAdminFormState>(DEFAULT_ALTA_CONDOMINO_FORM);
+  const [unidadesDisponibles, setUnidadesDisponibles] = useState<UnidadDisponibleState[]>([]);
   const [solicitudesCambio, setSolicitudesCambio] = useState<SolicitudCambioState[]>([]);
   const [cuotaCambioForm, setCuotaCambioForm] = useState<CuotaCambioVotacionFormState>(DEFAULT_CUOTA_CAMBIO_FORM);
   const [votacionesCambioCuota, setVotacionesCambioCuota] = useState<VotacionActiva[]>([]);
@@ -1003,6 +1065,8 @@ function AppContent() {
     setSessionUser(null);
     setPerfil(DEFAULT_PERFIL);
     setSolicitudForm(DEFAULT_SOLICITUD_FORM);
+    setAltaCondominoForm(DEFAULT_ALTA_CONDOMINO_FORM);
+    setUnidadesDisponibles([]);
     setSolicitudesCambio([]);
     setCuotaCambioForm(DEFAULT_CUOTA_CAMBIO_FORM);
     setVotacionesCambioCuota([]);
@@ -1883,6 +1947,24 @@ function AppContent() {
     }
   };
 
+  const cargarUnidadesDisponiblesAdmin = async () => {
+    if (!isAuthenticated || role !== 'administrador' || !effectiveActiveCondominioId) {
+      setUnidadesDisponibles([]);
+      return;
+    }
+
+    try {
+      const items = await backendApi.listUnidadesDisponibles({
+        idCondominio: effectiveActiveCondominioId,
+      });
+      setUnidadesDisponibles(items);
+    } catch (error) {
+      console.error(error);
+      setFeedback(extractApiErrorMessage(error));
+      window.setTimeout(() => setFeedback(null), 2200);
+    }
+  };
+
   const cargarVotacionesCambioCuota = async () => {
     if (role !== 'administrador' || !effectiveActiveCondominioId) {
       setVotacionesCambioCuota([]);
@@ -1948,6 +2030,54 @@ function AppContent() {
     }
   };
 
+  const crearAltaCondominoAdmin = async () => {
+    if (role !== 'administrador' || !effectiveActiveCondominioId || !activeMembership) {
+      return;
+    }
+
+    const nombre = altaCondominoForm.nombre.trim();
+    const apellidoPaterno = altaCondominoForm.apellidoPaterno.trim();
+    const correo = altaCondominoForm.correo.trim().toLowerCase();
+    const idUnidad = Number(altaCondominoForm.idUnidad);
+
+    if (!nombre || !apellidoPaterno || !correo) {
+      setFeedback('Completa nombre, apellido paterno y correo del condomino.');
+      window.setTimeout(() => setFeedback(null), 2200);
+      return;
+    }
+
+    if (!Number.isInteger(idUnidad) || idUnidad <= 0) {
+      setFeedback('Selecciona una unidad vacia disponible.');
+      window.setTimeout(() => setFeedback(null), 2200);
+      return;
+    }
+
+    try {
+      const created = await backendApi.createAltaCondominoAdmin({
+        idCondominio: effectiveActiveCondominioId,
+        idUsuarioCondominioAdmin: activeMembership.idUsuarioCondominio,
+        nombre,
+        apellidoPaterno,
+        correo,
+        idUnidad,
+        tipoOcupacion: altaCondominoForm.tipoOcupacion,
+      });
+
+      setAltaCondominoForm(DEFAULT_ALTA_CONDOMINO_FORM);
+      await Promise.all([cargarUnidadesDisponiblesAdmin(), cargarSolicitudesCambio()]);
+      runAction(
+        'Registrando alta de condomino...',
+        created.passwordTemporal
+          ? `Condomino creado. Password temporal: ${created.passwordTemporal}`
+          : 'Condomino reutilizado y asignado correctamente.',
+      );
+    } catch (error) {
+      console.error(error);
+      setFeedback(extractApiErrorMessage(error));
+      window.setTimeout(() => setFeedback(null), 2600);
+    }
+  };
+
   const resolverSolicitudCambioAdmin = async (
     idSolicitud: number,
     accion: 'aprobar' | 'rechazar' | 'ejecutar',
@@ -2000,6 +2130,15 @@ function AppContent() {
     void cargarVotacionesCambioCuota();
   }, [isAuthenticated, role, effectiveActiveCondominioId]);
 
+  useEffect(() => {
+    if (!isAuthenticated || role !== 'administrador' || !effectiveActiveCondominioId) {
+      setUnidadesDisponibles([]);
+      return;
+    }
+
+    void cargarUnidadesDisponiblesAdmin();
+  }, [isAuthenticated, role, effectiveActiveCondominioId]);
+
   const crearOnboardingInicial = async () => {
     if (role !== 'superusuario') {
       return;
@@ -2009,11 +2148,21 @@ function AppContent() {
       (item) => item.nombre.trim() && item.apellidoPaterno.trim() && item.correo.trim(),
     );
     const condominosValidos = superOnboarding.condominos.filter(
-      (item) => item.nombre.trim() && item.apellidoPaterno.trim() && item.correo.trim(),
+      (item) =>
+        item.nombre.trim() &&
+        item.apellidoPaterno.trim() &&
+        item.correo.trim() &&
+        item.claveUnidad.trim() &&
+        item.tipoUnidad,
     );
+    const unidadesValidas = superOnboarding.unidades.filter((item) => item.claveUnidad.trim());
 
-    if (!superOnboarding.nombreCondominio.trim() || adminsValidos.length === 0 || condominosValidos.length === 0) {
-      setFeedback('Completa condominio y al menos un admin y un condomino con nombre, apellido y correo.');
+    if (
+      !superOnboarding.nombreCondominio.trim() ||
+      adminsValidos.length === 0 ||
+      condominosValidos.length === 0
+    ) {
+      setFeedback('Completa condominio, al menos un admin y un condomino con unidad asignada.');
       window.setTimeout(() => setFeedback(null), 2200);
       return;
     }
@@ -2021,6 +2170,77 @@ function AppContent() {
     const correos = [...adminsValidos, ...condominosValidos].map((item) => item.correo.trim().toLowerCase());
     if (new Set(correos).size !== correos.length) {
       setFeedback('No se permiten correos repetidos entre admins y condominos.');
+      window.setTimeout(() => setFeedback(null), 2200);
+      return;
+    }
+
+    const clavesUnidadesCondominos = condominosValidos.map((item) => item.claveUnidad.trim().toLowerCase());
+    const clavesUnidadesExtras = unidadesValidas.map((item) => item.claveUnidad.trim().toLowerCase());
+    const clavesUnidades = [...clavesUnidadesCondominos, ...clavesUnidadesExtras];
+    if (new Set(clavesUnidades).size !== clavesUnidades.length) {
+      setFeedback('No se permiten claves de unidad repetidas.');
+      window.setTimeout(() => setFeedback(null), 2200);
+      return;
+    }
+
+    const montoCuotaInicial = Number(superOnboarding.montoCuotaInicial);
+    const diaLimitePago = Number(superOnboarding.diaLimitePago);
+    const recargoFijoPorDia = Number(superOnboarding.recargoFijoPorDia);
+    const periodoAplicacionInicial = superOnboarding.periodoAplicacionInicial.trim();
+    const fechaInicioCobro = superOnboarding.fechaInicioCobro.trim();
+
+    if (!Number.isFinite(montoCuotaInicial) || montoCuotaInicial < 0.01) {
+      setFeedback('El monto de cuota inicial debe ser mayor o igual a 0.01.');
+      window.setTimeout(() => setFeedback(null), 2200);
+      return;
+    }
+
+    if (!Number.isInteger(diaLimitePago) || diaLimitePago < 1 || diaLimitePago > 28) {
+      setFeedback('El dia limite de pago debe estar entre 1 y 28.');
+      window.setTimeout(() => setFeedback(null), 2200);
+      return;
+    }
+
+    if (!Number.isFinite(recargoFijoPorDia) || recargoFijoPorDia < 0) {
+      setFeedback('El recargo fijo por dia debe ser un numero mayor o igual a 0.');
+      window.setTimeout(() => setFeedback(null), 2200);
+      return;
+    }
+
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(periodoAplicacionInicial)) {
+      setFeedback('El periodo de aplicacion inicial debe tener formato YYYY-MM.');
+      window.setTimeout(() => setFeedback(null), 2200);
+      return;
+    }
+
+    if (!fechaInicioCobro) {
+      setFeedback('La fecha de inicio de cobro es obligatoria.');
+      window.setTimeout(() => setFeedback(null), 2200);
+      return;
+    }
+
+    const matchFechaInicio = /^(\d{4})-(\d{2})-(\d{2})$/.exec(fechaInicioCobro);
+    if (!matchFechaInicio) {
+      setFeedback('La fecha de inicio de cobro no es valida.');
+      window.setTimeout(() => setFeedback(null), 2200);
+      return;
+    }
+
+    const year = Number(matchFechaInicio[1]);
+    const month = Number(matchFechaInicio[2]);
+    const day = Number(matchFechaInicio[3]);
+    const inicioDate = new Date(year, month - 1, day);
+    const hoy = new Date();
+    const inicioBase = new Date(year, month - 1, day);
+    const hoyBase = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate());
+    if (
+      Number.isNaN(inicioDate.getTime()) ||
+      inicioDate.getFullYear() !== year ||
+      inicioDate.getMonth() !== month - 1 ||
+      inicioDate.getDate() !== day ||
+      inicioBase < hoyBase
+    ) {
+      setFeedback('La fecha de inicio de cobro no puede ser pasada.');
       window.setTimeout(() => setFeedback(null), 2200);
       return;
     }
@@ -2037,6 +2257,8 @@ function AppContent() {
         nombreCondomino: condominoPrincipal.nombre.trim(),
         apellidoPaternoCondomino: condominoPrincipal.apellidoPaterno.trim(),
         correoCondomino: condominoPrincipal.correo.trim().toLowerCase(),
+        claveUnidadCondomino: condominoPrincipal.claveUnidad.trim(),
+        tipoUnidadCondomino: condominoPrincipal.tipoUnidad,
         admins: adminsValidos.slice(1).map((item) => ({
           nombre: item.nombre.trim(),
           apellidoPaterno: item.apellidoPaterno.trim(),
@@ -2046,6 +2268,17 @@ function AppContent() {
           nombre: item.nombre.trim(),
           apellidoPaterno: item.apellidoPaterno.trim(),
           correo: item.correo.trim().toLowerCase(),
+          claveUnidad: item.claveUnidad.trim(),
+          tipoUnidad: item.tipoUnidad,
+        })),
+        montoCuotaInicial,
+        diaLimitePago,
+        recargoFijoPorDia,
+        periodoAplicacionInicial,
+        fechaInicioCobro,
+        unidades: unidadesValidas.map((item) => ({
+          claveUnidad: item.claveUnidad.trim(),
+          tipoUnidad: item.tipoUnidad,
         })),
       });
 
@@ -2054,6 +2287,11 @@ function AppContent() {
         idCondominio: created.idCondominio,
         adminsCreados: created.adminsCreados,
         condominosCreados: created.condominosCreados,
+        unidadesCreadas: created.unidadesCreadas,
+        ocupacionesCreadas: created.ocupacionesCreadas,
+        cuotasInicialesCreadas: created.cuotasInicialesCreadas,
+        cuotaInicial: created.cuotaInicial,
+        advertenciaCuotas: created.advertenciaCuotas,
       });
       await cargarSuperCondominios();
       setFeedback(`Onboarding creado para condominio ${created.idCondominio} con ${created.adminsCreados.length} admin(s) y ${created.condominosCreados.length} condomino(s).`);
@@ -2134,8 +2372,14 @@ function AppContent() {
         feedback={feedback}
         nombreCondominio={superOnboarding.nombreCondominio}
         direccionCondominio={superOnboarding.direccionCondominio}
+        montoCuotaInicial={superOnboarding.montoCuotaInicial}
+        diaLimitePago={superOnboarding.diaLimitePago}
+        recargoFijoPorDia={superOnboarding.recargoFijoPorDia}
+        periodoAplicacionInicial={superOnboarding.periodoAplicacionInicial}
+        fechaInicioCobro={superOnboarding.fechaInicioCobro}
         admins={superOnboarding.admins}
         condominos={superOnboarding.condominos}
+        unidades={superOnboarding.unidades}
         createdSummary={superOnboardingResult}
         superSection={superSection}
         condominios={superCondominios}
@@ -2152,6 +2396,36 @@ function AppContent() {
           setSuperOnboarding((prev) => ({
             ...prev,
             direccionCondominio: value,
+          }))
+        }
+        onMontoCuotaInicialChange={(value) =>
+          setSuperOnboarding((prev) => ({
+            ...prev,
+            montoCuotaInicial: value,
+          }))
+        }
+        onDiaLimitePagoChange={(value) =>
+          setSuperOnboarding((prev) => ({
+            ...prev,
+            diaLimitePago: value,
+          }))
+        }
+        onRecargoFijoPorDiaChange={(value) =>
+          setSuperOnboarding((prev) => ({
+            ...prev,
+            recargoFijoPorDia: value,
+          }))
+        }
+        onPeriodoAplicacionInicialChange={(value) =>
+          setSuperOnboarding((prev) => ({
+            ...prev,
+            periodoAplicacionInicial: value,
+          }))
+        }
+        onFechaInicioCobroChange={(value) =>
+          setSuperOnboarding((prev) => ({
+            ...prev,
+            fechaInicioCobro: value,
           }))
         }
         onUserFieldChange={(group, index, field, value) =>
@@ -2180,6 +2454,31 @@ function AppContent() {
           }))
         }
         onSubmit={crearOnboardingInicial}
+        onUnidadFieldChange={(index, field, value) =>
+          setSuperOnboarding((prev) => ({
+            ...prev,
+            unidades: prev.unidades.map((item, itemIndex) =>
+              itemIndex === index
+                ? {
+                    ...item,
+                    [field]: value,
+                  }
+                : item,
+            ),
+          }))
+        }
+        onAddUnidad={() =>
+          setSuperOnboarding((prev) => ({
+            ...prev,
+            unidades: [...prev.unidades, { ...EMPTY_SUPER_UNIDAD }],
+          }))
+        }
+        onRemoveUnidad={(index) =>
+          setSuperOnboarding((prev) => ({
+            ...prev,
+            unidades: prev.unidades.filter((_, itemIndex) => itemIndex !== index),
+          }))
+        }
         onLogout={cerrarSesion}
       />
     );
@@ -2226,6 +2525,8 @@ function AppContent() {
       onboardingForm={onboardingForm}
       perfil={perfil}
       solicitudForm={solicitudForm}
+      altaCondominoForm={altaCondominoForm}
+      unidadesDisponibles={unidadesDisponibles}
       solicitudesCambio={solicitudesCambio}
       loadingLabel={loadingLabel}
       feedback={feedback}
@@ -2274,6 +2575,9 @@ function AppContent() {
       onCrearSolicitudCambio={crearSolicitudCambioCondomino}
       onRefreshSolicitudesCambio={cargarSolicitudesCambio}
       onResolverSolicitudCambio={resolverSolicitudCambioAdmin}
+      onAltaCondominoFormChange={setAltaCondominoForm}
+      onCrearAltaCondomino={crearAltaCondominoAdmin}
+      onRefreshUnidadesDisponibles={cargarUnidadesDisponiblesAdmin}
       periodosSeleccionados={periodosSeleccionados}
       periodosDisponibles={periodosDisponibles}
       onAlternarPeriodoReporte={alternarPeriodoReporte}

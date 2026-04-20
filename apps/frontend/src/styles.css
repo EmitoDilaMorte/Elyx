@@ -209,6 +209,14 @@ body {
   margin-bottom: 0.5rem;
 }
 
+.super-user-row-condomino {
+  grid-template-columns: 1fr 1fr 1.2fr 1fr 1fr auto;
+}
+
+.super-user-row-unidad {
+  grid-template-columns: 1.2fr 1fr auto;
+}
+
 .super-condo-list {
   display: grid;
   gap: 0.7rem;

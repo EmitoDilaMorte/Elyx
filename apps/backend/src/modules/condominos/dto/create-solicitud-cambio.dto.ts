@@ -50,3 +50,38 @@ export class ResolverSolicitudCambioDto {
   @IsString()
   comentario?: string;
 }
+
+export class CreateAltaCondominoAdminDto {
+  @IsInt()
+  @Min(1)
+  idCondominio!: number;
+
+  @IsInt()
+  @Min(1)
+  idUsuarioCondominioAdmin!: number;
+
+  @IsString()
+  @MinLength(2)
+  nombre!: string;
+
+  @IsString()
+  @MinLength(2)
+  apellidoPaterno!: string;
+
+  @IsOptional()
+  @IsString()
+  apellidoMaterno?: string;
+
+  @IsString()
+  @MinLength(5)
+  correo!: string;
+
+  @IsInt()
+  @Min(1)
+  idUnidad!: number;
+
+  @IsOptional()
+  @IsString()
+  @IsIn(['PROPIETARIO', 'INQUILINO', 'HABITANTE'])
+  tipoOcupacion?: 'PROPIETARIO' | 'INQUILINO' | 'HABITANTE';
+}

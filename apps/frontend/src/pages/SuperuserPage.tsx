@@ -2,6 +2,13 @@ type SuperuserUserForm = {
   nombre: string;
   apellidoPaterno: string;
   correo: string;
+  claveUnidad: string;
+  tipoUnidad: 'CASA' | 'DEPARTAMENTO' | 'LOCAL' | 'OTRO';
+};
+
+type SuperuserUnidadForm = {
+  claveUnidad: string;
+  tipoUnidad: 'CASA' | 'DEPARTAMENTO' | 'LOCAL' | 'OTRO';
 };
 
 type SuperCondominioItem = {
@@ -21,12 +28,29 @@ type SuperuserPageProps = {
   feedback: string | null;
   nombreCondominio: string;
   direccionCondominio: string;
+  montoCuotaInicial: string;
+  diaLimitePago: string;
+  recargoFijoPorDia: string;
+  periodoAplicacionInicial: string;
+  fechaInicioCobro: string;
   admins: SuperuserUserForm[];
   condominos: SuperuserUserForm[];
+  unidades: SuperuserUnidadForm[];
   createdSummary: {
     idCondominio: number;
     adminsCreados: Array<{ correo: string; passwordTemporal: string | null; reutilizado: boolean }>;
     condominosCreados: Array<{ correo: string; passwordTemporal: string | null; reutilizado: boolean }>;
+    unidadesCreadas: number;
+    ocupacionesCreadas: number;
+    cuotasInicialesCreadas: number;
+    cuotaInicial: {
+      montoCuotaInicial: number;
+      diaLimitePago: number;
+      recargoFijoPorDia: number;
+      periodoAplicacionInicial: string;
+      fechaInicioCobro: string;
+    };
+    advertenciaCuotas?: string;
   } | null;
   superSection: 'alta' | 'condominios';
   condominios: SuperCondominioItem[];
@@ -35,6 +59,11 @@ type SuperuserPageProps = {
   onToggleCondominioEstado: (idCondominio: number, nextEstado: 'ACTIVO' | 'INACTIVO') => void;
   onNombreCondominioChange: (value: string) => void;
   onDireccionCondominioChange: (value: string) => void;
+  onMontoCuotaInicialChange: (value: string) => void;
+  onDiaLimitePagoChange: (value: string) => void;
+  onRecargoFijoPorDiaChange: (value: string) => void;
+  onPeriodoAplicacionInicialChange: (value: string) => void;
+  onFechaInicioCobroChange: (value: string) => void;
   onUserFieldChange: (
     group: 'admins' | 'condominos',
     index: number,
@@ -43,6 +72,9 @@ type SuperuserPageProps = {
   ) => void;
   onAddUser: (group: 'admins' | 'condominos') => void;
   onRemoveUser: (group: 'admins' | 'condominos', index: number) => void;
+  onUnidadFieldChange: (index: number, field: keyof SuperuserUnidadForm, value: string) => void;
+  onAddUnidad: () => void;
+  onRemoveUnidad: (index: number) => void;
   onSubmit: () => void;
   onLogout: () => void;
 };
@@ -53,8 +85,14 @@ export function SuperuserPage({
   feedback,
   nombreCondominio,
   direccionCondominio,
+  montoCuotaInicial,
+  diaLimitePago,
+  recargoFijoPorDia,
+  periodoAplicacionInicial,
+  fechaInicioCobro,
   admins,
   condominos,
+  unidades,
   createdSummary,
   superSection,
   condominios,
@@ -63,12 +101,23 @@ export function SuperuserPage({
   onToggleCondominioEstado,
   onNombreCondominioChange,
   onDireccionCondominioChange,
+  onMontoCuotaInicialChange,
+  onDiaLimitePagoChange,
+  onRecargoFijoPorDiaChange,
+  onPeriodoAplicacionInicialChange,
+  onFechaInicioCobroChange,
   onUserFieldChange,
   onAddUser,
   onRemoveUser,
+  onUnidadFieldChange,
+  onAddUnidad,
+  onRemoveUnidad,
   onSubmit,
   onLogout,
 }: SuperuserPageProps) {
+  const today = new Date();
+  const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
   return (
     <div className="app-bg">
       <div className="super-shell">
@@ -121,6 +170,62 @@ export function SuperuserPage({
 
             <section className="super-block">
               <div className="super-block-header">
+                <h3>Configuracion de cuota inicial</h3>
+              </div>
+              <div className="grid-cards super-grid">
+                <div>
+                  <label className="field-label">Monto cuota inicial (MXN)</label>
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={montoCuotaInicial}
+                    onChange={(event) => onMontoCuotaInicialChange(event.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="field-label">Dia limite de pago (1-28)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="28"
+                    step="1"
+                    value={diaLimitePago}
+                    onChange={(event) => onDiaLimitePagoChange(event.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="field-label">Recargo fijo por dia (MXN)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={recargoFijoPorDia}
+                    onChange={(event) => onRecargoFijoPorDiaChange(event.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="field-label">Periodo de aplicacion inicial (YYYY-MM)</label>
+                  <input
+                    placeholder="2026-05"
+                    value={periodoAplicacionInicial}
+                    onChange={(event) => onPeriodoAplicacionInicialChange(event.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="field-label">Fecha de inicio de cobro</label>
+                  <input
+                    type="date"
+                    min={todayIso}
+                    value={fechaInicioCobro}
+                    onChange={(event) => onFechaInicioCobroChange(event.target.value)}
+                  />
+                </div>
+              </div>
+            </section>
+
+            <section className="super-block">
+              <div className="super-block-header">
                 <h3>Administradores</h3>
                 <button className="soft-btn" onClick={() => onAddUser('admins')}>
                   Agregar otro admin
@@ -157,8 +262,9 @@ export function SuperuserPage({
                   Agregar otro usuario
                 </button>
               </div>
+              <p className="helper-text">Cada condomino debe tener su unidad asignada.</p>
               {condominos.map((condomino, index) => (
-                <div key={`condomino-${index}`} className="super-user-row">
+                <div key={`condomino-${index}`} className="super-user-row super-user-row-condomino">
                   <input
                     placeholder="Nombre"
                     value={condomino.nombre}
@@ -174,11 +280,61 @@ export function SuperuserPage({
                     value={condomino.correo}
                     onChange={(event) => onUserFieldChange('condominos', index, 'correo', event.target.value)}
                   />
+                  <input
+                    placeholder="Clave unidad (ej. A-101)"
+                    value={condomino.claveUnidad}
+                    onChange={(event) => onUserFieldChange('condominos', index, 'claveUnidad', event.target.value)}
+                  />
+                  <select
+                    className="condominio-switcher-select"
+                    value={condomino.tipoUnidad}
+                    onChange={(event) =>
+                      onUserFieldChange('condominos', index, 'tipoUnidad', event.target.value as SuperuserUserForm['tipoUnidad'])
+                    }
+                  >
+                    <option value="CASA">CASA</option>
+                    <option value="DEPARTAMENTO">DEPARTAMENTO</option>
+                    <option value="LOCAL">LOCAL</option>
+                    <option value="OTRO">OTRO</option>
+                  </select>
                   <button
                     className="soft-btn"
                     onClick={() => onRemoveUser('condominos', index)}
                     disabled={condominos.length === 1}
                   >
+                    Quitar
+                  </button>
+                </div>
+              ))}
+            </section>
+
+            <section className="super-block">
+              <div className="super-block-header">
+                <h3>Unidades sin ocupante</h3>
+                <button className="soft-btn" onClick={onAddUnidad}>
+                  Agregar unidad
+                </button>
+              </div>
+              {unidades.map((unidad, index) => (
+                <div key={`unidad-${index}`} className="super-user-row super-user-row-unidad">
+                  <input
+                    placeholder="Clave (ej. A-101)"
+                    value={unidad.claveUnidad}
+                    onChange={(event) => onUnidadFieldChange(index, 'claveUnidad', event.target.value)}
+                  />
+                  <select
+                    className="condominio-switcher-select"
+                    value={unidad.tipoUnidad}
+                    onChange={(event) =>
+                      onUnidadFieldChange(index, 'tipoUnidad', event.target.value as SuperuserUnidadForm['tipoUnidad'])
+                    }
+                  >
+                    <option value="CASA">CASA</option>
+                    <option value="DEPARTAMENTO">DEPARTAMENTO</option>
+                    <option value="LOCAL">LOCAL</option>
+                    <option value="OTRO">OTRO</option>
+                  </select>
+                  <button className="soft-btn" onClick={() => onRemoveUnidad(index)}>
                     Quitar
                   </button>
                 </div>
@@ -251,6 +407,14 @@ export function SuperuserPage({
           <section className="panel animate-in">
             <h3>Resultado de alta</h3>
             <p className="helper-text">Condominio creado con ID {createdSummary.idCondominio}.</p>
+            <p className="helper-text">
+              Cuota inicial: ${createdSummary.cuotaInicial.montoCuotaInicial.toFixed(2)} | Dia limite: {createdSummary.cuotaInicial.diaLimitePago} | Recargo por dia: ${createdSummary.cuotaInicial.recargoFijoPorDia.toFixed(2)} | Periodo: {createdSummary.cuotaInicial.periodoAplicacionInicial}
+            </p>
+            <p className="helper-text">
+              Unidades creadas: {createdSummary.unidadesCreadas} | Asignaciones creadas: {createdSummary.ocupacionesCreadas}
+            </p>
+            <p className="helper-text">Cuotas iniciales creadas: {createdSummary.cuotasInicialesCreadas}</p>
+            {createdSummary.advertenciaCuotas ? <p className="login-error">{createdSummary.advertenciaCuotas}</p> : null}
             <h4>Credenciales temporales de administradores</h4>
             <ul className="clean-list">
               {createdSummary.adminsCreados.map((item) => (

@@ -680,6 +680,8 @@ export const backendApi = {
     apellidoPaternoCondomino: string;
     apellidoMaternoCondomino?: string;
     correoCondomino: string;
+    claveUnidadCondomino: string;
+    tipoUnidadCondomino: 'CASA' | 'DEPARTAMENTO' | 'LOCAL' | 'OTRO';
     admins?: Array<{
       nombre: string;
       apellidoPaterno: string;
@@ -691,8 +693,19 @@ export const backendApi = {
       apellidoPaterno: string;
       apellidoMaterno?: string;
       correo: string;
+      claveUnidad: string;
+      tipoUnidad: 'CASA' | 'DEPARTAMENTO' | 'LOCAL' | 'OTRO';
     }>;
     idUnidadExistenteCondomino?: number;
+    montoCuotaInicial: number;
+    diaLimitePago: number;
+    recargoFijoPorDia: number;
+    periodoAplicacionInicial: string;
+    fechaInicioCobro: string;
+    unidades: Array<{
+      claveUnidad: string;
+      tipoUnidad: 'CASA' | 'DEPARTAMENTO' | 'LOCAL' | 'OTRO';
+    }>;
   }) {
     return requestJson<{
       idCondominio: number;
@@ -716,6 +729,17 @@ export const backendApi = {
         passwordTemporal: string | null;
         reutilizado: boolean;
       }>;
+      unidadesCreadas: number;
+      ocupacionesCreadas: number;
+      cuotasInicialesCreadas: number;
+      cuotaInicial: {
+        montoCuotaInicial: number;
+        diaLimitePago: number;
+        recargoFijoPorDia: number;
+        periodoAplicacionInicial: string;
+        fechaInicioCobro: string;
+      };
+      advertenciaCuotas?: string;
     }>('/usuarios/onboarding-inicial', {
       method: 'POST',
       body: JSON.stringify(input),
@@ -809,6 +833,42 @@ export const backendApi = {
   }) {
     return requestJson<BackendSolicitudCambio>('/condominos/solicitudes-cambio/ejecutar', {
       method: 'PATCH',
+      body: JSON.stringify(input),
+    });
+  },
+
+  async listUnidadesDisponibles(input: { idCondominio: number }) {
+    const params = new URLSearchParams({
+      idCondominio: String(input.idCondominio),
+    });
+    return requestJson<
+      Array<{
+        idUnidad: number;
+        claveUnidad: string;
+        tipoUnidad: string;
+      }>
+    >(`/condominos/unidades-disponibles?${params.toString()}`);
+  },
+
+  async createAltaCondominoAdmin(input: {
+    idCondominio: number;
+    idUsuarioCondominioAdmin: number;
+    nombre: string;
+    apellidoPaterno: string;
+    apellidoMaterno?: string;
+    correo: string;
+    idUnidad: number;
+    tipoOcupacion?: 'PROPIETARIO' | 'INQUILINO' | 'HABITANTE';
+  }) {
+    return requestJson<{
+      idUsuario: number;
+      idUsuarioCondominio: number;
+      idUnidad: number;
+      correo: string;
+      passwordTemporal: string | null;
+      reutilizado: boolean;
+    }>('/condominos/altas', {
+      method: 'POST',
       body: JSON.stringify(input),
     });
   },
