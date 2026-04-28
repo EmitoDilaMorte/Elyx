@@ -50,7 +50,7 @@ services:
     depends_on:
       - backend
     environment:
-      VITE_API_URL: http://localhost:${BACKEND_PORT:-3000}
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:${BACKEND_PORT:-3000}}
       CHOKIDAR_USEPOLLING: "true"
       CHOKIDAR_INTERVAL: "120"
       WATCHPACK_POLLING: "true"
