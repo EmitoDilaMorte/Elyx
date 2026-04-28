@@ -7,6 +7,7 @@ type CuotaRecord = {
   idCuota: number;
   idCondominio: number;
   periodo: string;
+  tipo: string;
   monto: number;
   fechaLimite: string;
   recargo: number;
@@ -26,6 +27,7 @@ export class CuotasService {
         c.id_cuota,
         c.id_condominio,
         c.periodo,
+        c.tipo,
         c.monto_base,
         c.fecha_limite,
         c.recargo_por_dia,
@@ -49,6 +51,7 @@ export class CuotasService {
         c.id_cuota,
         c.id_condominio,
         c.periodo,
+        c.tipo,
         c.monto_base,
         c.fecha_limite,
         c.recargo_por_dia,
@@ -100,7 +103,7 @@ export class CuotasService {
 
     const templateRows = await this.dataSource.query(
       `
-      SELECT monto_base, recargo_por_dia, fecha_limite
+      SELECT monto_base, recargo_por_dia, fecha_limite, tipo
       FROM cuotas
       WHERE id_condominio = $1
       ORDER BY periodo DESC, id_cuota DESC
@@ -116,6 +119,7 @@ export class CuotasService {
     const template = templateRows[0] as Record<string, unknown>;
     const montoBase = Number(template.monto_base ?? 0);
     const recargoPorDia = Number(template.recargo_por_dia ?? 0);
+    const tipo = String(template.tipo ?? 'Cuota de mantenimiento');
     const fechaTemplate = String(template.fecha_limite ?? `${new Date().toISOString().slice(0, 10)}`);
     const diaLimite = Number(fechaTemplate.split('-')[2] ?? '10');
     const fechaLimite = this.periodDeadline(periodoActual, diaLimite);
@@ -135,6 +139,7 @@ export class CuotasService {
         `
         INSERT INTO cuotas (
           periodo,
+          tipo,
           monto_base,
           fecha_limite,
           recargo_por_dia,
@@ -142,10 +147,10 @@ export class CuotasService {
           id_condominio,
           id_unidad
         )
-        VALUES ($1, $2, $3, $4, 'PENDIENTE', $5, $6)
+        VALUES ($1, $2, $3, $4, $5, 'PENDIENTE', $6, $7)
         ON CONFLICT (id_unidad, periodo) DO NOTHING
         `,
-        [periodoActual, montoBase, fechaLimite, recargoPorDia, idCondominio, idUnidad],
+        [periodoActual, tipo, montoBase, fechaLimite, recargoPorDia, idCondominio, idUnidad],
       );
     }
   }
@@ -168,6 +173,7 @@ export class CuotasService {
       idCuota: Number(row.id_cuota),
       idCondominio: Number(row.id_condominio),
       periodo: String(row.periodo),
+      tipo: String(row.tipo ?? 'Cuota de mantenimiento'),
       monto: Number(row.monto_base),
       fechaLimite: String(row.fecha_limite),
       recargo: Number(row.recargo_por_dia),

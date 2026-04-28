@@ -73,15 +73,16 @@ SET
   id_usuario_condominio = EXCLUDED.id_usuario_condominio,
   id_unidad = EXCLUDED.id_unidad;
 
-INSERT INTO cuotas (id_cuota, periodo, monto_base, fecha_limite, recargo_por_dia, estado, id_condominio, id_unidad)
+INSERT INTO cuotas (id_cuota, periodo, tipo, monto_base, fecha_limite, recargo_por_dia, estado, id_condominio, id_unidad)
 VALUES
-  (1, 'Marzo 2026', 1850.00, '2026-03-20', 50.00, 'PENDIENTE', 101, 5001),
-  (2, 'Abril 2026', 1850.00, '2026-04-20', 0.00, 'PENDIENTE', 101, 5002),
-  (3, 'Marzo 2026', 1650.00, '2026-03-21', 30.00, 'PENDIENTE', 202, 6001),
-  (4, 'Abril 2026', 1650.00, '2026-04-21', 0.00, 'PENDIENTE', 202, 6002)
+  (1, 'Marzo 2026', 'Cuota de mantenimiento', 1850.00, '2026-03-20', 50.00, 'PENDIENTE', 101, 5001),
+  (2, 'Abril 2026', 'Cuota de mantenimiento', 1850.00, '2026-04-20', 0.00, 'PENDIENTE', 101, 5002),
+  (3, 'Marzo 2026', 'Cuota de mantenimiento', 1650.00, '2026-03-21', 30.00, 'PENDIENTE', 202, 6001),
+  (4, 'Abril 2026', 'Cuota de mantenimiento', 1650.00, '2026-04-21', 0.00, 'PENDIENTE', 202, 6002)
 ON CONFLICT (id_cuota) DO UPDATE
 SET
   periodo = EXCLUDED.periodo,
+  tipo = EXCLUDED.tipo,
   monto_base = EXCLUDED.monto_base,
   fecha_limite = EXCLUDED.fecha_limite,
   recargo_por_dia = EXCLUDED.recargo_por_dia,

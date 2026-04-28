@@ -119,6 +119,7 @@ CREATE TABLE IF NOT EXISTS notificaciones (
 CREATE TABLE IF NOT EXISTS cuotas (
   id_cuota SERIAL PRIMARY KEY,
   periodo VARCHAR(20) NOT NULL,
+  tipo VARCHAR(50) NOT NULL DEFAULT 'Cuota de mantenimiento',
   monto_base NUMERIC(12,2) NOT NULL CHECK (monto_base >= 0),
   fecha_limite DATE NOT NULL,
   recargo_por_dia NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (recargo_por_dia >= 0),

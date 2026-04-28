@@ -40,10 +40,10 @@ export const seedData = (): AppData => ({
     },
   ],
   cuotas: [
-    { id: 1, idCondominio: 101, periodo: 'Marzo 2026', monto: 1850, fechaLimite: '2026-03-20', recargo: 50, status: 'PENDIENTE' },
-    { id: 2, idCondominio: 101, periodo: 'Abril 2026', monto: 1850, fechaLimite: '2026-04-20', recargo: 0, status: 'PENDIENTE' },
-    { id: 3, idCondominio: 202, periodo: 'Marzo 2026', monto: 1650, fechaLimite: '2026-03-21', recargo: 30, status: 'PENDIENTE' },
-    { id: 4, idCondominio: 202, periodo: 'Abril 2026', monto: 1650, fechaLimite: '2026-04-21', recargo: 0, status: 'PENDIENTE' },
+    { id: 1, idCondominio: 101, periodo: 'Marzo 2026', tipo: 'Cuota de mantenimiento', monto: 1850, fechaLimite: '2026-03-20', recargo: 50, status: 'PENDIENTE' },
+    { id: 2, idCondominio: 101, periodo: 'Abril 2026', tipo: 'Cuota de mantenimiento', monto: 1850, fechaLimite: '2026-04-20', recargo: 0, status: 'PENDIENTE' },
+    { id: 3, idCondominio: 202, periodo: 'Marzo 2026', tipo: 'Cuota de mantenimiento', monto: 1650, fechaLimite: '2026-03-21', recargo: 30, status: 'PENDIENTE' },
+    { id: 4, idCondominio: 202, periodo: 'Abril 2026', tipo: 'Cuota de mantenimiento', monto: 1650, fechaLimite: '2026-04-21', recargo: 0, status: 'PENDIENTE' },
   ],
   pagos: [
     {

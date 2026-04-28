@@ -65,6 +65,7 @@ export type Cuota = {
   id: number;
   idCondominio: number;
   periodo: string;
+  tipo: string;
   monto: number;
   fechaLimite: string;
   recargo: number;
@@ -120,6 +121,22 @@ export type MantenimientoReporte = {
   estado: MantenimientoStatus;
   idUsuarioCondominioReporta?: number;
   idUsuarioCondominioAdmin?: number;
+};
+
+export type OcupanteInfo = {
+  idUsuarioCondominio: number;
+  nombre: string;
+  apellidoPaterno: string;
+  apellidoMaterno: string | null;
+  tipoOcupacion: string;
+};
+
+export type UnidadConOcupante = {
+  idUnidad: number;
+  claveUnidad: string;
+  tipoUnidad: string;
+  estado: string;
+  ocupante: OcupanteInfo | null;
 };
 
 export type Gasto = {

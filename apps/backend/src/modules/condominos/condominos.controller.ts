@@ -71,6 +71,13 @@ export class CondominosController {
     return this.condominosService.listUnidadesDisponibles(idCondominio);
   }
 
+  @Get('unidades')
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMINISTRADOR)
+  listUnidadesConOcupantes(@Query('idCondominio', ParseIntPipe) idCondominio: number) {
+    return this.condominosService.listUnidadesConOcupantes(idCondominio);
+  }
+
   @Post('altas')
   @UseGuards(RolesGuard)
   @Roles(Role.ADMINISTRADOR)

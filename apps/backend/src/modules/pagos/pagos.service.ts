@@ -19,6 +19,7 @@ type PagoRecord = {
   idUsuarioCondominioPaga: number;
   idUsuarioCondominioAdmin: number | null;
   motivoRechazo: string | null;
+  claveUnidad: string | null;
 };
 
 @Injectable()
@@ -48,9 +49,12 @@ export class PagosService {
         p.estado,
         p.id_usuario_condominio_paga,
         p.id_usuario_condominio_admin,
-        p.motivo_rechazo
+        p.motivo_rechazo,
+        u.clave_unidad
       FROM pagos p
       INNER JOIN cuotas c ON c.id_cuota = p.id_cuota
+      LEFT JOIN unidades_ocupantes uo ON uo.id_usuario_condominio = p.id_usuario_condominio_paga AND uo.fecha_fin IS NULL
+      LEFT JOIN unidades u ON u.id_unidad = uo.id_unidad
       WHERE c.id_condominio = $1${estadoClause}
       ORDER BY p.fecha_pago DESC
       `,
@@ -156,9 +160,12 @@ export class PagosService {
           p.id_usuario_condominio_paga,
           p.id_usuario_condominio_admin,
           p.motivo_rechazo,
-          c.id_condominio
+          c.id_condominio,
+          u.clave_unidad
         FROM pagos p
         INNER JOIN cuotas c ON c.id_cuota = p.id_cuota
+        LEFT JOIN unidades_ocupantes uo ON uo.id_usuario_condominio = p.id_usuario_condominio_paga AND uo.fecha_fin IS NULL
+        LEFT JOIN unidades u ON u.id_unidad = uo.id_unidad
         WHERE p.id_pago = $1 AND c.id_condominio = $2
         LIMIT 1
         FOR UPDATE
@@ -219,6 +226,7 @@ export class PagosService {
         idUsuarioCondominioPaga: pago.id_usuario_condominio_paga ? Number(pago.id_usuario_condominio_paga) : 0,
         idUsuarioCondominioAdmin: input.idUsuarioCondominioAdmin,
         motivoRechazo: null,
+        claveUnidad: pago.clave_unidad ? String(pago.clave_unidad) : null,
       } satisfies PagoRecord;
     });
 
@@ -243,9 +251,12 @@ export class PagosService {
           p.id_usuario_condominio_paga,
           p.id_usuario_condominio_admin,
           p.motivo_rechazo,
-          c.id_condominio
+          c.id_condominio,
+          u.clave_unidad
         FROM pagos p
         INNER JOIN cuotas c ON c.id_cuota = p.id_cuota
+        LEFT JOIN unidades_ocupantes uo ON uo.id_usuario_condominio = p.id_usuario_condominio_paga AND uo.fecha_fin IS NULL
+        LEFT JOIN unidades u ON u.id_unidad = uo.id_unidad
         WHERE p.id_pago = $1 AND c.id_condominio = $2
         LIMIT 1
         FOR UPDATE
@@ -306,6 +317,7 @@ export class PagosService {
         idUsuarioCondominioPaga: pago.id_usuario_condominio_paga ? Number(pago.id_usuario_condominio_paga) : 0,
         idUsuarioCondominioAdmin: input.idUsuarioCondominioAdmin,
         motivoRechazo: input.motivoRechazo.trim(),
+        claveUnidad: pago.clave_unidad ? String(pago.clave_unidad) : null,
       } satisfies PagoRecord;
     });
 
@@ -329,9 +341,12 @@ export class PagosService {
         p.estado,
         p.id_usuario_condominio_paga,
         p.id_usuario_condominio_admin,
-        p.motivo_rechazo
+        p.motivo_rechazo,
+        u.clave_unidad
       FROM pagos p
       INNER JOIN cuotas c ON c.id_cuota = p.id_cuota
+      LEFT JOIN unidades_ocupantes uo ON uo.id_usuario_condominio = p.id_usuario_condominio_paga AND uo.fecha_fin IS NULL
+      LEFT JOIN unidades u ON u.id_unidad = uo.id_unidad
       WHERE p.id_cuota = $1 AND c.id_condominio = $2
       LIMIT 1
       `,
@@ -371,6 +386,7 @@ export class PagosService {
       idUsuarioCondominioPaga: row.id_usuario_condominio_paga ? Number(row.id_usuario_condominio_paga) : 0,
       idUsuarioCondominioAdmin: row.id_usuario_condominio_admin ? Number(row.id_usuario_condominio_admin) : null,
       motivoRechazo: row.motivo_rechazo ? String(row.motivo_rechazo) : null,
+      claveUnidad: row.clave_unidad ? String(row.clave_unidad) : null,
     };
   }
 

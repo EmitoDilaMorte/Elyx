@@ -4,6 +4,7 @@ import type {
   DemoUser,
   MantenimientoStatus,
   RoleKey,
+  UnidadConOcupante,
   ViewKey,
   VoteChoice,
 } from '../types/app';
@@ -108,6 +109,7 @@ type DashboardPageProps = {
     claveUnidad: string;
     tipoUnidad: string;
   }>;
+  unidadesConOcupantes: UnidadConOcupante[];
   solicitudesCambio: Array<{
     idSolicitud: number;
     idCondominio: number;
@@ -247,6 +249,7 @@ export function DashboardPage({
   solicitudForm,
   altaCondominoForm,
   unidadesDisponibles,
+  unidadesConOcupantes,
   solicitudesCambio,
   loadingLabel,
   feedback,
@@ -355,6 +358,15 @@ export function DashboardPage({
     }
     return estado;
   };
+
+  const cuotaMap = Object.fromEntries(appData.cuotas.map((c) => [c.id, c]));
+
+  const condominoNameByMembership: Record<number, string> = {};
+  for (const user of appData.users) {
+    for (const mem of user.membresias) {
+      condominoNameByMembership[mem.idUsuarioCondominio] = user.nombre;
+    }
+  }
 
   const formatSolicitudDetalle = (detalle: Record<string, unknown> | null) => {
     if (!detalle) {
@@ -610,7 +622,7 @@ export function DashboardPage({
                     <div>
                       <p className="item-title">{cuota.periodo}</p>
                       <small>
-                        Limite: {cuota.fechaLimite} | Recargo: ${cuota.recargo}
+                        {cuota.tipo} | Limite: {cuota.fechaLimite} | Recargo: ${cuota.recargo}
                       </small>
                     </div>
                     <p className="item-amount">${cuota.monto.toLocaleString('es-MX')}</p>
@@ -654,12 +666,15 @@ export function DashboardPage({
               <h4>Validacion de pagos</h4>
               <div className="payment-list">
                 {appData.pagos.length === 0 && <p className="empty-state">No hay pagos registrados.</p>}
-                {appData.pagos.map((pago) => (
+                {appData.pagos.map((pago) => {
+                  const cuota = cuotaMap[pago.cuotaId];
+                  const nombreCondomino = condominoNameByMembership[pago.idUsuarioCondominioPaga ?? 0];
+                  return (
                   <article key={pago.id} className="payment-item">
                     <div>
-                      <p className="item-title">Pago #{pago.id}</p>
+                      <p className="item-title">Pago #{pago.id} — {cuota?.tipo ?? 'Cuota'}</p>
                       <small>
-                        {pago.condominio} | Fecha: {formatShortDate(pago.fecha)}
+                        {nombreCondomino ? `Condomino: ${nombreCondomino} | ` : ''}Unidad: {pago.condominio} | Fecha: {formatShortDate(pago.fecha)}
                       </small>
                     </div>
                     <p className="item-amount">${pago.monto.toLocaleString('es-MX')}</p>
@@ -693,7 +708,8 @@ export function DashboardPage({
                       </button>
                     </div>
                   </article>
-                ))}
+                  );
+                })}
               </div>
             </section>
           )}
@@ -1377,6 +1393,32 @@ export function DashboardPage({
                   <button className="soft-btn" onClick={onRefreshSolicitudesCambio}>
                     Actualizar solicitudes
                   </button>
+                </div>
+              </div>
+
+              <div className="panel" style={{ marginBottom: '0.85rem' }}>
+                <h5 style={{ marginTop: 0, marginBottom: '0.75rem' }}>Unidades del condominio</h5>
+                <div className="payment-list">
+                  {unidadesConOcupantes.length === 0 && (
+                    <p className="empty-state">Cargando unidades...</p>
+                  )}
+                  {unidadesConOcupantes.map((unidad) => (
+                    <article key={unidad.idUnidad} className="payment-item">
+                      <div>
+                        <p className="item-title">
+                          {unidad.claveUnidad} ({unidad.tipoUnidad})
+                        </p>
+                        <small>
+                          {unidad.ocupante
+                            ? `${unidad.ocupante.nombre} ${unidad.ocupante.apellidoPaterno}${unidad.ocupante.apellidoMaterno ? ' ' + unidad.ocupante.apellidoMaterno : ''} — ${unidad.ocupante.tipoOcupacion}`
+                            : 'Sin ocupante'}
+                        </small>
+                      </div>
+                      <span className={`status-pill ${unidad.ocupante ? 'status-pagada' : 'status-pendiente'}`}>
+                        {unidad.ocupante ? 'Ocupada' : 'Disponible'}
+                      </span>
+                    </article>
+                  ))}
                 </div>
               </div>
 

@@ -41,6 +41,20 @@ type UnidadDisponibleRecord = {
   tipoUnidad: string;
 };
 
+type UnidadConOcupanteRecord = {
+  idUnidad: number;
+  claveUnidad: string;
+  tipoUnidad: string;
+  estado: string;
+  ocupante: {
+    idUsuarioCondominio: number;
+    nombre: string;
+    apellidoPaterno: string;
+    apellidoMaterno: string | null;
+    tipoOcupacion: string;
+  } | null;
+};
+
 @Injectable()
 export class CondominosService {
   constructor(
@@ -177,6 +191,50 @@ export class CondominosService {
       claveUnidad: String(row.claveUnidad ?? row.clave_unidad ?? ''),
       tipoUnidad: String(row.tipoUnidad ?? row.tipo_unidad ?? 'OTRO'),
     }));
+  }
+
+  async listUnidadesConOcupantes(idCondominio: number): Promise<UnidadConOcupanteRecord[]> {
+    const rawRows = await this.dataSource.query(
+      `
+      SELECT
+        u.id_unidad,
+        u.clave_unidad,
+        u.tipo_unidad,
+        u.estado,
+        uc.id_usuario_condominio,
+        us.nombre,
+        us.primer_apellido,
+        us.segundo_apellido,
+        uo.tipo_ocupacion
+      FROM unidades u
+      LEFT JOIN unidades_ocupantes uo ON uo.id_unidad = u.id_unidad AND uo.fecha_fin IS NULL
+      LEFT JOIN usuarios_condominios uc ON uc.id_usuario_condominio = uo.id_usuario_condominio
+      LEFT JOIN usuarios us ON us.id_usuario = uc.id_usuario
+      WHERE u.id_condominio = $1
+      ORDER BY u.clave_unidad ASC
+      `,
+      [idCondominio],
+    );
+
+    const rows = this.normalizeQueryRows(rawRows);
+    return rows.map((row) => {
+      const idUsuarioCondominio = row.id_usuario_condominio ? Number(row.id_usuario_condominio) : 0;
+      return {
+        idUnidad: Number(row.id_unidad),
+        claveUnidad: String(row.clave_unidad ?? ''),
+        tipoUnidad: String(row.tipo_unidad ?? 'OTRO'),
+        estado: String(row.estado ?? 'ACTIVA'),
+        ocupante: idUsuarioCondominio > 0
+          ? {
+              idUsuarioCondominio,
+              nombre: String(row.nombre ?? ''),
+              apellidoPaterno: String(row.primer_apellido ?? ''),
+              apellidoMaterno: row.segundo_apellido ? String(row.segundo_apellido) : null,
+              tipoOcupacion: String(row.tipo_ocupacion ?? 'PROPIETARIO'),
+            }
+          : null,
+      };
+    });
   }
 
   async crearAltaCondomino(

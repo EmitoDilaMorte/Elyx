@@ -30,6 +30,7 @@ import type {
   Pago,
   ReporteFinanciero,
   RoleKey,
+  UnidadConOcupante,
   UserMembership,
   ViewKey,
   VoteChoice,
@@ -360,6 +361,7 @@ function AppContent() {
   const [altaCondominoForm, setAltaCondominoForm] =
     useState<AltaCondominoAdminFormState>(DEFAULT_ALTA_CONDOMINO_FORM);
   const [unidadesDisponibles, setUnidadesDisponibles] = useState<UnidadDisponibleState[]>([]);
+  const [unidadesConOcupantes, setUnidadesConOcupantes] = useState<UnidadConOcupante[]>([]);
   const [solicitudesCambio, setSolicitudesCambio] = useState<SolicitudCambioState[]>([]);
   const [cuotaCambioForm, setCuotaCambioForm] = useState<CuotaCambioVotacionFormState>(DEFAULT_CUOTA_CAMBIO_FORM);
   const [votacionesCambioCuota, setVotacionesCambioCuota] = useState<VotacionActiva[]>([]);
@@ -1965,6 +1967,22 @@ function AppContent() {
     }
   };
 
+  const cargarUnidadesConOcupantes = async () => {
+    if (!isAuthenticated || role !== 'administrador' || !effectiveActiveCondominioId) {
+      setUnidadesConOcupantes([]);
+      return;
+    }
+
+    try {
+      const items = await backendApi.listUnidadesConOcupantes({
+        idCondominio: effectiveActiveCondominioId,
+      });
+      setUnidadesConOcupantes(items);
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
   const cargarVotacionesCambioCuota = async () => {
     if (role !== 'administrador' || !effectiveActiveCondominioId) {
       setVotacionesCambioCuota([]);
@@ -2064,7 +2082,7 @@ function AppContent() {
       });
 
       setAltaCondominoForm(DEFAULT_ALTA_CONDOMINO_FORM);
-      await Promise.all([cargarUnidadesDisponiblesAdmin(), cargarSolicitudesCambio()]);
+      await Promise.all([cargarUnidadesDisponiblesAdmin(), cargarUnidadesConOcupantes(), cargarSolicitudesCambio()]);
       runAction(
         'Registrando alta de condomino...',
         created.passwordTemporal
@@ -2133,10 +2151,12 @@ function AppContent() {
   useEffect(() => {
     if (!isAuthenticated || role !== 'administrador' || !effectiveActiveCondominioId) {
       setUnidadesDisponibles([]);
+      setUnidadesConOcupantes([]);
       return;
     }
 
     void cargarUnidadesDisponiblesAdmin();
+    void cargarUnidadesConOcupantes();
   }, [isAuthenticated, role, effectiveActiveCondominioId]);
 
   const crearOnboardingInicial = async () => {
@@ -2527,6 +2547,7 @@ function AppContent() {
       solicitudForm={solicitudForm}
       altaCondominoForm={altaCondominoForm}
       unidadesDisponibles={unidadesDisponibles}
+      unidadesConOcupantes={unidadesConOcupantes}
       solicitudesCambio={solicitudesCambio}
       loadingLabel={loadingLabel}
       feedback={feedback}

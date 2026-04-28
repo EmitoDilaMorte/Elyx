@@ -1,4 +1,4 @@
-import type { PagoStatus, VoteChoice } from '../types/app';
+import type { PagoStatus, UnidadConOcupante, VoteChoice } from '../types/app';
 
 let authToken: string | null = null;
 
@@ -6,6 +6,7 @@ type BackendCuota = {
   idCuota: number;
   idCondominio: number;
   periodo: string;
+  tipo: string;
   monto: number;
   fechaLimite: string;
   recargo: number;
@@ -53,6 +54,7 @@ type BackendPago = {
   idUsuarioCondominioPaga: number;
   idUsuarioCondominioAdmin: number | null;
   motivoRechazo: string | null;
+  claveUnidad: string | null;
 };
 
 type BackendMantenimiento = {
@@ -249,6 +251,7 @@ export const backendApi = {
       id: item.idCuota,
       idCondominio: item.idCondominio,
       periodo: item.periodo,
+      tipo: item.tipo ?? 'Cuota de mantenimiento',
       monto: item.monto,
       fechaLimite: item.fechaLimite,
       recargo: item.recargo,
@@ -419,7 +422,7 @@ export const backendApi = {
       id: item.idPago,
       idCondominio: item.idCondominio,
       cuotaId: item.idCuota,
-      condominio: `Usuario ${item.idUsuarioCondominioPaga}`,
+      condominio: item.claveUnidad ?? `Unidad ${item.idUsuarioCondominioPaga}`,
       monto: item.monto,
       fecha: item.fechaPago,
       status: mapPagoStatus(item.estado),
@@ -438,7 +441,7 @@ export const backendApi = {
       id: item.idPago,
       idCondominio: item.idCondominio,
       cuotaId: item.idCuota,
-      condominio: `Usuario ${item.idUsuarioCondominioPaga}`,
+      condominio: item.claveUnidad ?? `Unidad ${item.idUsuarioCondominioPaga}`,
       monto: item.monto,
       fecha: item.fechaPago,
       status: mapPagoStatus(item.estado),
@@ -457,7 +460,7 @@ export const backendApi = {
       id: item.idPago,
       idCondominio: item.idCondominio,
       cuotaId: item.idCuota,
-      condominio: `Usuario ${item.idUsuarioCondominioPaga}`,
+      condominio: item.claveUnidad ?? `Unidad ${item.idUsuarioCondominioPaga}`,
       monto: item.monto,
       fecha: item.fechaPago,
       status: mapPagoStatus(item.estado),
@@ -481,7 +484,7 @@ export const backendApi = {
       id: item.idPago,
       idCondominio: item.idCondominio,
       cuotaId: item.idCuota,
-      condominio: `Usuario ${item.idUsuarioCondominioPaga}`,
+      condominio: item.claveUnidad ?? `Unidad ${item.idUsuarioCondominioPaga}`,
       monto: item.monto,
       fecha: item.fechaPago,
       status: mapPagoStatus(item.estado),
@@ -848,6 +851,13 @@ export const backendApi = {
         tipoUnidad: string;
       }>
     >(`/condominos/unidades-disponibles?${params.toString()}`);
+  },
+
+  async listUnidadesConOcupantes(input: { idCondominio: number }) {
+    const params = new URLSearchParams({
+      idCondominio: String(input.idCondominio),
+    });
+    return requestJson<UnidadConOcupante[]>(`/condominos/unidades?${params.toString()}`);
   },
 
   async createAltaCondominoAdmin(input: {
