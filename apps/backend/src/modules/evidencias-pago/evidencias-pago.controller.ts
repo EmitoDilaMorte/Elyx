@@ -2,7 +2,9 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
+  Param,
   ParseIntPipe,
   Post,
   Query,
@@ -77,5 +79,15 @@ export class EvidenciasPagoController {
     }
 
     return this.evidenciasPagoService.create(dto, archivo);
+  }
+
+  @Delete(':id')
+  @UseGuards(RolesGuard)
+  @Roles(Role.CONDOMINO, Role.ADMINISTRADOR)
+  delete(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('idCondominio', ParseIntPipe) idCondominio: number,
+  ) {
+    return this.evidenciasPagoService.delete(id, idCondominio);
   }
 }

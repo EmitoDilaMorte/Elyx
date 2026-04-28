@@ -1,5 +1,7 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import * as fs from 'fs';
+import { join } from 'path';
 import { CreateEvidenciaPagoDto } from './dto/create-evidencia-pago.dto';
 import { EvidenciasPagoGateway } from './evidencias-pago.gateway';
 
@@ -112,6 +114,57 @@ export class EvidenciasPagoService {
 
       return evidencia;
     });
+  }
+
+  async delete(idEvidencia: number, idCondominio: number): Promise<{ ok: boolean }> {
+    const rows = await this.dataSource.query(
+      `
+      SELECT e.id_evidencia, e.url_archivo, p.estado, c.id_condominio
+      FROM evidencias_pago e
+      INNER JOIN pagos p ON p.id_pago = e.id_pago
+      INNER JOIN cuotas c ON c.id_cuota = p.id_cuota
+      WHERE e.id_evidencia = $1 AND c.id_condominio = $2
+      LIMIT 1
+      `,
+      [idEvidencia, idCondominio],
+    );
+
+    if (rows.length === 0) {
+      throw new NotFoundException('Evidencia de pago no encontrada en este condominio.');
+    }
+
+    const row = rows[0] as Record<string, unknown>;
+    const estado = String(row.estado);
+
+    if (estado !== 'CAPTURADO') {
+      throw new ForbiddenException('No se puede eliminar el comprobante de un pago ya validado o rechazado.');
+    }
+
+    const urlArchivo = String(row.url_archivo);
+
+    await this.dataSource.query(
+      `DELETE FROM evidencias_pago WHERE id_evidencia = $1`,
+      [idEvidencia],
+    );
+
+    try {
+      const fileName = urlArchivo.split('/').pop();
+      if (fileName) {
+        const filePath = join(process.cwd(), 'uploads', 'evidencias', fileName);
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
+      }
+    } catch {
+      // File deletion is best-effort
+    }
+
+    this.evidenciasPagoGateway.emitEvidenciaChanged(idCondominio, {
+      tipo: 'ELIMINADA',
+      idEvidencia,
+    });
+
+    return { ok: true };
   }
 
   private toRecord(row: Record<string, unknown>): EvidenciaPagoRecord {

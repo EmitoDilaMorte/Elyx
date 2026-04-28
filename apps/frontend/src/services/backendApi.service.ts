@@ -620,6 +620,13 @@ export const backendApi = {
     return requestJson<BackendEvidenciaPago[]>(`/evidencias-pago?${params.toString()}`);
   },
 
+  async deleteEvidenciaPago(input: { idCondominio: number; idEvidencia: number }) {
+    return requestJson<{ ok: boolean }>(
+      `/evidencias-pago/${input.idEvidencia}?idCondominio=${input.idCondominio}`,
+      { method: 'DELETE' },
+    );
+  },
+
   async generarRecibo(input: { idCondominio: number; idPago: number }) {
     return requestJson<BackendRecibo>('/recibos/generar', {
       method: 'POST',

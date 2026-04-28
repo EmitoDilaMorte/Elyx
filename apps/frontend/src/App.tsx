@@ -1146,6 +1146,36 @@ function AppContent() {
     }
   };
 
+  const eliminarEvidenciaPago = async (idEvidencia: number) => {
+    if (!effectiveActiveCondominioId) {
+      return;
+    }
+
+    try {
+      await backendApi.deleteEvidenciaPago({
+        idCondominio: effectiveActiveCondominioId,
+        idEvidencia,
+      });
+
+      setEvidenciasPorPago((prev) => {
+        const next: Record<number, EvidenciaPagoItem[]> = {};
+        for (const [pagoId, evidencias] of Object.entries(prev)) {
+          const filtradas = evidencias.filter((e) => e.idEvidencia !== idEvidencia);
+          if (filtradas.length > 0) {
+            next[Number(pagoId)] = filtradas;
+          }
+        }
+        return next;
+      });
+
+      runAction('Eliminando comprobante...', 'Comprobante eliminado correctamente');
+    } catch (error) {
+      console.error(error);
+      setFeedback(extractApiErrorMessage(error));
+      window.setTimeout(() => setFeedback(null), 2200);
+    }
+  };
+
   const abrirRecibo = async (recibo: { folio: string; urlPdf: string; idPago: number }) => {
     try {
       const parsedUrl = new URL(recibo.urlPdf);
@@ -2558,6 +2588,7 @@ function AppContent() {
       onLogout={cerrarSesion}
       onRegistrarPago={registrarPagoCondomino}
       onSubirComprobante={subirComprobante}
+      onEliminarEvidenciaPago={eliminarEvidenciaPago}
       onDescargarReciboCuota={descargarReciboCuota}
       onAprobarPago={aprobarPago}
       onRechazarPago={rechazarPago}

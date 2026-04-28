@@ -133,6 +133,7 @@ type DashboardPageProps = {
   onLogout: () => void;
   onRegistrarPago: (cuotaId: number) => void;
   onSubirComprobante: (cuotaId: number, file: File) => void;
+  onEliminarEvidenciaPago: (idEvidencia: number) => void;
   onDescargarReciboCuota: (cuotaId: number) => void;
   onAprobarPago: (idPago: number) => void;
   onRechazarPago: (idPago: number) => void;
@@ -260,6 +261,7 @@ export function DashboardPage({
   onLogout,
   onRegistrarPago,
   onSubirComprobante,
+  onEliminarEvidenciaPago,
   onDescargarReciboCuota,
   onAprobarPago,
   onRechazarPago,
@@ -360,6 +362,13 @@ export function DashboardPage({
   };
 
   const cuotaMap = Object.fromEntries(appData.cuotas.map((c) => [c.id, c]));
+
+  const pagoPorCuota: Record<number, AppData['pagos'][number]> = {};
+  for (const pago of appData.pagos) {
+    if (!pagoPorCuota[pago.cuotaId] || pago.fecha > pagoPorCuota[pago.cuotaId].fecha) {
+      pagoPorCuota[pago.cuotaId] = pago;
+    }
+  }
 
   const condominoNameByMembership: Record<number, string> = {};
   for (const user of appData.users) {
@@ -617,7 +626,10 @@ export function DashboardPage({
             <section className="panel animate-in">
               <h4>Pagos y cuotas</h4>
               <div className="payment-list">
-                {appData.cuotas.map((cuota) => (
+                {appData.cuotas.map((cuota) => {
+                  const pago = pagoPorCuota[cuota.id];
+                  const evidencias = pago ? (evidenciasPorPago[pago.id] ?? []) : [];
+                  return (
                   <article key={cuota.id} className="payment-item">
                     <div>
                       <p className="item-title">{cuota.periodo}</p>
@@ -655,8 +667,35 @@ export function DashboardPage({
                         Descargar recibo
                       </button>
                     </div>
+                    {evidencias.length > 0 && (
+                      <div style={{ marginTop: '0.5rem' }}>
+                        <p className="helper-text" style={{ margin: '0 0 0.3rem' }}>
+                          Comprobantes: {evidencias.length}
+                        </p>
+                        <ul className="clean-list">
+                          {evidencias.map((evidencia) => (
+                            <li key={evidencia.idEvidencia} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.2rem' }}>
+                              <a href={evidencia.urlArchivo} target="_blank" rel="noopener noreferrer">
+                                {evidencia.nombreArchivo}
+                              </a>
+                              <small>{formatShortDate(evidencia.fechaCarga)}</small>
+                              {pago && pago.status === 'PENDIENTE' && (
+                                <button
+                                  className="soft-btn"
+                                  style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
+                                  onClick={() => onEliminarEvidenciaPago(evidencia.idEvidencia)}
+                                >
+                                  Eliminar
+                                </button>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                   </article>
-                ))}
+                  );
+                })}
               </div>
             </section>
           )}

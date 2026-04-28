@@ -35,7 +35,7 @@ export class CondominosController {
 
   @Get('solicitudes-cambio')
   @UseGuards(RolesGuard)
-  @Roles(Role.ADMINISTRADOR)
+  @Roles(Role.CONDOMINO, Role.ADMINISTRADOR)
   listSolicitudes(
     @Query('idCondominio', ParseIntPipe) idCondominio: number,
     @Query('estado') estado?: string,
