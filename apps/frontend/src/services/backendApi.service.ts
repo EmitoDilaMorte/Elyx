@@ -167,14 +167,18 @@ type BackendSolicitudCambio = {
 
 function getApiBaseUrl() {
   const raw = (import.meta.env.VITE_API_URL as string | undefined)?.trim();
-  const base = raw && raw.length > 0 ? raw : 'http://localhost:3000';
-  return base.endsWith('/api') ? base : `${base}/api`;
+  if (raw && raw.length > 0) {
+    return raw.endsWith('/api') ? raw : `${raw}/api`;
+  }
+  return '/api';
 }
 
 export function getApiHostUrl() {
   const raw = (import.meta.env.VITE_API_URL as string | undefined)?.trim();
-  const base = raw && raw.length > 0 ? raw : 'http://localhost:3000';
-  return base.endsWith('/api') ? base.slice(0, -4) : base;
+  if (raw && raw.length > 0) {
+    return raw.endsWith('/api') ? raw.slice(0, -4) : raw;
+  }
+  return '';
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
