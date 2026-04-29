@@ -23,6 +23,7 @@ import type {
   Cuota,
   CuotaStatus,
   DemoUser,
+  FotoMantenimiento,
   Gasto,
   MembershipState,
   MantenimientoReporte,
@@ -340,6 +341,7 @@ function AppContent() {
   const [feedback, setFeedback] = useState<string | null>(null);
 
   const [falla, setFalla] = useState('');
+  const [fotosReporte, setFotosReporte] = useState<File[]>([]);
   const [avisoTitulo, setAvisoTitulo] = useState('');
   const [avisoMensaje, setAvisoMensaje] = useState('');
   const [gastoConcepto, setGastoConcepto] = useState('');
@@ -348,6 +350,7 @@ function AppContent() {
   const [votacionPregunta, setVotacionPregunta] = useState('');
   const [periodosSeleccionados, setPeriodosSeleccionados] = useState<string[]>([]);
   const [evidenciasPorPago, setEvidenciasPorPago] = useState<Record<number, EvidenciaPagoItem[]>>({});
+  const [fotosPorReporte, setFotosPorReporte] = useState<Record<number, FotoMantenimiento[]>>({});
   const [configNotificaciones, setConfigNotificaciones] =
     useState<ConfigNotificacionesState>(DEFAULT_CONFIG_NOTIFICACIONES);
   const [notificacionesRecientes, setNotificacionesRecientes] = useState<NotificacionItem[]>([]);
@@ -579,7 +582,7 @@ function AppContent() {
 
     const syncScopeFromBackend = async () => {
       try {
-        const [cuotasApi, avisosApi, votacionesApi, pagosApi, mantenimientosApi, gastosApi, reportesApi, evidenciasApi] =
+        const [cuotasApi, avisosApi, votacionesApi, pagosApi, mantenimientosApi, gastosApi, reportesApi, evidenciasApi, fotosMantenimientoApi] =
           await Promise.all([
           backendApi.listCuotas(effectiveActiveCondominioId),
           backendApi.listAvisos(effectiveActiveCondominioId),
@@ -589,6 +592,7 @@ function AppContent() {
           backendApi.listGastos(effectiveActiveCondominioId),
           backendApi.listReportesFinancieros(effectiveActiveCondominioId),
           backendApi.listEvidenciasPago({ idCondominio: effectiveActiveCondominioId }),
+          backendApi.listFotosMantenimiento({ idCondominio: effectiveActiveCondominioId }),
         ]);
 
         if (isCancelled) {
@@ -616,6 +620,32 @@ function AppContent() {
 
           Object.entries(evidenciasAgrupadas).forEach(([pagoId, evidencias]) => {
             next[Number(pagoId)] = evidencias;
+          });
+
+          return next;
+        });
+
+        const fotosAgrupadas = fotosMantenimientoApi.reduce<Record<number, FotoMantenimiento[]>>((acc, item) => {
+          if (!acc[item.idReporte]) {
+            acc[item.idReporte] = [];
+          }
+          acc[item.idReporte].push(item);
+          return acc;
+        }, {});
+
+        setFotosPorReporte((prev) => {
+          const next: Record<number, FotoMantenimiento[]> = { ...prev };
+
+          Object.keys(next).forEach((reporteId) => {
+            const reporteIdNum = Number(reporteId);
+            const reporte = mantenimientosApi.find((r) => r.id === reporteIdNum);
+            if (!reporte || reporte.idCondominio === effectiveActiveCondominioId) {
+              delete next[reporteIdNum];
+            }
+          });
+
+          Object.entries(fotosAgrupadas).forEach(([reporteId, fotos]) => {
+            next[Number(reporteId)] = fotos;
           });
 
           return next;
@@ -1575,7 +1605,9 @@ function AppContent() {
     }
   };
 
-  const enviarReporteMantenimiento = async () => {
+  const enviarReporteMantenimiento = async (fotos?: File[]) => {
+    const fotosAElegir = fotos ?? fotosReporte;
+
     if (!sessionUser || !effectiveActiveCondominioId || !activeMembership) {
       return;
     }
@@ -1598,7 +1630,12 @@ function AppContent() {
         mantenimientos: [reporte, ...prev.mantenimientos],
       }));
 
+      if (fotosAElegir.length > 0) {
+        await subirFotoMantenimiento(reporte.id, fotosAElegir, 'REPORTE');
+      }
+
       setFalla('');
+      setFotosReporte([]);
       runAction('Enviando reporte...', 'Reporte de mantenimiento enviado');
     } catch (error) {
       console.error(error);
@@ -1798,6 +1835,73 @@ function AppContent() {
     } catch (error) {
       console.error(error);
       setFeedback('No se pudo actualizar el estado en backend');
+      window.setTimeout(() => setFeedback(null), 2200);
+    }
+  };
+
+  const subirFotoMantenimiento = async (idReporte: number, files: File[], tipo: 'REPORTE' | 'RESOLUCION') => {
+    if (!effectiveActiveCondominioId) {
+      return;
+    }
+
+    const validFiles = files.filter((f) => f.size <= 5 * 1024 * 1024);
+    if (validFiles.length < files.length) {
+      setFeedback('Alguna(s) foto(s) superan el limite de 5 MB y fueron omitidas');
+      window.setTimeout(() => setFeedback(null), 2800);
+    }
+    if (validFiles.length === 0) {
+      return;
+    }
+
+    const nuevasFotos: FotoMantenimiento[] = [];
+    let errores = 0;
+
+    for (const file of validFiles) {
+      try {
+        const foto = await backendApi.createFotoMantenimiento({
+          idCondominio: effectiveActiveCondominioId,
+          idReporte,
+          tipo,
+          nombreArchivo: file.name,
+          archivo: file,
+        });
+        nuevasFotos.push(foto);
+      } catch {
+        errores++;
+      }
+    }
+
+    if (nuevasFotos.length > 0) {
+      setFotosPorReporte((prev) => ({
+        ...prev,
+        [idReporte]: [...nuevasFotos, ...(prev[idReporte] ?? [])],
+      }));
+    }
+
+    const msg = `${nuevasFotos.length} foto(s) cargada(s)${errores > 0 ? `, ${errores} error(es)` : ''}`;
+    runAction('Subiendo fotos...', msg);
+  };
+
+  const eliminarFotoMantenimiento = async (idFoto: number, idReporte: number) => {
+    if (!effectiveActiveCondominioId) {
+      return;
+    }
+
+    try {
+      await backendApi.deleteFotoMantenimiento({
+        idCondominio: effectiveActiveCondominioId,
+        idFoto,
+      });
+
+      setFotosPorReporte((prev) => ({
+        ...prev,
+        [idReporte]: (prev[idReporte] ?? []).filter((f) => f.idFoto !== idFoto),
+      }));
+
+      runAction('Eliminando foto...', 'Foto eliminada correctamente');
+    } catch (error) {
+      console.error(error);
+      setFeedback('No se pudo eliminar la foto del backend');
       window.setTimeout(() => setFeedback(null), 2200);
     }
   };
@@ -2561,6 +2665,9 @@ function AppContent() {
       votacionesActivas={votacionesScoped}
       gastosRecientes={gastosRecientes}
       evidenciasPorPago={evidenciasPorPago}
+      fotosPorReporte={fotosPorReporte}
+      fotosReporte={fotosReporte}
+      onFotosReporteChange={setFotosReporte}
       falla={falla}
       avisoTitulo={avisoTitulo}
       avisoMensaje={avisoMensaje}
@@ -2606,6 +2713,8 @@ function AppContent() {
       onCrearVotacionCambioCuota={crearVotacionCambioCuota}
       onEjecutarCambioCuota={ejecutarCambioCuota}
       onActualizarEstadoMantenimiento={actualizarEstadoMantenimiento}
+      onSubirFotoMantenimiento={subirFotoMantenimiento}
+      onEliminarFotoMantenimiento={eliminarFotoMantenimiento}
       onGastoConceptoChange={setGastoConcepto}
       onGastoCategoriaChange={setGastoCategoria}
       onGastoMontoChange={setGastoMonto}

@@ -13,8 +13,16 @@ async function bootstrap() {
 
   const uploadsDir = join(process.cwd(), 'uploads');
   const evidenciasDir = join(uploadsDir, 'evidencias');
+  const incidenciasDir = join(uploadsDir, 'incidencias');
+  const reparacionesDir = join(uploadsDir, 'reparaciones');
   if (!existsSync(evidenciasDir)) {
     mkdirSync(evidenciasDir, { recursive: true });
+  }
+  if (!existsSync(incidenciasDir)) {
+    mkdirSync(incidenciasDir, { recursive: true });
+  }
+  if (!existsSync(reparacionesDir)) {
+    mkdirSync(reparacionesDir, { recursive: true });
   }
   app.useStaticAssets(uploadsDir, { prefix: '/uploads' });
 

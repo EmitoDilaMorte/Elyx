@@ -123,6 +123,16 @@ export type MantenimientoReporte = {
   idUsuarioCondominioAdmin?: number;
 };
 
+export type FotoMantenimiento = {
+  idFoto: number;
+  idReporte: number;
+  idCondominio: number;
+  nombreArchivo: string;
+  urlArchivo: string;
+  fechaCarga: string;
+  tipo: 'REPORTE' | 'RESOLUCION';
+};
+
 export type OcupanteInfo = {
   idUsuarioCondominio: number;
   nombre: string;

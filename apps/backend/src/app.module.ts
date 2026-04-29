@@ -9,6 +9,7 @@ import { CondominosModule } from './modules/condominos/condominos.module';
 import { ConfigNotificacionesModule } from './modules/config-notificaciones/config-notificaciones.module';
 import { CuotasModule } from './modules/cuotas/cuotas.module';
 import { EvidenciasPagoModule } from './modules/evidencias-pago/evidencias-pago.module';
+import { FotosMantenimientoModule } from './modules/fotos-mantenimiento/fotos-mantenimiento.module';
 import { GastosModule } from './modules/gastos/gastos.module';
 import { NotificacionesModule } from './modules/notificaciones/notificaciones.module';
 import { PagosModule } from './modules/pagos/pagos.module';
@@ -39,6 +40,7 @@ import { VotacionesModule } from './modules/votaciones/votaciones.module';
     AvisosModule,
     VotacionesModule,
     ReportesMantenimientoModule,
+    FotosMantenimientoModule,
     ConfigNotificacionesModule,
     NotificacionesModule,
     GastosModule,

@@ -68,6 +68,16 @@ type BackendMantenimiento = {
   idUsuarioCondominioAdmin: number | null;
 };
 
+type BackendFotoMantenimiento = {
+  idFoto: number;
+  idReporte: number;
+  idCondominio: number;
+  nombreArchivo: string;
+  urlArchivo: string;
+  fechaCarga: string;
+  tipo: 'REPORTE' | 'RESOLUCION';
+};
+
 type BackendGasto = {
   idGasto: number;
   idCondominio: number;
@@ -558,6 +568,42 @@ export const backendApi = {
       idUsuarioCondominioReporta: item.idUsuarioCondominioReporta,
       idUsuarioCondominioAdmin: item.idUsuarioCondominioAdmin ?? undefined,
     };
+  },
+
+  async createFotoMantenimiento(input: {
+    idCondominio: number;
+    idReporte: number;
+    tipo: 'REPORTE' | 'RESOLUCION';
+    archivo: File;
+    nombreArchivo?: string;
+  }) {
+    const body = new FormData();
+    body.append('idCondominio', String(input.idCondominio));
+    body.append('idReporte', String(input.idReporte));
+    body.append('tipo', input.tipo);
+    body.append('nombreArchivo', input.nombreArchivo ?? input.archivo.name);
+    body.append('archivo', input.archivo);
+
+    return requestJson<BackendFotoMantenimiento>('/fotos-mantenimiento', {
+      method: 'POST',
+      body,
+    });
+  },
+
+  async listFotosMantenimiento(input: { idCondominio: number; idReporte?: number }) {
+    const params = new URLSearchParams({ idCondominio: String(input.idCondominio) });
+    if (input.idReporte) {
+      params.set('idReporte', String(input.idReporte));
+    }
+
+    return requestJson<BackendFotoMantenimiento[]>(`/fotos-mantenimiento?${params.toString()}`);
+  },
+
+  async deleteFotoMantenimiento(input: { idCondominio: number; idFoto: number }) {
+    return requestJson<{ ok: boolean }>(
+      `/fotos-mantenimiento/${input.idFoto}?idCondominio=${input.idCondominio}`,
+      { method: 'DELETE' },
+    );
   },
 
   async listGastos(idCondominio: number) {

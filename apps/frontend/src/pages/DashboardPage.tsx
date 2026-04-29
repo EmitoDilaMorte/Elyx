@@ -2,6 +2,7 @@ import type {
   AppData,
   Condominio,
   DemoUser,
+  FotoMantenimiento,
   MantenimientoStatus,
   RoleKey,
   UnidadConOcupante,
@@ -49,6 +50,8 @@ type DashboardPageProps = {
       fechaCarga: string;
     }>
   >;
+  fotosPorReporte: Record<number, FotoMantenimiento[]>;
+  fotosReporte: File[];
   falla: string;
   avisoTitulo: string;
   avisoMensaje: string;
@@ -152,10 +155,13 @@ type DashboardPageProps = {
     diaLimitePropuesto: string;
     motivo: string;
   }) => void;
-  onEnviarReporteMantenimiento: () => void;
+  onEnviarReporteMantenimiento: (fotos?: File[]) => void;
+  onFotosReporteChange: (files: File[]) => void;
   onCrearVotacionCambioCuota: () => void;
   onEjecutarCambioCuota: (idVotacion: number) => void;
   onActualizarEstadoMantenimiento: (id: number, estado: MantenimientoStatus) => void;
+  onSubirFotoMantenimiento: (idReporte: number, files: File[], tipo: 'REPORTE' | 'RESOLUCION') => void;
+  onEliminarFotoMantenimiento: (idFoto: number, idReporte: number) => void;
   onGastoConceptoChange: (value: string) => void;
   onGastoCategoriaChange: (value: string) => void;
   onGastoMontoChange: (value: string) => void;
@@ -234,6 +240,9 @@ export function DashboardPage({
   votacionesActivas,
   gastosRecientes,
   evidenciasPorPago,
+  fotosPorReporte,
+  fotosReporte,
+  onFotosReporteChange,
   falla,
   avisoTitulo,
   avisoMensaje,
@@ -279,6 +288,8 @@ export function DashboardPage({
   onCrearVotacionCambioCuota,
   onEjecutarCambioCuota,
   onActualizarEstadoMantenimiento,
+  onSubirFotoMantenimiento,
+  onEliminarFotoMantenimiento,
   onGastoConceptoChange,
   onGastoCategoriaChange,
   onGastoMontoChange,
@@ -1129,10 +1140,46 @@ export function DashboardPage({
                       rows={4}
                     />
                     <div className="btn-row">
-                      <button className="primary-btn" onClick={onEnviarReporteMantenimiento} disabled={!falla.trim()}>
+                      <label className="soft-btn" htmlFor="foto-incidencia" style={{ cursor: 'pointer' }}>
+                        Subir fotos
+                      </label>
+                      <input
+                        id="foto-incidencia"
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        style={{ display: 'none' }}
+                        onChange={(event) => {
+                          const files = event.target.files ? Array.from(event.target.files) : [];
+                          onFotosReporteChange(files);
+                        }}
+                      />
+                      <button className="primary-btn" onClick={() => onEnviarReporteMantenimiento()} disabled={!falla.trim()}>
                         Enviar reporte
                       </button>
                     </div>
+                    {fotosReporte.length > 0 && (
+                      <div style={{ marginTop: '0.5rem' }}>
+                        <p className="helper-text" style={{ margin: '0 0 0.3rem' }}>
+                          Fotos a enviar: {fotosReporte.length}
+                        </p>
+                        <ul className="clean-list">
+                          {fotosReporte.map((file, i) => (
+                            <li key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.2rem' }}>
+                              <span>{file.name}</span>
+                              <small>({(file.size / 1024).toFixed(0)} KB)</small>
+                              <button
+                                className="soft-btn"
+                                style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
+                                onClick={() => onFotosReporteChange(fotosReporte.filter((_, idx) => idx !== i))}
+                              >
+                                Quitar
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                   </article>
 
                   <article className="panel-subsection">
@@ -1141,7 +1188,12 @@ export function DashboardPage({
                       <p className="empty-state">Aun no has reportado fallas en este condominio.</p>
                     )}
                     <div className="payment-list">
-                      {misReportesMantenimiento.map((reporte) => (
+                      {misReportesMantenimiento.map((reporte) => {
+                        const fotos = fotosPorReporte[reporte.id] ?? [];
+                        const fotosReporte = fotos.filter((f) => f.tipo === 'REPORTE');
+                        const fotosResolucion = fotos.filter((f) => f.tipo === 'RESOLUCION');
+
+                        return (
                         <article key={reporte.id} className="payment-item compact-item">
                           <p className="item-title">Reporte #{reporte.id}</p>
                           <small>
@@ -1151,14 +1203,63 @@ export function DashboardPage({
                             {statusLabel[reporte.estado]}
                           </span>
                           <p className="helper-text">{reporte.descripcion}</p>
+                          {fotosReporte.length > 0 && (
+                            <div style={{ marginTop: '0.5rem' }}>
+                              <p className="helper-text" style={{ margin: '0 0 0.3rem' }}>
+                                Fotos de la incidencia: {fotosReporte.length}
+                              </p>
+                              <ul className="clean-list">
+                                {fotosReporte.map((foto) => (
+                                  <li key={foto.idFoto} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.2rem' }}>
+                                    <a href={foto.urlArchivo} target="_blank" rel="noopener noreferrer">
+                                      {foto.nombreArchivo}
+                                    </a>
+                                    <small>{formatShortDate(foto.fechaCarga)}</small>
+                                    {reporte.estado !== 'RESUELTO' && (
+                                      <button
+                                        className="soft-btn"
+                                        style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
+                                        onClick={() => onEliminarFotoMantenimiento(foto.idFoto, reporte.id)}
+                                      >
+                                        Eliminar
+                                      </button>
+                                    )}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                          {fotosResolucion.length > 0 && (
+                            <div style={{ marginTop: '0.5rem' }}>
+                              <p className="helper-text" style={{ margin: '0 0 0.3rem', color: 'var(--green)' }}>
+                                Fotos de la resolucion: {fotosResolucion.length}
+                              </p>
+                              <ul className="clean-list">
+                                {fotosResolucion.map((foto) => (
+                                  <li key={foto.idFoto} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.2rem' }}>
+                                    <a href={foto.urlArchivo} target="_blank" rel="noopener noreferrer">
+                                      {foto.nombreArchivo}
+                                    </a>
+                                    <small>{formatShortDate(foto.fechaCarga)}</small>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
                         </article>
-                      ))}
+                        );
+                      })}
                     </div>
                   </article>
                 </div>
               ) : (
                 <div className="payment-list">
-                  {appData.mantenimientos.map((reporte) => (
+                  {appData.mantenimientos.map((reporte) => {
+                    const fotos = fotosPorReporte[reporte.id] ?? [];
+                    const fotosReporte = fotos.filter((f) => f.tipo === 'REPORTE');
+                    const fotosResolucion = fotos.filter((f) => f.tipo === 'RESOLUCION');
+
+                    return (
                     <article key={reporte.id} className="payment-item">
                       <p className="item-title">
                         Reporte #{reporte.id} | {reporte.unidad}
@@ -1167,7 +1268,69 @@ export function DashboardPage({
                         {reporte.descripcion} | {reporte.fecha}
                       </small>
                       <span className={`status-pill status-${reporte.estado.toLowerCase()}`}>{statusLabel[reporte.estado]}</span>
+                      {fotosReporte.length > 0 && (
+                        <div style={{ marginTop: '0.5rem' }}>
+                          <p className="helper-text" style={{ margin: '0 0 0.3rem' }}>
+                            Fotos de la incidencia: {fotosReporte.length}
+                          </p>
+                          <ul className="clean-list">
+                            {fotosReporte.map((foto) => (
+                              <li key={foto.idFoto} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.2rem' }}>
+                                <a href={foto.urlArchivo} target="_blank" rel="noopener noreferrer">
+                                  {foto.nombreArchivo}
+                                </a>
+                                <small>{formatShortDate(foto.fechaCarga)}</small>
+                                {reporte.estado !== 'RESUELTO' && (
+                                  <button
+                                    className="soft-btn"
+                                    style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
+                                    onClick={() => onEliminarFotoMantenimiento(foto.idFoto, reporte.id)}
+                                  >
+                                    Eliminar
+                                  </button>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {fotosResolucion.length > 0 && (
+                        <div style={{ marginTop: '0.5rem' }}>
+                          <p className="helper-text" style={{ margin: '0 0 0.3rem', color: 'var(--green)' }}>
+                            Fotos de la resolucion: {fotosResolucion.length}
+                          </p>
+                          <ul className="clean-list">
+                            {fotosResolucion.map((foto) => (
+                              <li key={foto.idFoto} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.2rem' }}>
+                                <a href={foto.urlArchivo} target="_blank" rel="noopener noreferrer">
+                                  {foto.nombreArchivo}
+                                </a>
+                                <small>{formatShortDate(foto.fechaCarga)}</small>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                       <div className="btn-row">
+                        {reporte.estado !== 'RESUELTO' && (
+                          <label className="soft-btn" htmlFor={`foto-resolucion-${reporte.id}`} style={{ cursor: 'pointer' }}>
+                            Subir fotos resolucion
+                          </label>
+                        )}
+                        <input
+                          id={`foto-resolucion-${reporte.id}`}
+                          type="file"
+                          accept="image/*"
+                          multiple
+                          style={{ display: 'none' }}
+                          onChange={(event) => {
+                            const files = event.target.files ? Array.from(event.target.files) : [];
+                            if (files.length > 0) {
+                              onSubirFotoMantenimiento(reporte.id, files, 'RESOLUCION');
+                              event.target.value = '';
+                            }
+                          }}
+                        />
                         <button
                           className="soft-btn"
                           onClick={() => onActualizarEstadoMantenimiento(reporte.id, 'EN_PROCESO')}
@@ -1184,7 +1347,8 @@ export function DashboardPage({
                         </button>
                       </div>
                     </article>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </section>

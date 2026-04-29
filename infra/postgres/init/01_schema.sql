@@ -198,6 +198,18 @@ CREATE TABLE IF NOT EXISTS reportes_mantenimiento (
     ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS fotos_mantenimiento (
+  id_foto SERIAL PRIMARY KEY,
+  nombre_archivo VARCHAR(180) NOT NULL,
+  url_archivo TEXT NOT NULL,
+  fecha_carga TIMESTAMP NOT NULL,
+  tipo VARCHAR(20) NOT NULL CHECK (tipo IN ('REPORTE', 'RESOLUCION')),
+  id_reporte INT NOT NULL,
+  CONSTRAINT fk_foto_mantenimiento_reporte
+    FOREIGN KEY (id_reporte) REFERENCES reportes_mantenimiento(id_reporte)
+    ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS avisos (
   id_aviso SERIAL PRIMARY KEY,
   titulo VARCHAR(150) NOT NULL,
