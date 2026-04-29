@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import * as fs from 'fs';
 import { join } from 'path';
@@ -73,7 +73,7 @@ export class FotosMantenimientoService {
 
       const reporteRows = await manager.query(
         `
-        SELECT r.id_reporte, r.id_condominio
+        SELECT r.id_reporte, r.id_condominio, r.estado
         FROM reportes_mantenimiento r
         WHERE r.id_reporte = $1 AND r.id_condominio = $2
         LIMIT 1
@@ -83,6 +83,18 @@ export class FotosMantenimientoService {
 
       if (reporteRows.length === 0) {
         throw new NotFoundException('No se encontro el reporte de mantenimiento para el condominio indicado.');
+      }
+
+      const estadoReporte = String((reporteRows[0] as Record<string, unknown>).estado);
+
+      if (input.tipo === 'REPORTE') {
+        if (estadoReporte !== 'ABIERTO') {
+          throw new ForbiddenException('Solo se pueden agregar fotos de incidencia a reportes en estado Abierto.');
+        }
+      } else {
+        if (estadoReporte !== 'EN_PROCESO' && estadoReporte !== 'RESUELTO') {
+          throw new ForbiddenException('Solo se pueden agregar fotos de resolucion a reportes En proceso o Resueltos.');
+        }
       }
 
       const createdRows = await manager.query(
@@ -121,7 +133,7 @@ export class FotosMantenimientoService {
   async delete(idFoto: number, idCondominio: number): Promise<{ ok: boolean }> {
     const rows = await this.dataSource.query(
       `
-      SELECT f.id_foto, f.url_archivo, r.id_condominio
+      SELECT f.id_foto, f.tipo, f.url_archivo, r.id_condominio, r.estado
       FROM fotos_mantenimiento f
       INNER JOIN reportes_mantenimiento r ON r.id_reporte = f.id_reporte
       WHERE f.id_foto = $1 AND r.id_condominio = $2
@@ -135,7 +147,17 @@ export class FotosMantenimientoService {
     }
 
     const row = rows[0] as Record<string, unknown>;
+    const tipo = String(row.tipo);
+    const estado = String(row.estado);
     const urlArchivo = String(row.url_archivo);
+
+    if (tipo === 'REPORTE' && estado !== 'ABIERTO') {
+      throw new ForbiddenException('Solo se pueden eliminar fotos de incidencia de reportes en estado Abierto.');
+    }
+
+    if (tipo === 'RESOLUCION' && estado === 'CERRADO') {
+      throw new ForbiddenException('No se pueden eliminar fotos de un reporte Cerrado.');
+    }
 
     await this.dataSource.query(
       `DELETE FROM fotos_mantenimiento WHERE id_foto = $1`,

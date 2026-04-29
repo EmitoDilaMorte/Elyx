@@ -16,6 +16,7 @@ type ReporteMantenimientoRecord = {
   estado: ReporteMantenimientoEstado;
   idUsuarioCondominioReporta: number;
   idUsuarioCondominioAdmin: number | null;
+  claveUnidad: string | null;
 };
 
 @Injectable()
@@ -29,16 +30,19 @@ export class ReportesMantenimientoService {
     const rows = await this.dataSource.query(
       `
       SELECT
-        id_reporte,
-        id_condominio,
-        descripcion,
-        fecha_reporte,
-        estado,
-        id_usuario_condominio_reporta,
-        id_usuario_condominio_admin
-      FROM reportes_mantenimiento
-      WHERE id_condominio = $1
-      ORDER BY fecha_reporte DESC
+        r.id_reporte,
+        r.id_condominio,
+        r.descripcion,
+        r.fecha_reporte,
+        r.estado,
+        r.id_usuario_condominio_reporta,
+        r.id_usuario_condominio_admin,
+        u.clave_unidad
+      FROM reportes_mantenimiento r
+      LEFT JOIN unidades_ocupantes uo ON uo.id_usuario_condominio = r.id_usuario_condominio_reporta
+      LEFT JOIN unidades u ON u.id_unidad = uo.id_unidad
+      WHERE r.id_condominio = $1
+      ORDER BY r.fecha_reporte DESC
       `,
       [idCondominio],
     );
@@ -59,19 +63,33 @@ export class ReportesMantenimientoService {
         id_usuario_condominio_admin
       )
       VALUES ($1, NOW(), 'ABIERTO', NULL, $2, $3, NULL)
-      RETURNING
-        id_reporte,
-        id_condominio,
-        descripcion,
-        fecha_reporte,
-        estado,
-        id_usuario_condominio_reporta,
-        id_usuario_condominio_admin
+      RETURNING id_reporte
       `,
       [`${input.unidad.trim()}: ${input.descripcion.trim()}`, input.idCondominio, input.idUsuarioCondominioReporta],
     );
 
-    const reporte = this.toReporteRecord(rows[0] as Record<string, unknown> | unknown[]);
+    const idReporte = Number((rows[0] as Record<string, unknown>).id_reporte);
+
+    const fullRows = await this.dataSource.query(
+      `
+      SELECT
+        r.id_reporte,
+        r.id_condominio,
+        r.descripcion,
+        r.fecha_reporte,
+        r.estado,
+        r.id_usuario_condominio_reporta,
+        r.id_usuario_condominio_admin,
+        u.clave_unidad
+      FROM reportes_mantenimiento r
+      LEFT JOIN unidades_ocupantes uo ON uo.id_usuario_condominio = r.id_usuario_condominio_reporta
+      LEFT JOIN unidades u ON u.id_unidad = uo.id_unidad
+      WHERE r.id_reporte = $1
+      `,
+      [idReporte],
+    );
+
+    const reporte = this.toReporteRecord(fullRows[0] as Record<string, unknown> | unknown[]);
     this.reportesMantenimientoGateway.emitMantenimientoChanged(input.idCondominio, {
       tipo: 'CREADO',
       reporte,
@@ -97,15 +115,18 @@ export class ReportesMantenimientoService {
     const rows = await this.dataSource.query(
       `
       SELECT
-        id_reporte,
-        id_condominio,
-        descripcion,
-        fecha_reporte,
-        estado,
-        id_usuario_condominio_reporta,
-        id_usuario_condominio_admin
-      FROM reportes_mantenimiento
-      WHERE id_condominio = $1 AND id_reporte = $2
+        r.id_reporte,
+        r.id_condominio,
+        r.descripcion,
+        r.fecha_reporte,
+        r.estado,
+        r.id_usuario_condominio_reporta,
+        r.id_usuario_condominio_admin,
+        u.clave_unidad
+      FROM reportes_mantenimiento r
+      LEFT JOIN unidades_ocupantes uo ON uo.id_usuario_condominio = r.id_usuario_condominio_reporta
+      LEFT JOIN unidades u ON u.id_unidad = uo.id_unidad
+      WHERE r.id_condominio = $1 AND r.id_reporte = $2
       LIMIT 1
       `,
       [input.idCondominio, input.idReporte],
@@ -125,7 +146,7 @@ export class ReportesMantenimientoService {
 
   private toReporteRecord(row: Record<string, unknown> | unknown[]): ReporteMantenimientoRecord {
     if (Array.isArray(row)) {
-      const [idReporte, idCondominio, descripcion, fecha, estado, idReporta, idAdmin] = row;
+      const [idReporte, idCondominio, descripcion, fecha, estado, idReporta, idAdmin, claveUnidad] = row;
       const descripcionRaw = String(descripcion ?? 'General');
       const separator = descripcionRaw.indexOf(': ');
 
@@ -138,6 +159,7 @@ export class ReportesMantenimientoService {
         estado: this.toApiEstado(String(estado ?? 'ABIERTO')),
         idUsuarioCondominioReporta: Number(idReporta ?? 0),
         idUsuarioCondominioAdmin: idAdmin ? Number(idAdmin) : null,
+        claveUnidad: claveUnidad ? String(claveUnidad) : null,
       };
     }
 
@@ -156,6 +178,7 @@ export class ReportesMantenimientoService {
       idUsuarioCondominioAdmin: this.pick(row, ['id_usuario_condominio_admin', 'idUsuarioCondominioAdmin'])
         ? Number(this.pick(row, ['id_usuario_condominio_admin', 'idUsuarioCondominioAdmin']))
         : null,
+      claveUnidad: this.pick(row, ['clave_unidad', 'claveUnidad']) ? String(this.pick(row, ['clave_unidad', 'claveUnidad'])) : null,
     };
   }
 
@@ -214,6 +237,10 @@ export class ReportesMantenimientoService {
       return ReporteMantenimientoEstado.EN_PROCESO;
     }
 
+    if (estadoDb === 'CERRADO') {
+      return ReporteMantenimientoEstado.CERRADO;
+    }
+
     return ReporteMantenimientoEstado.RESUELTO;
   }
 
@@ -224,6 +251,10 @@ export class ReportesMantenimientoService {
 
     if (estadoApi === ReporteMantenimientoEstado.EN_PROCESO) {
       return 'EN_PROCESO';
+    }
+
+    if (estadoApi === ReporteMantenimientoEstado.CERRADO) {
+      return 'CERRADO';
     }
 
     return 'RESUELTO';

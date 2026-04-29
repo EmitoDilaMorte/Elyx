@@ -458,7 +458,7 @@ function AppContent() {
   const gastosRecientes = useMemo(() => gastosScoped.slice(0, 6), [gastosScoped]);
 
   const mantenimientosAbiertos = useMemo(
-    () => mantenimientosScoped.filter((item: MantenimientoReporte) => item.estado !== 'RESUELTO').length,
+    () => mantenimientosScoped.filter((item: MantenimientoReporte) => item.estado !== 'RESUELTO' && item.estado !== 'CERRADO').length,
     [mantenimientosScoped],
   );
 

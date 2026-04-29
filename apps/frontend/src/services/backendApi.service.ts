@@ -63,9 +63,10 @@ type BackendMantenimiento = {
   unidad: string;
   descripcion: string;
   fecha: string;
-  estado: 'NUEVO' | 'EN_PROCESO' | 'RESUELTO';
+  estado: 'NUEVO' | 'EN_PROCESO' | 'RESUELTO' | 'CERRADO';
   idUsuarioCondominioReporta: number;
   idUsuarioCondominioAdmin: number | null;
+  claveUnidad: string | null;
 };
 
 type BackendFotoMantenimiento = {
@@ -521,6 +522,7 @@ export const backendApi = {
       estado: item.estado,
       idUsuarioCondominioReporta: item.idUsuarioCondominioReporta,
       idUsuarioCondominioAdmin: item.idUsuarioCondominioAdmin ?? undefined,
+      claveUnidad: item.claveUnidad,
       }));
   },
 
@@ -544,6 +546,7 @@ export const backendApi = {
       estado: item.estado,
       idUsuarioCondominioReporta: item.idUsuarioCondominioReporta,
       idUsuarioCondominioAdmin: item.idUsuarioCondominioAdmin ?? undefined,
+      claveUnidad: item.claveUnidad,
     };
   },
 
@@ -551,7 +554,7 @@ export const backendApi = {
     idCondominio: number;
     idReporte: number;
     idUsuarioCondominioAdmin: number;
-    estado: 'NUEVO' | 'EN_PROCESO' | 'RESUELTO';
+    estado: 'NUEVO' | 'EN_PROCESO' | 'RESUELTO' | 'CERRADO';
   }) {
     const item = await requestJson<BackendMantenimiento>('/reportes-mantenimiento/estado', {
       method: 'PATCH',
@@ -567,6 +570,7 @@ export const backendApi = {
       estado: item.estado,
       idUsuarioCondominioReporta: item.idUsuarioCondominioReporta,
       idUsuarioCondominioAdmin: item.idUsuarioCondominioAdmin ?? undefined,
+      claveUnidad: item.claveUnidad,
     };
   },
 

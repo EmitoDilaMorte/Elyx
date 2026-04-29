@@ -9,4 +9,5 @@ export const statusLabel: Record<CuotaStatus | PagoStatus | MantenimientoStatus,
   NUEVO: 'Nuevo',
   EN_PROCESO: 'En proceso',
   RESUELTO: 'Resuelto',
+  CERRADO: 'Cerrado',
 };

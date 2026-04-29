@@ -4,6 +4,7 @@ export enum ReporteMantenimientoEstado {
   NUEVO = 'NUEVO',
   EN_PROCESO = 'EN_PROCESO',
   RESUELTO = 'RESUELTO',
+  CERRADO = 'CERRADO',
 }
 
 export class CreateReporteMantenimientoDto {

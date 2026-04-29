@@ -15,7 +15,7 @@ export type ViewKey =
 
 export type CuotaStatus = 'PENDIENTE' | 'EN_VALIDACION' | 'PAGADA';
 export type PagoStatus = 'PENDIENTE' | 'APROBADO' | 'RECHAZADO';
-export type MantenimientoStatus = 'NUEVO' | 'EN_PROCESO' | 'RESUELTO';
+export type MantenimientoStatus = 'NUEVO' | 'EN_PROCESO' | 'RESUELTO' | 'CERRADO';
 export type VoteChoice = 'favor' | 'contra';
 
 export type IconName =
@@ -121,6 +121,7 @@ export type MantenimientoReporte = {
   estado: MantenimientoStatus;
   idUsuarioCondominioReporta?: number;
   idUsuarioCondominioAdmin?: number;
+  claveUnidad?: string | null;
 };
 
 export type FotoMantenimiento = {

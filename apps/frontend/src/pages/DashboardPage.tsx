@@ -1197,7 +1197,7 @@ export function DashboardPage({
                         <article key={reporte.id} className="payment-item compact-item">
                           <p className="item-title">Reporte #{reporte.id}</p>
                           <small>
-                            {reporte.unidad} | {reporte.fecha}
+                            Condomino: {condominoNameByMembership[reporte.idUsuarioCondominioReporta ?? 0] ?? reporte.unidad} | Unidad: {reporte.claveUnidad ?? '—'} | {reporte.fecha}
                           </small>
                           <span className={`status-pill status-${reporte.estado.toLowerCase()}`}>
                             {statusLabel[reporte.estado]}
@@ -1215,7 +1215,7 @@ export function DashboardPage({
                                       {foto.nombreArchivo}
                                     </a>
                                     <small>{formatShortDate(foto.fechaCarga)}</small>
-                                    {reporte.estado !== 'RESUELTO' && (
+                                    {reporte.estado === 'NUEVO' && (
                                       <button
                                         className="soft-btn"
                                         style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
@@ -1227,6 +1227,27 @@ export function DashboardPage({
                                   </li>
                                 ))}
                               </ul>
+                            </div>
+                          )}
+                          {reporte.estado === 'NUEVO' && (
+                            <div style={{ marginTop: '0.3rem' }}>
+                              <label className="soft-btn" htmlFor={`foto-incidencia-${reporte.id}`} style={{ cursor: 'pointer' }}>
+                                Subir fotos
+                              </label>
+                              <input
+                                id={`foto-incidencia-${reporte.id}`}
+                                type="file"
+                                accept="image/*"
+                                multiple
+                                style={{ display: 'none' }}
+                                onChange={(event) => {
+                                  const files = event.target.files ? Array.from(event.target.files) : [];
+                                  if (files.length > 0) {
+                                    onSubirFotoMantenimiento(reporte.id, files, 'REPORTE');
+                                    event.target.value = '';
+                                  }
+                                }}
+                              />
                             </div>
                           )}
                           {fotosResolucion.length > 0 && (
@@ -1262,12 +1283,13 @@ export function DashboardPage({
                     return (
                     <article key={reporte.id} className="payment-item">
                       <p className="item-title">
-                        Reporte #{reporte.id} | {reporte.unidad}
+                        Reporte #{reporte.id}
                       </p>
                       <small>
-                        {reporte.descripcion} | {reporte.fecha}
+                        Condomino: {condominoNameByMembership[reporte.idUsuarioCondominioReporta ?? 0] ?? reporte.unidad} | Unidad: {reporte.claveUnidad ?? '—'} | {reporte.fecha}
                       </small>
                       <span className={`status-pill status-${reporte.estado.toLowerCase()}`}>{statusLabel[reporte.estado]}</span>
+                      <p className="helper-text">{reporte.descripcion}</p>
                       {fotosReporte.length > 0 && (
                         <div style={{ marginTop: '0.5rem' }}>
                           <p className="helper-text" style={{ margin: '0 0 0.3rem' }}>
@@ -1280,15 +1302,6 @@ export function DashboardPage({
                                   {foto.nombreArchivo}
                                 </a>
                                 <small>{formatShortDate(foto.fechaCarga)}</small>
-                                {reporte.estado !== 'RESUELTO' && (
-                                  <button
-                                    className="soft-btn"
-                                    style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
-                                    onClick={() => onEliminarFotoMantenimiento(foto.idFoto, reporte.id)}
-                                  >
-                                    Eliminar
-                                  </button>
-                                )}
                               </li>
                             ))}
                           </ul>
@@ -1306,13 +1319,22 @@ export function DashboardPage({
                                   {foto.nombreArchivo}
                                 </a>
                                 <small>{formatShortDate(foto.fechaCarga)}</small>
+                                {reporte.estado !== 'CERRADO' && (
+                                  <button
+                                    className="soft-btn"
+                                    style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
+                                    onClick={() => onEliminarFotoMantenimiento(foto.idFoto, reporte.id)}
+                                  >
+                                    Eliminar
+                                  </button>
+                                )}
                               </li>
                             ))}
                           </ul>
                         </div>
                       )}
                       <div className="btn-row">
-                        {reporte.estado !== 'RESUELTO' && (
+                        {(reporte.estado === 'EN_PROCESO' || reporte.estado === 'RESUELTO') && (
                           <label className="soft-btn" htmlFor={`foto-resolucion-${reporte.id}`} style={{ cursor: 'pointer' }}>
                             Subir fotos resolucion
                           </label>
@@ -1331,20 +1353,30 @@ export function DashboardPage({
                             }
                           }}
                         />
-                        <button
-                          className="soft-btn"
-                          onClick={() => onActualizarEstadoMantenimiento(reporte.id, 'EN_PROCESO')}
-                          disabled={reporte.estado === 'EN_PROCESO'}
-                        >
-                          Marcar en proceso
-                        </button>
-                        <button
-                          className="primary-btn"
-                          onClick={() => onActualizarEstadoMantenimiento(reporte.id, 'RESUELTO')}
-                          disabled={reporte.estado === 'RESUELTO'}
-                        >
-                          Marcar resuelto
-                        </button>
+                        {reporte.estado === 'NUEVO' && (
+                          <button
+                            className="soft-btn"
+                            onClick={() => onActualizarEstadoMantenimiento(reporte.id, 'EN_PROCESO')}
+                          >
+                            Marcar en proceso
+                          </button>
+                        )}
+                        {reporte.estado === 'EN_PROCESO' && (
+                          <button
+                            className="primary-btn"
+                            onClick={() => onActualizarEstadoMantenimiento(reporte.id, 'RESUELTO')}
+                          >
+                            Marcar resuelto
+                          </button>
+                        )}
+                        {reporte.estado === 'RESUELTO' && (
+                          <button
+                            className="primary-btn"
+                            onClick={() => onActualizarEstadoMantenimiento(reporte.id, 'CERRADO')}
+                          >
+                            Marcar cerrado
+                          </button>
+                        )}
                       </div>
                     </article>
                     );
