@@ -35,7 +35,7 @@ export function LoginPage({
   onCambiarPasswordForzado,
 }: LoginPageProps) {
   const [showFullPrivacy, setShowFullPrivacy] = useState(false);
-  const [forgotStep, setForgotStep] = useState<'none' | 'email' | 'token' | 'password'>('none');
+  const [forgotStep, setForgotStep] = useState<'none' | 'email' | 'password'>('none');
   const [forgotCorreo, setForgotCorreo] = useState('');
   const [resetToken, setResetToken] = useState('');
   const [resetPassword, setResetPassword] = useState('');
@@ -53,24 +53,16 @@ export function LoginPage({
   };
 
   useEffect(() => {
-    if (autoTokenCheck.current) {
-      return;
-    }
-
-    if (typeof window === 'undefined') {
-      return;
-    }
+    if (autoTokenCheck.current) return;
+    if (typeof window === 'undefined') return;
 
     const params = new URLSearchParams(window.location.search);
     const tokenParam = params.get('token');
-    if (!tokenParam) {
-      return;
-    }
+    if (!tokenParam) return;
 
     autoTokenCheck.current = true;
-    setForgotStep('token');
     setResetToken(tokenParam);
-    void handleValidateToken(tokenParam);
+    setForgotStep('password');
   }, []);
 
   const handleForgotPassword = async () => {
@@ -81,30 +73,9 @@ export function LoginPage({
       const apiModule = await import('../services/backendApi.service');
       const res = await apiModule.backendApi.forgotPassword(forgotCorreo.trim());
       setForgotMsg(res.message);
-      setForgotStep('token');
-      setResetToken('');
     } catch (error) {
       console.error(error);
       setForgotError(getErrorMessage(error));
-    } finally {
-      setForgotLoading(false);
-    }
-  };
-
-  const handleValidateToken = async (tokenOverride?: string) => {
-    const tokenValue = (tokenOverride ?? resetToken).trim();
-    if (!tokenValue) return;
-    setForgotLoading(true);
-    setForgotError(null);
-    try {
-      const apiModule = await import('../services/backendApi.service');
-      await apiModule.backendApi.validateResetToken(tokenValue);
-      setForgotMsg('Token validado. Ahora crea una nueva contrasena.');
-      setForgotStep('password');
-    } catch (error) {
-      console.error(error);
-      setForgotError(getErrorMessage(error));
-      setForgotStep('token');
     } finally {
       setForgotLoading(false);
     }
@@ -205,11 +176,7 @@ export function LoginPage({
               <div>
                 <p className="brand-kicker">Recuperacion de acceso</p>
                 <h2>
-                  {forgotStep === 'email'
-                    ? 'Recuperar contrasena'
-                    : forgotStep === 'token'
-                      ? 'Validar token'
-                      : 'Restablecer contrasena'}
+                  {forgotStep === 'email' ? 'Recuperar contrasena' : 'Restablecer contrasena'}
                 </h2>
                 <p className="helper-text">Sigue los pasos para recuperar el acceso a Elyx.</p>
               </div>
@@ -220,36 +187,29 @@ export function LoginPage({
 
             <div className="forgot-flow">
               {forgotStep === 'email' && (
-                <>
-                  <p className="helper-text">Ingresa tu correo para recibir un enlace de recuperacion y continuar con el restablecimiento.</p>
-                  <div className="forgot-step-pill">Paso 1 de 3: enviar correo</div>
-                  <label className="field-label" htmlFor="forgot-correo">Correo</label>
-                  <input id="forgot-correo" type="email" value={forgotCorreo} onChange={(e) => setForgotCorreo(e.target.value)} placeholder="usuario@elyx.mx" />
-                  {forgotError && <p className="login-error">{forgotError}</p>}
-                  <div className="btn-row" style={{ marginTop: '0.75rem' }}>
-                    <button className="soft-btn" type="button" onClick={cerrarForgot}>Cancelar</button>
-                    <button className="primary-btn" type="button" onClick={handleForgotPassword} disabled={!forgotCorreo.trim() || forgotLoading}>{forgotLoading ? 'Enviando...' : 'Enviar enlace'}</button>
-                  </div>
-                </>
-              )}
-              {forgotStep === 'token' && (
-                <>
-                  <p className="helper-text">Revisa tu correo. Pega el token recibido para validarlo.</p>
-                  <div className="forgot-step-pill">Paso 2 de 3: validar token</div>
-                  <label className="field-label" htmlFor="reset-token">Token de recuperacion</label>
-                  <input id="reset-token" type="text" value={resetToken} onChange={(e) => setResetToken(e.target.value)} placeholder="Token del correo" />
-                  {forgotMsg && <p className="helper-text" style={{ color: 'var(--green)' }}>{forgotMsg}</p>}
-                  {forgotError && <p className="login-error">{forgotError}</p>}
-                  <div className="btn-row" style={{ marginTop: '0.75rem' }}>
-                    <button className="soft-btn" type="button" onClick={cerrarForgot}>Cancelar</button>
-                    <button className="primary-btn" type="button" onClick={() => handleValidateToken()} disabled={!resetToken.trim() || forgotLoading}>{forgotLoading ? 'Validando...' : 'Validar token'}</button>
-                  </div>
-                </>
+                forgotMsg ? (
+                  <>
+                    <p className="helper-text" style={{ color: 'var(--green)', marginBottom: '0.75rem' }}>{forgotMsg}</p>
+                    <div className="btn-row">
+                      <button className="soft-btn" type="button" onClick={cerrarForgot}>Volver al inicio</button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="helper-text">Ingresa tu correo para recibir un enlace de recuperacion.</p>
+                    <label className="field-label" htmlFor="forgot-correo">Correo</label>
+                    <input id="forgot-correo" type="email" value={forgotCorreo} onChange={(e) => setForgotCorreo(e.target.value)} placeholder="usuario@elyx.mx" />
+                    {forgotError && <p className="login-error">{forgotError}</p>}
+                    <div className="btn-row" style={{ marginTop: '0.75rem' }}>
+                      <button className="soft-btn" type="button" onClick={cerrarForgot}>Cancelar</button>
+                      <button className="primary-btn" type="button" onClick={handleForgotPassword} disabled={!forgotCorreo.trim() || forgotLoading}>{forgotLoading ? 'Enviando...' : 'Enviar enlace'}</button>
+                    </div>
+                  </>
+                )
               )}
               {forgotStep === 'password' && (
                 <>
-                  <p className="helper-text">Token valido. Define una nueva contrasena para continuar.</p>
-                  <div className="forgot-step-pill">Paso 3 de 3: nueva contrasena</div>
+                  <p className="helper-text">{forgotMsg || 'Define una nueva contrasena.'}</p>
                   <label className="field-label" htmlFor="reset-password">Nueva contrasena</label>
                   <input id="reset-password" type="password" value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} placeholder="Minimo 8 caracteres" />
                   {forgotMsg && <p className="helper-text" style={{ color: 'var(--green)' }}>{forgotMsg}</p>}
@@ -297,14 +257,6 @@ export function LoginPage({
             <button className="soft-btn compact-btn" type="button" onClick={() => setShowFullPrivacy(true)}>
               Ver politica de privacidad
             </button>
-          </div>
-
-          <div className="login-hint">
-            <p>Usuarios de acceso:</p>
-            <ul className="hint-list">
-              <li>condomino@elyx.mx / Elyx123</li>
-              <li>admin@elyx.mx / Elyx123</li>
-            </ul>
           </div>
 
         </article>

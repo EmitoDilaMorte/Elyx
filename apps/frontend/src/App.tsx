@@ -1050,6 +1050,21 @@ function AppContent() {
         return;
       }
 
+      const condominiosDesdeMembresias = response.user.membresias
+        .filter((item) => item.idCondominio > 0)
+        .map((item) => ({
+          idCondominio: item.idCondominio,
+          nombre: item.nombreCondominio || `Condominio #${item.idCondominio}`,
+          direccion: item.direccionCondominio || '',
+        }));
+
+      const seen = new Set<number>();
+      const condominiosUnicos = condominiosDesdeMembresias.filter((c) => {
+        if (seen.has(c.idCondominio)) return false;
+        seen.add(c.idCondominio);
+        return true;
+      });
+
       setLoginError(null);
       setLoadingLabel('Iniciando sesion...');
 
@@ -1072,6 +1087,16 @@ function AppContent() {
           passwordActual: '',
           passwordNueva: '',
         });
+        if (condominiosUnicos.length > 0) {
+          setAppData((prev) => {
+            const existingIds = new Set(prev.condominios.map((c) => c.idCondominio));
+            const nuevos = condominiosUnicos.filter((c) => !existingIds.has(c.idCondominio));
+            return {
+              ...prev,
+              condominios: [...prev.condominios, ...nuevos],
+            };
+          });
+        }
         if (response.user.requiereCambioPassword) {
           setRequiereCambio(true);
           setIsAuthenticated(true);
@@ -2029,9 +2054,9 @@ function AppContent() {
     }
 
     try {
-      const updated = await backendApi.updatePerfilCorreo(correoNuevo);
-      setSessionUser((prev) => (prev ? { ...prev, correo: updated.correo } : prev));
-      setPerfil((prev) => ({ ...prev, correo: updated.correo }));
+      await backendApi.updatePerfilCorreo(correoNuevo);
+      setSessionUser((prev) => (prev ? { ...prev, correo: correoNuevo } : prev));
+      setPerfil((prev) => ({ ...prev, correo: correoNuevo }));
       runAction('Actualizando correo...', 'Correo actualizado correctamente');
     } catch (error) {
       console.error(error);
@@ -2060,9 +2085,7 @@ function AppContent() {
       setRequiereCambio(false);
       setCambioFeedback(null);
 
-      const loadedData = seedData(sessionUser);
       const loadedRole = sessionUser?.role ?? 'condomino';
-      setAppData(loadedData);
       setRole(loadedRole);
 
       const activeMembresias = sessionUser?.membresias?.filter(
@@ -2507,6 +2530,21 @@ function AppContent() {
         advertenciaCuotas: created.advertenciaCuotas,
       });
       await cargarSuperCondominios();
+      setAppData((prev) => {
+        const yaExiste = prev.condominios.some((c) => c.idCondominio === created.idCondominio);
+        if (yaExiste) return prev;
+        return {
+          ...prev,
+          condominios: [
+            ...prev.condominios,
+            {
+              idCondominio: created.idCondominio,
+              nombre: superOnboarding.nombreCondominio.trim(),
+              direccion: superOnboarding.direccionCondominio.trim(),
+            },
+          ],
+        };
+      });
       setFeedback(`Onboarding creado para condominio ${created.idCondominio} con ${created.adminsCreados.length} admin(s) y ${created.condominosCreados.length} condomino(s).`);
       window.setTimeout(() => setFeedback(null), 6500);
       runAction('Creando onboarding...', 'Condominio y usuarios iniciales creados');

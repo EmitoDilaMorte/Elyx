@@ -101,6 +101,8 @@ type BackendLoginMembership = {
   idCondominio: number;
   rol: 'CONDOMINO' | 'ADMINISTRADOR';
   estado: 'ACTIVO' | 'INACTIVO' | string;
+  nombreCondominio: string;
+  direccionCondominio: string;
 };
 
 type BackendLoginUser = {
@@ -270,13 +272,6 @@ export const backendApi = {
     return requestJson<{ ok: boolean; message: string }>('/auth/reset-password', {
       method: 'POST',
       body: JSON.stringify({ token, passwordNueva }),
-    });
-  },
-
-  async validateResetToken(token: string) {
-    return requestJson<{ ok: boolean; correo: string; expiracion: string }>('/auth/validate-reset-token', {
-      method: 'POST',
-      body: JSON.stringify({ token }),
     });
   },
 

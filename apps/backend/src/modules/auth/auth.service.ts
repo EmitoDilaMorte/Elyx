@@ -15,6 +15,8 @@ type LoginMembership = {
   idCondominio: number;
   rol: Role;
   estado: string;
+  nombreCondominio: string;
+  direccionCondominio: string;
 };
 
 type LoginUser = {
@@ -49,9 +51,12 @@ export class AuthService {
         uc.id_usuario_condominio,
         uc.id_condominio,
         uc.rol,
-        uc.estado
+        uc.estado,
+        c.nombre AS nombre_condominio,
+        c.direccion AS direccion_condominio
       FROM usuarios u
       LEFT JOIN usuarios_condominios uc ON uc.id_usuario = u.id_usuario
+      LEFT JOIN condominios c ON c.id_condominio = uc.id_condominio
       WHERE LOWER(u.correo) = LOWER($1)
       `,
       [input.correo.trim()],
@@ -76,6 +81,8 @@ export class AuthService {
         idCondominio: Number(row.id_condominio),
         rol: String(row.rol) as Role,
         estado: String(row.estado),
+        nombreCondominio: String(row.nombre_condominio ?? ''),
+        direccionCondominio: String(row.direccion_condominio ?? ''),
       }));
 
     const esSuperusuario = Boolean(first.es_superusuario);

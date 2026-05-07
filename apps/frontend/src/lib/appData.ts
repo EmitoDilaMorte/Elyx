@@ -3,18 +3,7 @@ import type { AppData } from '../types/app';
 export const STORAGE_KEY = 'elyx-app-data-v1';
 
 export const seedData = (): AppData => ({
-  condominios: [
-    {
-      idCondominio: 101,
-      nombre: 'Residencial Bosque Norte',
-      direccion: 'Av. Encinos 540, Col. Bosque Norte',
-    },
-    {
-      idCondominio: 202,
-      nombre: 'Condominio Marfil Sur',
-      direccion: 'Calle Marfil 210, Col. Vista Sur',
-    },
-  ],
+  condominios: [],
   users: [
     {
       idUsuario: 1,

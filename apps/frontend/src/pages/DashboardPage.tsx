@@ -516,7 +516,7 @@ export function DashboardPage({
               </ul>
             </div>
             <p className="muted-text" style={{ marginTop: '0.3rem' }}>
-              Sesion activa: {sessionUser?.nombre} ({sessionUser?.correo})
+              Sesion activa: {sessionUser?.nombre} ({sessionUser?.correo ?? 'Sin correo'})
             </p>
             <div className="btn-row" style={{ marginTop: '0.7rem' }}>
               <button className="soft-btn" onClick={onLogout}>
