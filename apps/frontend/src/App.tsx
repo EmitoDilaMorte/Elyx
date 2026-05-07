@@ -330,6 +330,7 @@ function AppContent() {
 
   const [appData, setAppData] = useState<AppData>(() => seedData());
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [requiereCambio, setRequiereCambio] = useState(false);
   const [role, setRole] = useState<RoleKey>('condomino');
   const [sessionUser, setSessionUser] = useState<DemoUser | null>(null);
   const [correo, setCorreo] = useState('');
@@ -339,6 +340,7 @@ function AppContent() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [loadingLabel, setLoadingLabel] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [cambioFeedback, setCambioFeedback] = useState<string | null>(null);
 
   const [falla, setFalla] = useState('');
   const [fotosReporte, setFotosReporte] = useState<File[]>([]);
@@ -1070,6 +1072,12 @@ function AppContent() {
           passwordActual: '',
           passwordNueva: '',
         });
+        if (response.user.requiereCambioPassword) {
+          setRequiereCambio(true);
+          setIsAuthenticated(true);
+          setLoadingLabel(null);
+          return;
+        }
         if (selectedCondominioId > 0) {
           setActiveCondominioId(selectedCondominioId);
           persistActiveCondominio(matchedUser.correo, selectedCondominioId);
@@ -1105,6 +1113,8 @@ function AppContent() {
     setCorreo('');
     setPassword('');
     setLoginError(null);
+    setRequiereCambio(false);
+    setCambioFeedback(null);
   };
 
   const registrarPagoCondomino = async (cuotaId: number) => {
@@ -2030,6 +2040,55 @@ function AppContent() {
     }
   };
 
+  const cambiarPasswordForzado = async () => {
+    const actual = perfil.passwordActual.trim();
+    const nueva = perfil.passwordNueva.trim();
+
+    if (!actual || !nueva) {
+      setCambioFeedback('Completa ambos campos.');
+      return;
+    }
+
+    if (nueva.length < 8) {
+      setCambioFeedback('La contrasena nueva debe tener al menos 8 caracteres.');
+      return;
+    }
+
+    try {
+      await backendApi.changePassword(actual, nueva);
+      setPerfil((prev) => ({ ...prev, passwordActual: '', passwordNueva: '' }));
+      setRequiereCambio(false);
+      setCambioFeedback(null);
+
+      const loadedData = seedData(sessionUser);
+      const loadedRole = sessionUser?.role ?? 'condomino';
+      setAppData(loadedData);
+      setRole(loadedRole);
+
+      const activeMembresias = sessionUser?.membresias?.filter(
+        (item: UserMembership) => item.estado === 'ACTIVO',
+      ) ?? [];
+
+      if (activeMembresias.length > 0) {
+        const persisted = getPersistedActiveCondominio(sessionUser?.correo ?? '');
+        const valid = persisted ? activeMembresias.find((m: UserMembership) => m.idCondominio === persisted) : undefined;
+        const idCondominio = valid?.idCondominio ?? activeMembresias[0]?.idCondominio ?? 0;
+        setActiveCondominioId(idCondominio);
+        persistActiveCondominio(sessionUser?.correo ?? '', idCondominio);
+      }
+
+      setActiveView('inicio');
+      setMenuOpen(false);
+      setCuotaCambioForm(DEFAULT_CUOTA_CAMBIO_FORM);
+      setVotacionesCambioCuota([]);
+      setFeedback('Contrasena actualizada. Bienvenido a Elyx');
+      window.setTimeout(() => setFeedback(null), 2200);
+    } catch (error) {
+      console.error(error);
+      setCambioFeedback(extractApiErrorMessage(error));
+    }
+  };
+
   const actualizarPasswordPerfil = async () => {
     const actual = perfil.passwordActual.trim();
     const nueva = perfil.passwordNueva.trim();
@@ -2503,7 +2562,7 @@ function AppContent() {
     }
   }, [isAuthenticated, role]);
 
-  if (!isAuthenticated) {
+  if (!isAuthenticated || requiereCambio) {
     return (
       <LoginPage
         correo={correo}
@@ -2511,9 +2570,15 @@ function AppContent() {
         loginError={loginError}
         loadingLabel={loadingLabel}
         feedback={feedback}
+        requiereCambio={requiereCambio}
+        cambioFeedback={cambioFeedback}
+        passwordActual={perfil.passwordActual}
+        passwordNueva={perfil.passwordNueva}
         onCorreoChange={setCorreo}
         onPasswordChange={setPassword}
         onLogin={handleLogin}
+        onPerfilChange={setPerfil}
+        onCambiarPasswordForzado={cambiarPasswordForzado}
       />
     );
   }

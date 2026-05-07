@@ -9,7 +9,7 @@
 -- 1. USUARIOS (14)
 -- ============================================================================
 INSERT INTO usuarios (id_usuario, nombre, primer_apellido, segundo_apellido, correo, password_hash, es_superusuario, requiere_cambio_password) VALUES
-( 1, 'Carlos',     'Mendoza',      'García',      'superadmin@elyx.mx',        '$2b$10$Cig1FWSTErgAlbYEVpDWzOm5ShpGBV8X8QCm0pAg6ANfU4.3oyFZC', TRUE,  TRUE ),
+( 1, 'Carlos',     'Mendoza',      'García',      'superadmin@elyx.mx',        '$2b$10$Cig1FWSTErgAlbYEVpDWzOm5ShpGBV8X8QCm0pAg6ANfU4.3oyFZC', TRUE,  FALSE ),
 ( 2, 'Ana Sofía',  'Ramírez',      'López',       'ana.ramirez@elyx.mx',       '$2b$10$Cig1FWSTErgAlbYEVpDWzOm5ShpGBV8X8QCm0pAg6ANfU4.3oyFZC', FALSE, FALSE),
 ( 3, 'Luis',       'Torres',       'Vega',        'luis.torres@elyx.mx',       '$2b$10$Cig1FWSTErgAlbYEVpDWzOm5ShpGBV8X8QCm0pAg6ANfU4.3oyFZC', FALSE, FALSE),
 ( 4, 'María José', 'Hernández',    'Díaz',        'maria.hernandez@elyx.mx',   '$2b$10$Cig1FWSTErgAlbYEVpDWzOm5ShpGBV8X8QCm0pAg6ANfU4.3oyFZC', FALSE, TRUE ),

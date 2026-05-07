@@ -153,6 +153,259 @@ body {
   justify-content: center;
 }
 
+.login-actions {
+  margin-top: 0.8rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  color: #0a8a7c;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+  font-size: 0.85rem;
+  text-decoration: underline;
+  display: inline-block;
+}
+
+.link-btn:hover {
+  color: #06706a;
+}
+
+.compact-btn {
+  padding: 0.45rem 0.8rem;
+  min-height: 38px;
+  font-size: 0.82rem;
+}
+
+.forgot-overlay {
+  margin-top: 0.8rem;
+  padding: 0.9rem;
+  border-radius: 14px;
+  background: var(--accent-soft);
+  border: 1px solid #ffdcb9;
+}
+
+.forgot-card h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+
+.forgot-card .btn-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.privacy-summary-title {
+  margin: 0 0 0.35rem;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #8b5d2e;
+  font-weight: 800;
+}
+
+.privacy-page {
+  place-items: stretch;
+}
+
+.privacy-shell {
+  min-height: calc(100vh - 1.8rem);
+  align-content: stretch;
+}
+
+.privacy-shell .panel {
+  min-height: 100%;
+}
+
+.privacy-full {
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.privacy-full-panel {
+  padding: 1.35rem;
+  background:
+    linear-gradient(140deg, rgba(255, 255, 255, 0.98), rgba(255, 247, 235, 0.92));
+}
+
+.forgot-full-panel {
+  padding: 1.35rem;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(255, 249, 241, 0.92));
+}
+
+.forgot-flow {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.85rem;
+  border-radius: 16px;
+  border: 1px solid #eadfcd;
+  background: #fffcf7;
+}
+
+.privacy-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.privacy-header h2 {
+  margin: 0;
+}
+
+.privacy-footer-actions {
+  margin-top: 1.5rem;
+  display: flex;
+  justify-content: center;
+}
+
+.privacy-card {
+  margin-top: 0.95rem;
+  padding: 0.9rem;
+  border-radius: 18px;
+  border: 1px solid #e9dcc9;
+  background: linear-gradient(180deg, #fffdf9 0%, #fff8ef 100%);
+  box-shadow: 0 10px 24px rgba(30, 20, 10, 0.05);
+}
+
+.privacy-card h3 {
+  margin: 0 0 0.65rem;
+  color: #1e3a5f;
+  font-size: 1rem;
+}
+
+.privacy-subsection + .privacy-subsection {
+  margin-top: 0.7rem;
+}
+
+.privacy-full-content h3 {
+  color: #1e3a5f;
+  margin: 1.2rem 0 0.4rem;
+  font-size: 1.05rem;
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 0.2rem;
+}
+
+.privacy-full-content h4 {
+  color: #334155;
+  margin: 0.8rem 0 0.3rem;
+  font-size: 0.9rem;
+}
+
+.privacy-full-content ul {
+  margin: 0.3rem 0;
+  padding-left: 1.2rem;
+  color: #475569;
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
+.privacy-full-content p {
+  margin: 0.4rem 0;
+  color: #475569;
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
+.privacy-full-content a {
+  color: #0a8a7c;
+  font-weight: 600;
+}
+
+.privacy-full-content hr {
+  border: none;
+  border-top: 1px solid #e2e8f0;
+  margin: 1.2rem 0;
+}
+
+.privacy-full-content strong {
+  color: #243042;
+}
+
+.privacy-summary p {
+  margin: 0.3rem 0;
+  font-size: 0.82rem;
+  color: #784f20;
+  line-height: 1.5;
+}
+
+.privacy-summary-card {
+  border-radius: 16px;
+  border: 1px solid #e8e1d7;
+  background: #fffdf9;
+  padding: 0.75rem 0.85rem;
+  box-shadow: 0 10px 22px rgba(35, 28, 17, 0.08);
+}
+
+.privacy-summary-list {
+  margin: 0.5rem 0 0;
+  padding-left: 1.1rem;
+  color: #7b5123;
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.privacy-summary-list li + li {
+  margin-top: 0.2rem;
+}
+
+.forgot-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 0.75rem;
+  margin-bottom: 0.7rem;
+}
+
+.forgot-header h3 {
+  margin: 0.15rem 0 0;
+  font-size: 1rem;
+}
+
+.forgot-step-pill {
+  display: inline-flex;
+  align-items: center;
+  margin: 0.1rem 0 0.55rem;
+  padding: 0.3rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(10, 138, 124, 0.08);
+  color: #0a6f66;
+  border: 1px solid rgba(10, 138, 124, 0.14);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.forgot-card {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.9rem;
+  background: #fffaf4;
+  border-radius: 14px;
+  border: 1px solid #f1d9bc;
+  box-shadow: 0 10px 24px rgba(30, 20, 10, 0.06);
+}
+
+.forgot-card .helper-text {
+  margin-top: 0;
+}
+
+.forgot-card .btn-row {
+  margin-top: 0.75rem;
+}
+
+.forgot-card .btn-row .primary-btn,
+.forgot-card .btn-row .soft-btn {
+  flex: 1 1 0;
+}
+
 .super-shell {
   width: min(1120px, 100%);
   margin: 0 auto;

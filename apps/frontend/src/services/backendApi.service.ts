@@ -259,6 +259,27 @@ export const backendApi = {
     });
   },
 
+  async forgotPassword(correo: string) {
+    return requestJson<{ ok: boolean; message: string }>('/auth/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ correo }),
+    });
+  },
+
+  async resetPassword(token: string, passwordNueva: string) {
+    return requestJson<{ ok: boolean; message: string }>('/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ token, passwordNueva }),
+    });
+  },
+
+  async validateResetToken(token: string) {
+    return requestJson<{ ok: boolean; correo: string; expiracion: string }>('/auth/validate-reset-token', {
+      method: 'POST',
+      body: JSON.stringify({ token }),
+    });
+  },
+
   async listCuotas(idCondominio: number) {
     const data = await requestJson<BackendCuota[]>(`/cuotas?idCondominio=${idCondominio}`);
 

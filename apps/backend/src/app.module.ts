@@ -11,6 +11,7 @@ import { CuotasModule } from './modules/cuotas/cuotas.module';
 import { EvidenciasPagoModule } from './modules/evidencias-pago/evidencias-pago.module';
 import { FotosMantenimientoModule } from './modules/fotos-mantenimiento/fotos-mantenimiento.module';
 import { GastosModule } from './modules/gastos/gastos.module';
+import { MailModule } from './modules/mail/mail.module';
 import { NotificacionesModule } from './modules/notificaciones/notificaciones.module';
 import { PagosModule } from './modules/pagos/pagos.module';
 import { RecibosModule } from './modules/recibos/recibos.module';
@@ -37,6 +38,7 @@ import { VotacionesModule } from './modules/votaciones/votaciones.module';
     PagosModule,
     RecibosModule,
     EvidenciasPagoModule,
+    MailModule,
     AvisosModule,
     VotacionesModule,
     ReportesMantenimientoModule,
