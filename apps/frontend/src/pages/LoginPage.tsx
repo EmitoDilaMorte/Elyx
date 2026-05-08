@@ -84,7 +84,7 @@ export function LoginPage({
   const handleResetPassword = async () => {
     if (!resetToken.trim() || !resetPassword.trim()) return;
     if (resetPassword.length < 8) {
-      setForgotError('La contrasena debe tener al menos 8 caracteres.');
+      setForgotError('La contraseña debe tener al menos 8 caracteres.');
       return;
     }
     setForgotLoading(true);
@@ -124,17 +124,17 @@ export function LoginPage({
           <div className="login-brand">
             <p className="brand-kicker">Plataforma condominal</p>
             <h1>Elyx</h1>
-            <p><strong>Cambio de contrasena requerido</strong></p>
-            <p>Por seguridad, debes cambiar tu contrasena antes de continuar.</p>
+            <p><strong>Cambio de contraseña requerido</strong></p>
+            <p>Por seguridad, debes cambiar tu contraseña antes de continuar.</p>
           </div>
           <article className="login-card">
-            <h2>Nueva contrasena</h2>
-            <label className="field-label" htmlFor="password-actual">Contrasena actual</label>
-            <input id="password-actual" type="password" value={passwordActual} onChange={(event) => onPerfilChange({ correo, passwordActual: event.target.value, passwordNueva })} placeholder="Contrasena temporal" />
-            <label className="field-label" htmlFor="password-nueva">Contrasena nueva</label>
+            <h2>Nueva contraseña</h2>
+            <label className="field-label" htmlFor="password-actual">contraseña actual</label>
+            <input id="password-actual" type="password" value={passwordActual} onChange={(event) => onPerfilChange({ correo, passwordActual: event.target.value, passwordNueva })} placeholder="contraseña temporal" />
+            <label className="field-label" htmlFor="password-nueva">contraseña nueva</label>
             <input id="password-nueva" type="password" value={passwordNueva} onChange={(event) => onPerfilChange({ correo, passwordActual, passwordNueva: event.target.value })} placeholder="Minimo 8 caracteres" />
             {cambioFeedback && <p className="login-error">{cambioFeedback}</p>}
-            <button className="primary-btn login-btn" type="button" onClick={onCambiarPasswordForzado} disabled={!passwordActual || !passwordNueva || passwordNueva.length < 8}>Cambiar contrasena</button>
+            <button className="primary-btn login-btn" type="button" onClick={onCambiarPasswordForzado} disabled={!passwordActual || !passwordNueva || passwordNueva.length < 8}>Cambiar contraseña</button>
           </article>
         </section>
         {loadingLabel && <div className="loading-pill" role="status"><span className="spinner" />{loadingLabel}</div>}
@@ -176,7 +176,7 @@ export function LoginPage({
               <div>
                 <p className="brand-kicker">Recuperacion de acceso</p>
                 <h2>
-                  {forgotStep === 'email' ? 'Recuperar contrasena' : 'Restablecer contrasena'}
+                  {forgotStep === 'email' ? 'Recuperar contraseña' : 'Restablecer contraseña'}
                 </h2>
                 <p className="helper-text">Sigue los pasos para recuperar el acceso a Elyx.</p>
               </div>
@@ -209,14 +209,14 @@ export function LoginPage({
               )}
               {forgotStep === 'password' && (
                 <>
-                  <p className="helper-text">{forgotMsg || 'Define una nueva contrasena.'}</p>
-                  <label className="field-label" htmlFor="reset-password">Nueva contrasena</label>
+                  <p className="helper-text">{forgotMsg || 'Define una nueva contraseña.'}</p>
+                  <label className="field-label" htmlFor="reset-password">Nueva contraseña</label>
                   <input id="reset-password" type="password" value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} placeholder="Minimo 8 caracteres" />
                   {forgotMsg && <p className="helper-text" style={{ color: 'var(--green)' }}>{forgotMsg}</p>}
                   {forgotError && <p className="login-error">{forgotError}</p>}
                   <div className="btn-row" style={{ marginTop: '0.75rem' }}>
                     <button className="soft-btn" type="button" onClick={cerrarForgot}>Cancelar</button>
-                    <button className="primary-btn" type="button" onClick={handleResetPassword} disabled={!resetPassword.trim() || forgotLoading}>{forgotLoading ? 'Cambiando...' : 'Cambiar contrasena'}</button>
+                    <button className="primary-btn" type="button" onClick={handleResetPassword} disabled={!resetPassword.trim() || forgotLoading}>{forgotLoading ? 'Cambiando...' : 'Cambiar contraseña'}</button>
                   </div>
                 </>
               )}
@@ -243,7 +243,7 @@ export function LoginPage({
           <label className="field-label" htmlFor="correo-login">Correo</label>
           <input id="correo-login" type="email" value={correo} onChange={handleCorreoChange} placeholder="usuario@elyx.mx" />
 
-          <label className="field-label" htmlFor="password-login">Contrasena</label>
+          <label className="field-label" htmlFor="password-login">contraseña</label>
           <input id="password-login" type="password" value={password} onChange={handlePasswordChange} placeholder="********" />
 
           {loginError && <p className="login-error">{loginError}</p>}
@@ -252,7 +252,7 @@ export function LoginPage({
 
           <div className="login-actions">
             <button className="soft-btn compact-btn" type="button" onClick={() => setForgotStep('email')}>
-              Olvide mi contrasena
+              Olvide mi contraseña
             </button>
             <button className="soft-btn compact-btn" type="button" onClick={() => setShowFullPrivacy(true)}>
               Ver politica de privacidad
@@ -285,7 +285,7 @@ function PrivacyContent() {
             'Correo electronico y numero telefonico',
             'Direccion del inmueble o unidad habitacional',
             'Rol dentro del condominio',
-            'Informacion de acceso y autenticacion (contrasena encriptada, tokens JWT)',
+            'Informacion de acceso y autenticacion (contraseña encriptada, tokens JWT)',
             'Datos de perfil y preferencias de usuario',
           ],
         },

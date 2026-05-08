@@ -250,11 +250,11 @@ export class AuthService {
     const resetUrl = `${frontendUrl}/reset-password?token=${token}`;
 
     const html = `
-      <h2>Recuperacion de contrasena - Elyx</h2>
+      <h2>Recuperacion de contraseña - Elyx</h2>
       <p>Hola ${nombre},</p>
-      <p>Recibimos una solicitud para restablecer tu contrasena en Elyx.</p>
-      <p>Usa el siguiente enlace para crear una nueva contrasena (valido por 30 minutos):</p>
-      <p><a href="${resetUrl}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;">Restablecer contrasena</a></p>
+      <p>Recibimos una solicitud para restablecer tu contraseña en Elyx.</p>
+      <p>Usa el siguiente enlace para crear una nueva contraseña (valido por 30 minutos):</p>
+      <p><a href="${resetUrl}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;">Restablecer contraseña</a></p>
       <p>O copia este enlace en tu navegador:</p>
       <p>${resetUrl}</p>
       <p>Si no solicitaste este cambio, ignora este mensaje.</p>
@@ -262,7 +262,7 @@ export class AuthService {
       <p style="color:#888;">Elyx - Plataforma condominal</p>
     `;
 
-    const envioOk = await this.mailService.sendEmail(correoNormalizado, 'Recuperacion de contrasena - Elyx', html);
+    const envioOk = await this.mailService.sendEmail(correoNormalizado, 'Recuperacion de contraseña - Elyx', html);
     if (!envioOk) {
       throw new BadRequestException('Error al enviar el correo de recuperacion. Verifica la configuracion SMTP.');
     }
@@ -296,7 +296,7 @@ export class AuthService {
       );
     });
 
-    return { ok: true, message: 'Contrasena actualizada correctamente. Ya puedes iniciar sesion.' };
+    return { ok: true, message: 'Contraseña actualizada correctamente. Ya puedes iniciar sesion.' };
   }
 
   private async validatePassword(rawPassword: string, passwordHash: string): Promise<boolean> {

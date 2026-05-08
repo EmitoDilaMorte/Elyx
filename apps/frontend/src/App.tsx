@@ -1120,7 +1120,7 @@ function AppContent() {
       console.error(error);
       backendApi.setAccessToken(null);
       setLoadingLabel(null);
-      setLoginError('Credenciales no validas. Revisa correo y contrasena.');
+      setLoginError('Credenciales no validas. Revisa correo y contraseña.');
     }
   };
 
@@ -2075,7 +2075,7 @@ function AppContent() {
     }
 
     if (nueva.length < 8) {
-      setCambioFeedback('La contrasena nueva debe tener al menos 8 caracteres.');
+      setCambioFeedback('La contraseña nueva debe tener al menos 8 caracteres.');
       return;
     }
 
@@ -2104,7 +2104,7 @@ function AppContent() {
       setMenuOpen(false);
       setCuotaCambioForm(DEFAULT_CUOTA_CAMBIO_FORM);
       setVotacionesCambioCuota([]);
-      setFeedback('Contrasena actualizada. Bienvenido a Elyx');
+      setFeedback('Contraseña actualizada. Bienvenido a Elyx');
       window.setTimeout(() => setFeedback(null), 2200);
     } catch (error) {
       console.error(error);
