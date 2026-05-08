@@ -262,9 +262,11 @@ export class AuthService {
       <p style="color:#888;">Elyx - Plataforma condominal</p>
     `;
 
-    await this.mailService.sendEmail(correoNormalizado, 'Recuperacion de contrasena - Elyx', html);
+    this.mailService.sendEmail(correoNormalizado, 'Recuperacion de contrasena - Elyx', html).catch((err) => {
+      console.error('[AUTH] Error enviando correo de recuperacion:', err?.message ?? err);
+    });
 
-    return { ok: true, message: 'Enlace de recuperacion enviado.' };
+    return { ok: true, message: 'Si el correo esta registrado, recibiras un enlace de recuperacion.' };
   }
 
   async validateResetToken(input: ValidateResetTokenDto) {
