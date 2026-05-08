@@ -20,7 +20,16 @@ export class MailService {
 
   private async sendViaResend(to: string, subject: string, html: string, apiKey: string): Promise<boolean> {
     try {
-      const from = process.env.SMTP_FROM?.trim() || process.env.SMTP_USER?.trim() || 'Elyx <no-reply@elyx.mx>';
+      const fromEnv = process.env.SMTP_FROM?.trim();
+      const userEnv = process.env.SMTP_USER?.trim();
+      let from: string;
+      if (fromEnv) {
+        from = fromEnv;
+      } else if (userEnv) {
+        from = `Elyx <${userEnv}>`;
+      } else {
+        from = 'Elyx <no-reply@elyx.mx>';
+      }
       const response = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: {
