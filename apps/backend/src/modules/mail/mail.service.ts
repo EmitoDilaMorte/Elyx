@@ -18,18 +18,21 @@ export class MailService {
     return true;
   }
 
+  private buildFrom(): string {
+    const fromEnv = process.env.SMTP_FROM?.trim();
+    if (fromEnv) {
+      if (fromEnv.includes('<') && fromEnv.includes('>')) return fromEnv;
+      if (fromEnv.includes('@')) return `Elyx <${fromEnv}>`;
+      return fromEnv;
+    }
+    const userEnv = process.env.SMTP_USER?.trim();
+    if (userEnv && userEnv.includes('@')) return `Elyx <${userEnv}>`;
+    return 'Elyx <no-reply@elyx.mx>';
+  }
+
   private async sendViaResend(to: string, subject: string, html: string, apiKey: string): Promise<boolean> {
     try {
-      const fromEnv = process.env.SMTP_FROM?.trim();
-      const userEnv = process.env.SMTP_USER?.trim();
-      let from: string;
-      if (fromEnv) {
-        from = fromEnv;
-      } else if (userEnv) {
-        from = `Elyx <${userEnv}>`;
-      } else {
-        from = 'Elyx <no-reply@elyx.mx>';
-      }
+      const from = this.buildFrom();
       const response = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: {
