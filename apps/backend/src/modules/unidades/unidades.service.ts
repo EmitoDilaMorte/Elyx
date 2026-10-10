@@ -23,7 +23,8 @@ export class UnidadesService {
       FROM unidades u
       JOIN unidades_ocupantes uo ON uo.id_unidad = u.id_unidad
       WHERE uo.id_usuario_condominio = $1
-        AND uo.fecha_fin IS NULL
+        AND (uo.fecha_fin IS NULL OR uo.fecha_fin >= CURRENT_DATE)
+      ORDER BY uo.fecha_inicio DESC
       LIMIT 1`,
       [idUsuarioCondominio],
     );

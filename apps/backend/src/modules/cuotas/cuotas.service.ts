@@ -118,7 +118,7 @@ export class CuotasService {
       LEFT JOIN pagos p ON p.id_cuota = c.id_cuota
       WHERE c.id_condominio = $1
         AND uo.id_usuario_condominio = $2
-        AND uo.fecha_fin IS NULL
+        AND (uo.fecha_fin IS NULL OR uo.fecha_fin >= CURRENT_DATE)
       ORDER BY c.fecha_limite DESC`,
       [idCondominio, idUsuarioCondominio],
     );

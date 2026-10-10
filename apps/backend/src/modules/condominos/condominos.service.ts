@@ -178,7 +178,7 @@ export class CondominosService {
           SELECT 1
           FROM unidades_ocupantes uo
           WHERE uo.id_unidad = u.id_unidad
-            AND uo.fecha_fin IS NULL
+            AND (uo.fecha_fin IS NULL OR uo.fecha_fin >= CURRENT_DATE)
         )
       ORDER BY u.clave_unidad ASC
       `,
@@ -207,7 +207,7 @@ export class CondominosService {
         us.segundo_apellido,
         uo.tipo_ocupacion
       FROM unidades u
-      LEFT JOIN unidades_ocupantes uo ON uo.id_unidad = u.id_unidad AND uo.fecha_fin IS NULL
+      LEFT JOIN unidades_ocupantes uo ON uo.id_unidad = u.id_unidad AND (uo.fecha_fin IS NULL OR uo.fecha_fin >= CURRENT_DATE)
       LEFT JOIN usuarios_condominios uc ON uc.id_usuario_condominio = uo.id_usuario_condominio
       LEFT JOIN usuarios us ON us.id_usuario = uc.id_usuario
       WHERE u.id_condominio = $1
@@ -294,7 +294,7 @@ export class CondominosService {
           SELECT id_unidad_ocupante
           FROM unidades_ocupantes
           WHERE id_unidad = $1
-            AND fecha_fin IS NULL
+            AND (fecha_fin IS NULL OR fecha_fin >= CURRENT_DATE)
           LIMIT 1
           `,
           [input.idUnidad],
@@ -601,7 +601,7 @@ export class CondominosService {
         WHERE uo.id_usuario_condominio = $1
           AND uo.id_unidad = u.id_unidad
           AND u.id_condominio = $2
-          AND uo.fecha_fin IS NULL
+          AND (uo.fecha_fin IS NULL OR uo.fecha_fin >= CURRENT_DATE)
         `,
         [solicitud.idUsuarioCondominioObjetivo, solicitud.idCondominio],
       );
@@ -644,7 +644,7 @@ export class CondominosService {
       WHERE uo.id_usuario_condominio = $1
         AND uo.id_unidad = u.id_unidad
         AND u.id_condominio = $2
-        AND uo.fecha_fin IS NULL
+        AND (uo.fecha_fin IS NULL OR uo.fecha_fin >= CURRENT_DATE)
       `,
       [solicitud.idUsuarioCondominioObjetivo, solicitud.idCondominio],
     );

@@ -53,7 +53,7 @@ export class PagosService {
         u.clave_unidad
       FROM pagos p
       INNER JOIN cuotas c ON c.id_cuota = p.id_cuota
-      LEFT JOIN unidades_ocupantes uo ON uo.id_usuario_condominio = p.id_usuario_condominio_paga AND uo.fecha_fin IS NULL
+      LEFT JOIN unidades_ocupantes uo ON uo.id_usuario_condominio = p.id_usuario_condominio_paga AND (uo.fecha_fin IS NULL OR uo.fecha_fin >= CURRENT_DATE)
       LEFT JOIN unidades u ON u.id_unidad = uo.id_unidad
       WHERE c.id_condominio = $1${estadoClause}
       ORDER BY p.fecha_pago DESC
@@ -164,7 +164,7 @@ export class PagosService {
           u.clave_unidad
         FROM pagos p
         INNER JOIN cuotas c ON c.id_cuota = p.id_cuota
-        LEFT JOIN unidades_ocupantes uo ON uo.id_usuario_condominio = p.id_usuario_condominio_paga AND uo.fecha_fin IS NULL
+        LEFT JOIN unidades_ocupantes uo ON uo.id_usuario_condominio = p.id_usuario_condominio_paga AND (uo.fecha_fin IS NULL OR uo.fecha_fin >= CURRENT_DATE)
         LEFT JOIN unidades u ON u.id_unidad = uo.id_unidad
         WHERE p.id_pago = $1 AND c.id_condominio = $2
         LIMIT 1
@@ -255,7 +255,7 @@ export class PagosService {
           u.clave_unidad
         FROM pagos p
         INNER JOIN cuotas c ON c.id_cuota = p.id_cuota
-        LEFT JOIN unidades_ocupantes uo ON uo.id_usuario_condominio = p.id_usuario_condominio_paga AND uo.fecha_fin IS NULL
+        LEFT JOIN unidades_ocupantes uo ON uo.id_usuario_condominio = p.id_usuario_condominio_paga AND (uo.fecha_fin IS NULL OR uo.fecha_fin >= CURRENT_DATE)
         LEFT JOIN unidades u ON u.id_unidad = uo.id_unidad
         WHERE p.id_pago = $1 AND c.id_condominio = $2
         LIMIT 1
@@ -345,7 +345,7 @@ export class PagosService {
         u.clave_unidad
       FROM pagos p
       INNER JOIN cuotas c ON c.id_cuota = p.id_cuota
-      LEFT JOIN unidades_ocupantes uo ON uo.id_usuario_condominio = p.id_usuario_condominio_paga AND uo.fecha_fin IS NULL
+      LEFT JOIN unidades_ocupantes uo ON uo.id_usuario_condominio = p.id_usuario_condominio_paga AND (uo.fecha_fin IS NULL OR uo.fecha_fin >= CURRENT_DATE)
       LEFT JOIN unidades u ON u.id_unidad = uo.id_unidad
       WHERE p.id_cuota = $1 AND c.id_condominio = $2
       LIMIT 1
