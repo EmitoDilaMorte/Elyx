@@ -290,6 +290,26 @@ export const backendApi = {
     }));
   },
 
+  async listCuotasByCondomino(idCondominio: number, idUsuarioCondominio: number) {
+    const data = await requestJson<BackendCuota[]>(`/cuotas/condomino?idCondominio=${idCondominio}&idUsuarioCondominio=${idUsuarioCondominio}`);
+
+    return data.map((item) => ({
+      id: item.idCuota,
+      idCondominio: item.idCondominio,
+      periodo: item.periodo,
+      tipo: item.tipo ?? 'Cuota de mantenimiento',
+      monto: item.monto,
+      fechaLimite: item.fechaLimite,
+      recargo: item.recargo,
+      status: item.estado,
+    }));
+  },
+
+  async getUnidadByUsuarioCondominio(idUsuarioCondominio: number): Promise<UnidadConOcupante> {
+    const response = await requestJson<UnidadConOcupante>(`/unidades/usuario-condominio/${idUsuarioCondominio}`);
+    return response;
+  },
+
   async listAvisos(idCondominio: number) {
     const data = await requestJson<BackendAviso[]>(`/avisos?idCondominio=${idCondominio}`);
 

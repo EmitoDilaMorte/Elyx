@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import type {
   AppData,
   Condominio,
@@ -13,6 +14,7 @@ import type { NavItem } from '../types/app';
 import { statusLabel } from '../constants/status';
 import { CondominioSwitcher } from '../components/CondominioSwitcher';
 import { Icon } from '../components/Icon';
+import { backendApi, getApiHostUrl } from '../services/backendApi.service';
 
 type DashboardPageProps = {
   role: RoleKey;
@@ -242,7 +244,6 @@ export function DashboardPage({
   evidenciasPorPago,
   fotosPorReporte,
   fotosReporte,
-  onFotosReporteChange,
   falla,
   avisoTitulo,
   avisoMensaje,
@@ -285,6 +286,7 @@ export function DashboardPage({
   onVotacionPreguntaChange,
   onCuotaCambioFormChange,
   onEnviarReporteMantenimiento,
+  onFotosReporteChange,
   onCrearVotacionCambioCuota,
   onEjecutarCambioCuota,
   onActualizarEstadoMantenimiento,
@@ -319,6 +321,43 @@ export function DashboardPage({
   onRunAction,
   formatShortDate,
 }: DashboardPageProps) {
+  const [unidadCondomino, setUnidadCondomino] = useState<UnidadConOcupante | null>(null);
+
+  useEffect(() => {
+    if (role !== 'condomino' || !sessionUser) {
+      setUnidadCondomino(null);
+      return;
+    }
+
+    const membresiaActiva = sessionUser.membresias.find(
+      (item) => item.idCondominio === activeCondominioId && item.estado === 'ACTIVO',
+    );
+
+    if (!membresiaActiva) {
+      setUnidadCondomino(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    backendApi
+      .getUnidadByUsuarioCondominio(membresiaActiva.idUsuarioCondominio)
+      .then((unidad) => {
+        if (!cancelled) {
+          setUnidadCondomino(unidad);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setUnidadCondomino(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [role, sessionUser, activeCondominioId]);
+
   const quickViewButtons =
     role === 'condomino'
       ? ([
@@ -1462,6 +1501,18 @@ export function DashboardPage({
                         : 'Sin condominios activos'}
                     </strong>
                   </div>
+                  {unidadCondomino && (
+                    <>
+                      <div className="readonly-field">
+                        <span>Unidad</span>
+                        <strong>{unidadCondomino.claveUnidad}</strong>
+                      </div>
+                      <div className="readonly-field">
+                        <span>Tipo de ocupacion</span>
+                        <strong>{unidadCondomino.tipoOcupacion}</strong>
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 <hr style={{ margin: '1rem 0', border: 'none', borderTop: '1px solid #e7d9c6' }} />

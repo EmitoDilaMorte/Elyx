@@ -98,6 +98,34 @@ export class CuotasService {
     );
   }
 
+  async listByCondomino(idCondominio: number, idUsuarioCondominio: number): Promise<CuotaRecord[]> {
+    await this.ensureCurrentPeriodCuotas(idCondominio);
+
+    const rows = await this.dataSource.query(
+      `SELECT
+        c.id_cuota,
+        c.id_condominio,
+        c.periodo,
+        c.tipo,
+        c.monto_base,
+        c.fecha_limite,
+        c.recargo_por_dia,
+        c.estado AS cuota_estado,
+        p.estado AS pago_estado
+      FROM cuotas c
+      JOIN unidades u ON u.id_unidad = c.id_unidad
+      JOIN unidades_ocupantes uo ON uo.id_unidad = u.id_unidad
+      LEFT JOIN pagos p ON p.id_cuota = c.id_cuota
+      WHERE c.id_condominio = $1
+        AND uo.id_usuario_condominio = $2
+        AND uo.fecha_fin IS NULL
+      ORDER BY c.fecha_limite DESC`,
+      [idCondominio, idUsuarioCondominio],
+    );
+
+    return rows.map((row: Record<string, unknown>) => this.toCuotaRecord(row));
+  }
+
   private async ensureCurrentPeriodCuotas(idCondominio: number) {
     const periodoActual = this.currentPeriodKey();
 

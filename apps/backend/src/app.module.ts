@@ -17,6 +17,7 @@ import { PagosModule } from './modules/pagos/pagos.module';
 import { RecibosModule } from './modules/recibos/recibos.module';
 import { ReportesFinancierosModule } from './modules/reportes-financieros/reportes-financieros.module';
 import { ReportesMantenimientoModule } from './modules/reportes-mantenimiento/reportes-mantenimiento.module';
+import { UnidadesModule } from './modules/unidades/unidades.module';
 import { UsuariosModule } from './modules/usuarios/usuarios.module';
 import { VotacionesModule } from './modules/votaciones/votaciones.module';
 
@@ -47,6 +48,7 @@ import { VotacionesModule } from './modules/votaciones/votaciones.module';
     NotificacionesModule,
     GastosModule,
     ReportesFinancierosModule,
+    UnidadesModule,
   ],
   controllers: [AppController],
 })

@@ -12,4 +12,13 @@ export class CuotasController {
   list(@Query('idCondominio', ParseIntPipe) idCondominio: number) {
     return this.cuotasService.listByCondominio(idCondominio);
   }
+
+  @Get('condomino')
+  @UseGuards(JwtAuthGuard, CondominioAccessGuard)
+  listByCondomino(
+    @Query('idCondominio', ParseIntPipe) idCondominio: number,
+    @Query('idUsuarioCondominio', ParseIntPipe) idUsuarioCondominio: number,
+  ) {
+    return this.cuotasService.listByCondomino(idCondominio, idUsuarioCondominio);
+  }
 }

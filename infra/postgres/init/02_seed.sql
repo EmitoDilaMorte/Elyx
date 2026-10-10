@@ -2,7 +2,7 @@
 -- ELYX: Seed data para desarrollo y pruebas
 -- Datos realistas con cobertura completa de todas las tablas y flujos.
 -- Idempotente: se puede ejecutar múltiples veces sin error.
--- Password "password" para todos los usuarios demo.
+-- Password "Elyx123" para todos los usuarios demo (superadmins incluidos).
 -- ============================================================================
 
 -- ============================================================================
@@ -644,3 +644,41 @@ ON CONFLICT (id_detalle) DO UPDATE SET
   id_reporte_financiero = EXCLUDED.id_reporte_financiero,
   id_pago = EXCLUDED.id_pago, id_gasto = EXCLUDED.id_gasto;
 
+-- ============================================================================
+-- 15. SINCRONIZAR SECUENCIAS
+-- El seed inserta IDs explicitos, lo cual NO avanza las secuencias SERIAL.
+-- Sin esto, el primer INSERT generado por la app colisiona con el pkey.
+-- Notas:
+--   * Se recorre information_schema para cubrir TODAS las tablas con SERIAL.
+--   * Solo se llama a setval cuando la tabla tiene filas (MAX > 0); llamar a
+--     setval(seq, 0) aborta el script porque las secuencias empiezan en 1.
+--   * setval(seq, N, true) deja el siguiente nextval() en N+1.
+-- ============================================================================
+DO $$
+DECLARE
+  r RECORD;
+  max_id BIGINT;
+BEGIN
+  FOR r IN
+    SELECT
+      c.table_name,
+      c.column_name
+    FROM information_schema.columns c
+    JOIN information_schema.tables t
+      ON t.table_schema = c.table_schema
+     AND t.table_name = c.table_name
+    WHERE c.table_schema = 'public'
+      AND t.table_type = 'BASE TABLE'
+      AND c.column_default LIKE 'nextval(%'
+  LOOP
+    EXECUTE format('SELECT COALESCE(MAX(%I), 0) FROM %I', r.column_name, r.table_name)
+      INTO max_id;
+
+    IF max_id > 0 THEN
+      EXECUTE format(
+        'SELECT setval(pg_get_serial_sequence(%L, %L), %s, true)',
+        r.table_name, r.column_name, max_id
+      );
+    END IF;
+  END LOOP;
+END $$;

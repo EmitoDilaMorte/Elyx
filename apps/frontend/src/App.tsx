@@ -586,7 +586,9 @@ function AppContent() {
       try {
         const [cuotasApi, avisosApi, votacionesApi, pagosApi, mantenimientosApi, gastosApi, reportesApi, evidenciasApi, fotosMantenimientoApi] =
           await Promise.all([
-          backendApi.listCuotas(effectiveActiveCondominioId),
+          role === 'condomino' && activeMembership
+            ? backendApi.listCuotasByCondomino(effectiveActiveCondominioId, activeMembership.idUsuarioCondominio)
+            : backendApi.listCuotas(effectiveActiveCondominioId),
           backendApi.listAvisos(effectiveActiveCondominioId),
           backendApi.listVotaciones(effectiveActiveCondominioId),
           backendApi.listPagos(effectiveActiveCondominioId),
