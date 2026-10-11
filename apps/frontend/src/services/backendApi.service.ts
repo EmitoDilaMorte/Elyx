@@ -194,6 +194,46 @@ export function getApiHostUrl() {
   return '';
 }
 
+/**
+ * Error de API con metadatos de rate limiting.
+ * `retryAfter` viene en segundos (cabecera `Retry-After` o campo `retryAfter` del body).
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly retryAfter: number | null;
+
+  constructor(status: number, message: string, retryAfter: number | null = null) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.retryAfter = retryAfter;
+  }
+
+  get isRateLimited(): boolean {
+    return this.status === 429;
+  }
+}
+
+function parseRetryAfter(headerValue: string | null, body: string): number | null {
+  if (headerValue) {
+    const parsed = Number(headerValue.trim());
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return Math.ceil(parsed);
+    }
+  }
+
+  try {
+    const parsedBody = JSON.parse(body) as { retryAfter?: number };
+    if (typeof parsedBody.retryAfter === 'number' && parsedBody.retryAfter > 0) {
+      return Math.ceil(parsedBody.retryAfter);
+    }
+  } catch {
+    /* el body no era JSON */
+  }
+
+  return null;
+}
+
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const hasFormDataBody = init?.body instanceof FormData;
 
@@ -208,7 +248,16 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`API ${response.status}: ${text || 'Error desconocido'}`);
+
+    if (response.status === 429) {
+      throw new ApiError(
+        response.status,
+        'Demasiadas solicitudes. Espera un momento antes de reintentar.',
+        parseRetryAfter(response.headers.get('Retry-After'), text),
+      );
+    }
+
+    throw new ApiError(response.status, `API ${response.status}: ${text || 'Error desconocido'}`);
   }
 
   return (await response.json()) as T;
@@ -237,10 +286,10 @@ export const backendApi = {
     authToken = token;
   },
 
-  async login(correo: string, password: string): Promise<BackendLoginResponse> {
+  async login(correo: string, password: string, captchaToken?: string): Promise<BackendLoginResponse> {
     const response = await requestJson<BackendLoginResponse>('/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ correo, password }),
+      body: JSON.stringify({ correo, password, ...(captchaToken ? { captchaToken } : {}) }),
     });
 
     this.setAccessToken(response.accessToken);
@@ -261,17 +310,17 @@ export const backendApi = {
     });
   },
 
-  async forgotPassword(correo: string) {
+  async forgotPassword(correo: string, captchaToken?: string) {
     return requestJson<{ ok: boolean; message: string }>('/auth/forgot-password', {
       method: 'POST',
-      body: JSON.stringify({ correo }),
+      body: JSON.stringify({ correo, ...(captchaToken ? { captchaToken } : {}) }),
     });
   },
 
-  async resetPassword(token: string, passwordNueva: string) {
+  async resetPassword(token: string, passwordNueva: string, captchaToken?: string) {
     return requestJson<{ ok: boolean; message: string }>('/auth/reset-password', {
       method: 'POST',
-      body: JSON.stringify({ token, passwordNueva }),
+      body: JSON.stringify({ token, passwordNueva, ...(captchaToken ? { captchaToken } : {}) }),
     });
   },
 

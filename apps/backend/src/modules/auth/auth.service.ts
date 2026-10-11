@@ -3,12 +3,14 @@ import { JwtService } from '@nestjs/jwt';
 import { DataSource } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
+import { RateLimitException } from '../../common/throttler/rate-limit.exception';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ValidateResetTokenDto } from './dto/validate-reset-token.dto';
 import { Role } from '../../common/auth/role.enum';
 import { MailService } from '../mail/mail.service';
+import { LoginAttemptsService } from './login-attempts.service';
 
 type LoginMembership = {
   idUsuarioCondominio: number;
@@ -34,9 +36,22 @@ export class AuthService {
     private readonly dataSource: DataSource,
     private readonly jwtService: JwtService,
     private readonly mailService: MailService,
+    private readonly loginAttemptsService: LoginAttemptsService,
   ) {}
 
-  async login(input: LoginDto) {
+  async login(input: LoginDto, ip?: string) {
+    const correoNormalizado = input.correo.trim().toLowerCase();
+
+    // Bloqueo progresivo por cuenta (Redis). Se revisa antes de tocar la base
+    // de datos para cortar la fuerza bruta lo antes posible.
+    const bloqueoSegundos = await this.loginAttemptsService.estaBloqueado(correoNormalizado);
+    if (bloqueoSegundos > 0) {
+      throw new RateLimitException(
+        bloqueoSegundos,
+        'Demasiados intentos fallidos para esta cuenta. Intenta de nuevo mas tarde.',
+      );
+    }
+
     const rows = await this.dataSource.query(
       `
       SELECT
@@ -59,10 +74,11 @@ export class AuthService {
       LEFT JOIN condominios c ON c.id_condominio = uc.id_condominio
       WHERE LOWER(u.correo) = LOWER($1)
       `,
-      [input.correo.trim()],
+      [correoNormalizado],
     );
 
     if (rows.length === 0) {
+      await this.loginAttemptsService.registrarFallo(correoNormalizado, ip, 'usuario-no-encontrado');
       throw new UnauthorizedException('Credenciales invalidas.');
     }
 
@@ -71,8 +87,17 @@ export class AuthService {
     const isValid = await this.validatePassword(input.password, passwordHash);
 
     if (!isValid) {
+      const intento = await this.loginAttemptsService.registrarFallo(correoNormalizado, ip, 'password-incorrecta');
+      if (intento.bloqueado) {
+        throw new RateLimitException(
+          intento.retryAfterSeconds,
+          'Demasiados intentos fallidos para esta cuenta. Intenta de nuevo mas tarde.',
+        );
+      }
       throw new UnauthorizedException('Credenciales invalidas.');
     }
+
+    await this.loginAttemptsService.registrarExito(correoNormalizado, ip);
 
     const memberships = rows
       .filter((row: Record<string, unknown>) => row.id_usuario_condominio)

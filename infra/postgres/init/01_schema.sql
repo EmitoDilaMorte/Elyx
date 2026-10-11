@@ -361,3 +361,18 @@ CREATE TABLE IF NOT EXISTS solicitudes_cambio_condomino (
     FOREIGN KEY (id_usuario_condominio_aprobador) REFERENCES usuarios_condominios(id_usuario_condominio)
     ON DELETE SET NULL
 );
+
+CREATE TABLE IF NOT EXISTS intentos_login (
+  id_intento SERIAL PRIMARY KEY,
+  correo VARCHAR(254) NOT NULL,
+  ip VARCHAR(64),
+  exito BOOLEAN NOT NULL DEFAULT FALSE,
+  motivo VARCHAR(200),
+  fecha TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_intentos_login_correo_fecha
+  ON intentos_login (correo, fecha DESC);
+
+CREATE INDEX IF NOT EXISTS idx_intentos_login_fecha
+  ON intentos_login (fecha DESC);

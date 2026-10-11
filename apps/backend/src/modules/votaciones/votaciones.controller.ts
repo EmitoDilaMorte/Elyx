@@ -1,4 +1,5 @@
 import { Body, Controller, Get, ParseEnumPipe, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { CondominioAccessGuard } from '../../common/auth/condominio-access.guard';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { Role } from '../../common/auth/role.enum';
@@ -46,6 +47,7 @@ export class VotacionesController {
   }
 
   @Patch('cerrar')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @UseGuards(RolesGuard)
   @Roles(Role.ADMINISTRADOR)
   cerrar(@Body() dto: CerrarVotacionDto) {
@@ -60,6 +62,7 @@ export class VotacionesController {
   }
 
   @Patch('cambio-cuota/ejecutar')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @UseGuards(RolesGuard)
   @Roles(Role.ADMINISTRADOR)
   ejecutarCambioCuota(@Body() dto: EjecutarCambioCuotaDto) {

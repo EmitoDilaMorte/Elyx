@@ -13,6 +13,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { Throttle } from '@nestjs/throttler';
 import { Request } from 'express';
 import { diskStorage } from 'multer';
 import { existsSync, mkdirSync } from 'fs';
@@ -48,6 +49,7 @@ export class FotosMantenimientoController {
   }
 
   @Post()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @UseGuards(RolesGuard)
   @Roles(Role.CONDOMINO, Role.ADMINISTRADOR)
   @UseInterceptors(

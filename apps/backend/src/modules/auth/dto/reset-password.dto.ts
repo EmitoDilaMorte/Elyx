@@ -1,4 +1,4 @@
-import { IsString, MinLength } from 'class-validator';
+import { IsOptional, IsString, MinLength } from 'class-validator';
 
 export class ResetPasswordDto {
   @IsString()
@@ -7,4 +7,8 @@ export class ResetPasswordDto {
   @IsString()
   @MinLength(8)
   passwordNueva!: string;
+
+  @IsOptional()
+  @IsString()
+  captchaToken?: string;
 }

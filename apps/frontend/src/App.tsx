@@ -74,6 +74,19 @@ function downloadBlob(blob: Blob, fileName: string) {
   window.URL.revokeObjectURL(url);
 }
 
+/** Mensaje de espera legible a partir de los segundos de `Retry-After`. */
+function formatRetryAfterMessage(retryAfter?: number | null): string {
+  if (typeof retryAfter !== 'number' || retryAfter <= 0) {
+    return 'Demasiadas solicitudes. Espera un momento antes de reintentar.';
+  }
+
+  const minutos = Math.floor(retryAfter / 60);
+  const segundos = retryAfter % 60;
+  const espera = minutos > 0 ? `${minutos} min${segundos > 0 ? ` ${segundos} s` : ''}` : `${segundos} s`;
+
+  return `Demasiados intentos. Vuelve a intentarlo en ${espera}.`;
+}
+
 function extractApiErrorMessage(error: unknown): string {
   const fallback = 'Error inesperado al conectar con backend';
   if (!(error instanceof Error)) {
@@ -1026,12 +1039,12 @@ function AppContent() {
     runAction('Cambiando condominio...', `Mostrando ${condominioName ?? 'condominio seleccionado'}`);
   };
 
-  const handleLogin = async () => {
+  const handleLogin = async (captchaToken: string): Promise<boolean> => {
     const correoNormalizado = correo.trim().toLowerCase();
 
     try {
       setLoadingLabel('Validando credenciales...');
-      const response = await backendApi.login(correoNormalizado, password);
+      const response = await backendApi.login(correoNormalizado, password, captchaToken);
       const matchedUser: DemoUser = {
         idUsuario: response.user.idUsuario,
         correo: response.user.correo,
@@ -1049,7 +1062,7 @@ function AppContent() {
       if (membresiasActivas.length === 0 && matchedUser.role !== 'superusuario') {
         setLoginError('Tu usuario no tiene condominios activos asignados.');
         setLoadingLabel(null);
-        return;
+        return false;
       }
 
       const condominiosDesdeMembresias = response.user.membresias
@@ -1118,11 +1131,25 @@ function AppContent() {
         setFeedback('Bienvenido a Elyx');
         window.setTimeout(() => setFeedback(null), 2200);
       }, 380);
+
+      return true;
     } catch (error) {
       console.error(error);
       backendApi.setAccessToken(null);
       setLoadingLabel(null);
-      setLoginError('Credenciales no validas. Revisa correo y contraseña.');
+
+      const status = (error as { status?: number } | undefined)?.status;
+      if (status === 429) {
+        const retryAfter = (error as { retryAfter?: number | null } | undefined)?.retryAfter;
+        setLoginError(formatRetryAfterMessage(retryAfter));
+      } else if (status === 400) {
+        // El backend rechaza el token de Turnstile con 400 + mensaje generico.
+        setLoginError('Verificacion de seguridad fallida. Intenta de nuevo.');
+      } else {
+        setLoginError('Credenciales no validas. Revisa correo y contraseña.');
+      }
+
+      return false;
     }
   };
 

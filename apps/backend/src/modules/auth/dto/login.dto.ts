@@ -1,4 +1,4 @@
-import { IsString, MinLength } from 'class-validator';
+import { IsOptional, IsString, MinLength } from 'class-validator';
 
 export class LoginDto {
   @IsString()
@@ -7,4 +7,12 @@ export class LoginDto {
   @IsString()
   @MinLength(6)
   password!: string;
+
+  /**
+   * Token de Cloudflare Turnstile. Se marca opcional para no romper clientes
+   * antiguos; el TurnstileGuard es quien exige su presencia y validez.
+   */
+  @IsOptional()
+  @IsString()
+  captchaToken?: string;
 }

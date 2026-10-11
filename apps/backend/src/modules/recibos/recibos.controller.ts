@@ -1,4 +1,5 @@
 import { Body, Controller, Get, ParseIntPipe, Post, Query, UseGuards } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { CondominioAccessGuard } from '../../common/auth/condominio-access.guard';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { Role } from '../../common/auth/role.enum';
@@ -21,6 +22,7 @@ export class RecibosController {
   }
 
   @Post('generar')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @UseGuards(RolesGuard)
   @Roles(Role.CONDOMINO, Role.ADMINISTRADOR)
   generar(@Body() dto: GenerarReciboDto) {

@@ -1,4 +1,5 @@
 import { Controller, Get, ParseIntPipe, Query, UseGuards } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { CondominioAccessGuard } from '../../common/auth/condominio-access.guard';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { ReportesFinancierosService } from './reportes-financieros.service';
@@ -9,6 +10,7 @@ export class ReportesFinancierosController {
   constructor(private readonly reportesFinancierosService: ReportesFinancierosService) {}
 
   @Get()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   list(@Query('idCondominio', ParseIntPipe) idCondominio: number) {
     return this.reportesFinancierosService.listByCondominio(idCondominio);
   }

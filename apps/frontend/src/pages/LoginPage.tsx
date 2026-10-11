@@ -1,5 +1,6 @@
-import { type ChangeEvent, useEffect, useRef, useState } from 'react';
+import { type ChangeEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { Icon } from '../components/Icon';
+import TurnstileWidget, { type TurnstileWidgetHandle } from '../components/TurnstileWidget';
 
 type LoginPageProps = {
   correo: string;
@@ -13,7 +14,8 @@ type LoginPageProps = {
   passwordNueva: string;
   onCorreoChange: (value: string) => void;
   onPasswordChange: (value: string) => void;
-  onLogin: () => void;
+  /** Devuelve `true` si el inicio de sesion fue exitoso. */
+  onLogin: (captchaToken: string) => Promise<boolean>;
   onPerfilChange: (value: { correo: string; passwordActual: string; passwordNueva: string }) => void;
   onCambiarPasswordForzado: () => void;
 };
@@ -44,12 +46,35 @@ export function LoginPage({
   const [forgotLoading, setForgotLoading] = useState(false);
   const autoTokenCheck = useRef(false);
 
+  // Turnstile: tokens de un solo uso, por eso se reinicia el widget tras cada intento.
+  const turnstileConfigured = Boolean(
+    ((import.meta.env.VITE_TURNSTILE_SITE_KEY as string | undefined) ?? '').trim(),
+  );
+  const loginCaptchaRef = useRef<TurnstileWidgetHandle | null>(null);
+  const forgotCaptchaRef = useRef<TurnstileWidgetHandle | null>(null);
+  const resetCaptchaRef = useRef<TurnstileWidgetHandle | null>(null);
+  const [loginCaptchaToken, setLoginCaptchaToken] = useState('');
+  const [forgotCaptchaToken, setForgotCaptchaToken] = useState('');
+  const [resetCaptchaToken, setResetCaptchaToken] = useState('');
+
+  const handleLoginCaptchaToken = useCallback((token: string) => setLoginCaptchaToken(token), []);
+  const handleForgotCaptchaToken = useCallback((token: string) => setForgotCaptchaToken(token), []);
+  const handleResetCaptchaToken = useCallback((token: string) => setResetCaptchaToken(token), []);
+
   const handleCorreoChange = (event: ChangeEvent<HTMLInputElement>) => {
     onCorreoChange(event.target.value);
   };
 
   const handlePasswordChange = (event: ChangeEvent<HTMLInputElement>) => {
     onPasswordChange(event.target.value);
+  };
+
+  const handleLoginClick = async () => {
+    const ok = await onLogin(loginCaptchaToken);
+    if (!ok) {
+      loginCaptchaRef.current?.reset();
+      setLoginCaptchaToken('');
+    }
   };
 
   useEffect(() => {
@@ -71,12 +96,14 @@ export function LoginPage({
     setForgotError(null);
     try {
       const apiModule = await import('../services/backendApi.service');
-      const res = await apiModule.backendApi.forgotPassword(forgotCorreo.trim());
+      const res = await apiModule.backendApi.forgotPassword(forgotCorreo.trim(), forgotCaptchaToken);
       setForgotMsg(res.message);
     } catch (error) {
       console.error(error);
       setForgotError(getErrorMessage(error));
     } finally {
+      forgotCaptchaRef.current?.reset();
+      setForgotCaptchaToken('');
       setForgotLoading(false);
     }
   };
@@ -91,7 +118,7 @@ export function LoginPage({
     setForgotError(null);
     try {
       const apiModule = await import('../services/backendApi.service');
-      const res = await apiModule.backendApi.resetPassword(resetToken.trim(), resetPassword);
+      const res = await apiModule.backendApi.resetPassword(resetToken.trim(), resetPassword, resetCaptchaToken);
       setForgotMsg(res.message);
       setForgotStep('none');
       setForgotCorreo('');
@@ -101,6 +128,8 @@ export function LoginPage({
       console.error(error);
       setForgotError(getErrorMessage(error));
     } finally {
+      resetCaptchaRef.current?.reset();
+      setResetCaptchaToken('');
       setForgotLoading(false);
     }
   };
@@ -112,6 +141,8 @@ export function LoginPage({
     setResetPassword('');
     setForgotMsg(null);
     setForgotError(null);
+    setForgotCaptchaToken('');
+    setResetCaptchaToken('');
     if (typeof window !== 'undefined') {
       window.history.replaceState({}, '', window.location.pathname);
     }
@@ -199,10 +230,11 @@ export function LoginPage({
                     <p className="helper-text">Ingresa tu correo para recibir un enlace de recuperacion.</p>
                     <label className="field-label" htmlFor="forgot-correo">Correo</label>
                     <input id="forgot-correo" type="email" value={forgotCorreo} onChange={(e) => setForgotCorreo(e.target.value)} placeholder="usuario@elyx.mx" />
+                    <TurnstileWidget ref={forgotCaptchaRef} action="forgot-password" onTokenChange={handleForgotCaptchaToken} />
                     {forgotError && <p className="login-error">{forgotError}</p>}
                     <div className="btn-row" style={{ marginTop: '0.75rem' }}>
                       <button className="soft-btn" type="button" onClick={cerrarForgot}>Cancelar</button>
-                      <button className="primary-btn" type="button" onClick={handleForgotPassword} disabled={!forgotCorreo.trim() || forgotLoading}>{forgotLoading ? 'Enviando...' : 'Enviar enlace'}</button>
+                      <button className="primary-btn" type="button" onClick={handleForgotPassword} disabled={!forgotCorreo.trim() || forgotLoading || (turnstileConfigured && !forgotCaptchaToken)}>{forgotLoading ? 'Enviando...' : 'Enviar enlace'}</button>
                     </div>
                   </>
                 )
@@ -212,11 +244,12 @@ export function LoginPage({
                   <p className="helper-text">{forgotMsg || 'Define una nueva contraseña.'}</p>
                   <label className="field-label" htmlFor="reset-password">Nueva contraseña</label>
                   <input id="reset-password" type="password" value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} placeholder="Minimo 8 caracteres" />
+                  <TurnstileWidget ref={resetCaptchaRef} action="reset-password" onTokenChange={handleResetCaptchaToken} />
                   {forgotMsg && <p className="helper-text" style={{ color: 'var(--green)' }}>{forgotMsg}</p>}
                   {forgotError && <p className="login-error">{forgotError}</p>}
                   <div className="btn-row" style={{ marginTop: '0.75rem' }}>
                     <button className="soft-btn" type="button" onClick={cerrarForgot}>Cancelar</button>
-                    <button className="primary-btn" type="button" onClick={handleResetPassword} disabled={!resetPassword.trim() || forgotLoading}>{forgotLoading ? 'Cambiando...' : 'Cambiar contraseña'}</button>
+                    <button className="primary-btn" type="button" onClick={handleResetPassword} disabled={!resetPassword.trim() || forgotLoading || (turnstileConfigured && !resetCaptchaToken)}>{forgotLoading ? 'Cambiando...' : 'Cambiar contraseña'}</button>
                   </div>
                 </>
               )}
@@ -246,9 +279,18 @@ export function LoginPage({
           <label className="field-label" htmlFor="password-login">contraseña</label>
           <input id="password-login" type="password" value={password} onChange={handlePasswordChange} placeholder="********" />
 
+          <TurnstileWidget ref={loginCaptchaRef} action="login" onTokenChange={handleLoginCaptchaToken} />
+
           {loginError && <p className="login-error">{loginError}</p>}
 
-          <button className="primary-btn login-btn" type="button" onClick={onLogin}>Entrar</button>
+          <button
+            className="primary-btn login-btn"
+            type="button"
+            onClick={handleLoginClick}
+            disabled={Boolean(loadingLabel) || (turnstileConfigured && !loginCaptchaToken)}
+          >
+            Entrar
+          </button>
 
           <div className="login-actions">
             <button className="soft-btn compact-btn" type="button" onClick={() => setForgotStep('email')}>
@@ -427,6 +469,22 @@ function PrivacyContent() {
 
 function getErrorMessage(error: unknown): string {
   const apiError = error as Record<string, unknown> | undefined;
+
+  // Rate limiting (HTTP 429): se informa el tiempo de espera al usuario.
+  const status = (error as { status?: number } | undefined)?.status;
+  if (status === 429) {
+    const retryAfter = (error as { retryAfter?: number | null } | undefined)?.retryAfter;
+    if (typeof retryAfter === 'number' && retryAfter > 0) {
+      const minutos = Math.floor(retryAfter / 60);
+      const segundos = retryAfter % 60;
+      const espera = minutos > 0
+        ? `${minutos} min${segundos > 0 ? ` ${segundos} s` : ''}`
+        : `${segundos} s`;
+      return `Demasiados intentos. Vuelve a intentarlo en ${espera}.`;
+    }
+    return 'Demasiadas solicitudes. Espera un momento antes de reintentar.';
+  }
+
   if (error instanceof Error) {
     const marker = ': ';
     const markerIndex = error.message.indexOf(marker);
