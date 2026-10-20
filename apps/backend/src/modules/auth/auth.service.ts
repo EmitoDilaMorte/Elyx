@@ -3,7 +3,10 @@ import { JwtService } from '@nestjs/jwt';
 import { DataSource } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
+import type { Response } from 'express';
 import { RateLimitException } from '../../common/throttler/rate-limit.exception';
+import { setRefreshCookie, clearRefreshCookie } from '../../common/auth/session-cookies';
+import { CsrfService } from '../../common/csrf/csrf.service';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
@@ -11,6 +14,9 @@ import { ValidateResetTokenDto } from './dto/validate-reset-token.dto';
 import { Role } from '../../common/auth/role.enum';
 import { MailService } from '../mail/mail.service';
 import { LoginAttemptsService } from './login-attempts.service';
+import { RefreshTokensService } from './refresh-tokens.service';
+import { MfaCanal, MfaMetodo, MfaService } from './mfa.service';
+import { BehaviorService, ResumenComportamiento } from '../behavior/behavior.service';
 
 type LoginMembership = {
   idUsuarioCondominio: number;
@@ -30,6 +36,26 @@ type LoginUser = {
   membresias: LoginMembership[];
 };
 
+type MetaSesion = {
+  ip?: string;
+  userAgent?: string;
+};
+
+type SesionEmitida = {
+  accessToken: string;
+  tokenType: 'Bearer';
+  expiresIn: string;
+  user: LoginUser;
+  behavior?: ResumenComportamiento | null;
+};
+
+type DesafioMfa = {
+  mfaRequired: true;
+  challengeId: string;
+  metodos: MfaMetodo[];
+  message: string;
+};
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -37,9 +63,18 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly mailService: MailService,
     private readonly loginAttemptsService: LoginAttemptsService,
+    private readonly refreshTokensService: RefreshTokensService,
+    private readonly mfaService: MfaService,
+    private readonly csrfService: CsrfService,
+    private readonly behaviorService: BehaviorService,
   ) {}
 
-  async login(input: LoginDto, ip?: string) {
+  async login(
+    input: LoginDto,
+    ip?: string,
+    res?: Response,
+    userAgent?: string,
+  ): Promise<SesionEmitida | DesafioMfa> {
     const correoNormalizado = input.correo.trim().toLowerCase();
 
     // Bloqueo progresivo por cuenta (Redis). Se revisa antes de tocar la base
@@ -143,18 +178,224 @@ export class AuthService {
       isSuperuser: esSuperusuario,
     };
 
-    const expiresIn = process.env.JWT_EXPIRES_IN ?? '8h';
+    // Segundo factor: no se emite JWT hasta que el usuario verifique el codigo.
+    const desafioMfa = await this.mfaService.crearDesafio(user.idUsuario);
+    if (desafioMfa) {
+      return {
+        mfaRequired: true,
+        challengeId: desafioMfa.challengeId,
+        metodos: desafioMfa.metodos,
+        message: 'Introduce el codigo de verificacion para continuar.',
+      };
+    }
+
+    const behavior = input.behaviorSessionId
+      ? await this.behaviorService.resumenSesion(input.behaviorSessionId)
+      : null;
+
+    if (behavior && behavior.verdict === 'bot' && process.env.BEHAVIOR_ENFORCE === 'strict') {
+      throw new UnauthorizedException('Verificacion de comportamiento fallida. Intenta de nuevo.');
+    }
+
+    return this.finalizarSesion(user, payload, { ip, userAgent }, res, behavior);
+  }
+
+  /** Verifica el codigo MFA y solo entonces emite la sesion. */
+  async verificarMfa(
+    challengeId: string,
+    codigo: string,
+    metodo: MfaMetodo,
+    res?: Response,
+    meta: MetaSesion = {},
+  ): Promise<SesionEmitida> {
+    const { idUsuario } = await this.mfaService.verificar(challengeId, codigo, metodo);
+    return this.emitirSesion(idUsuario, res, meta);
+  }
+
+  async reenviarMfa(challengeId: string): Promise<{ ok: true; message: string }> {
+    return this.mfaService.reenviarOtp(challengeId);
+  }
+
+  async estadoMfa(idUsuario: number) {
+    return this.mfaService.estado(idUsuario);
+  }
+
+  async iniciarAltaMfa(idUsuario: number) {
+    return this.mfaService.iniciarAlta(idUsuario);
+  }
+
+  async activarMfa(idUsuario: number, codigo: string, canal: MfaCanal) {
+    return this.mfaService.activar(idUsuario, codigo, canal);
+  }
+
+  async desactivarMfa(idUsuario: number, codigo: string) {
+    return this.mfaService.desactivar(idUsuario, codigo);
+  }
+
+  /** Rota el refresh token y emite un access token nuevo. */
+  async refrescar(token: string | undefined, res?: Response, meta: MetaSesion = {}): Promise<SesionEmitida> {
+    if (!token) {
+      throw new UnauthorizedException('Sesion expirada. Inicia sesion de nuevo.');
+    }
+
+    const nuevo = await this.refreshTokensService.rotar(token, meta);
+    return this.emitirSesionConRefresh(nuevo.idUsuario, res, meta, nuevo);
+  }
+
+  async cerrarSesion(token: string | undefined, res?: Response): Promise<{ ok: true }> {
+    await this.refreshTokensService.revocar(token);
+    if (res) {
+      clearRefreshCookie(res);
+    }
+    return { ok: true };
+  }
+
+  /** Emite (o rota) el token CSRF que el cliente copia a `X-CSRF-Token`. */
+  emitirCsrf(res: Response): { csrfToken: string } {
+    return { csrfToken: this.csrfService.emitir(res) };
+  }
+
+  private async emitirSesion(
+    idUsuario: number,
+    res: Response | undefined,
+    meta: MetaSesion,
+  ): Promise<SesionEmitida> {
+    const { user, payload } = await this.cargarUsuario(idUsuario);
+    return this.finalizarSesion(user, payload, meta, res, null);
+  }
+
+  private async emitirSesionConRefresh(
+    idUsuario: number,
+    res: Response | undefined,
+    meta: MetaSesion,
+    refresh: { token: string; expira: Date },
+  ): Promise<SesionEmitida> {
+    const { user, payload } = await this.cargarUsuario(idUsuario);
+    return this.finalizarSesion(user, payload, meta, res, null, refresh);
+  }
+
+  private async finalizarSesion(
+    user: LoginUser,
+    payload: Record<string, unknown>,
+    meta: MetaSesion,
+    res: Response | undefined,
+    behavior: ResumenComportamiento | null,
+    refreshPrevio?: { token: string; expira: Date },
+  ): Promise<SesionEmitida> {
+    const expiresIn = process.env.ACCESS_TOKEN_TTL ?? process.env.JWT_EXPIRES_IN ?? '15m';
 
     const accessToken = await this.jwtService.signAsync(payload, {
       secret: process.env.JWT_SECRET ?? 'elyx-dev-secret',
       expiresIn: expiresIn as never,
     });
 
+    const refresh = refreshPrevio ?? (await this.refreshTokensService.emitir(user.idUsuario, meta));
+
+    if (res) {
+      setRefreshCookie(res, refresh.token, refresh.expira);
+      // Al iniciar sesion se rota el token CSRF: el bot observa el cambio de
+      // firma y lo reporta como "el token roto" en el punto 4.
+      this.csrfService.emitir(res);
+    }
+
     return {
       accessToken,
       tokenType: 'Bearer',
+      expiresIn,
       user,
+      behavior,
     };
+  }
+
+  private async cargarUsuario(idUsuario: number): Promise<{
+    user: LoginUser;
+    payload: Record<string, unknown>;
+  }> {
+    const rows = (await this.dataSource.query(
+      `
+      SELECT
+        u.id_usuario,
+        u.nombre,
+        u.primer_apellido,
+        u.segundo_apellido,
+        u.correo,
+        u.es_superusuario,
+        u.requiere_cambio_password,
+        uc.id_usuario_condominio,
+        uc.id_condominio,
+        uc.rol,
+        uc.estado,
+        c.nombre AS nombre_condominio,
+        c.direccion AS direccion_condominio
+      FROM usuarios u
+      LEFT JOIN usuarios_condominios uc ON uc.id_usuario = u.id_usuario
+      LEFT JOIN condominios c ON c.id_condominio = uc.id_condominio
+      WHERE u.id_usuario = $1
+      `,
+      [idUsuario],
+    )) as Array<Record<string, unknown>>;
+
+    if (rows.length === 0) {
+      throw new UnauthorizedException('Sesion invalida.');
+    }
+
+    const { user, esSuperusuario, memberships } = this.construirUsuario(rows);
+
+    const payload = {
+      sub: user.idUsuario,
+      correo: user.correo,
+      memberships: memberships.map((item: LoginMembership) => ({
+        idUsuarioCondominio: item.idUsuarioCondominio,
+        idCondominio: item.idCondominio,
+        rol: item.rol,
+      })),
+      isSuperuser: esSuperusuario,
+    };
+
+    return { user, payload };
+  }
+
+  private construirUsuario(rows: Array<Record<string, unknown>>): {
+    user: LoginUser;
+    esSuperusuario: boolean;
+    memberships: LoginMembership[];
+  } {
+    const first = rows[0];
+
+    const memberships = rows
+      .filter((row) => row.id_usuario_condominio)
+      .map((row): LoginMembership => ({
+        idUsuarioCondominio: Number(row.id_usuario_condominio),
+        idCondominio: Number(row.id_condominio),
+        rol: String(row.rol) as Role,
+        estado: String(row.estado),
+        nombreCondominio: String(row.nombre_condominio ?? ''),
+        direccionCondominio: String(row.direccion_condominio ?? ''),
+      }));
+
+    const esSuperusuario = Boolean(first.es_superusuario);
+    const role: 'administrador' | 'condomino' | 'superusuario' = esSuperusuario
+      ? 'superusuario'
+      : memberships.some((item) => item.rol === Role.ADMINISTRADOR)
+        ? 'administrador'
+        : 'condomino';
+
+    const nombre = [first.nombre, first.primer_apellido, first.segundo_apellido]
+      .filter((part) => Boolean(part))
+      .map((part) => String(part))
+      .join(' ')
+      .trim();
+
+    const user: LoginUser = {
+      idUsuario: Number(first.id_usuario),
+      nombre,
+      correo: String(first.correo),
+      role,
+      requiereCambioPassword: esSuperusuario ? false : Boolean(first.requiere_cambio_password),
+      membresias: memberships,
+    };
+
+    return { user, esSuperusuario, memberships };
   }
 
   async updateProfileCorreo(idUsuario: number, correo: string) {
@@ -320,6 +561,17 @@ export class AuthService {
         [reset.token],
       );
     });
+
+    // Cambiar la contraseña invalida cualquier sesion persistente anterior.
+    await this.dataSource.query(
+      `
+      UPDATE refresh_tokens
+      SET revocado = TRUE, revocado_en = CURRENT_TIMESTAMP
+      WHERE revocado = FALSE
+        AND id_usuario = (SELECT id_usuario FROM usuarios WHERE LOWER(correo) = $1)
+      `,
+      [reset.correo],
+    );
 
     return { ok: true, message: 'Contraseña actualizada correctamente. Ya puedes iniciar sesion.' };
   }

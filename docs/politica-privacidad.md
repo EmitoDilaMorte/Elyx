@@ -126,6 +126,22 @@ Elyx utiliza cookies y tecnologías similares para:
 
 El usuario puede configurar su navegador para rechazar cookies, aunque esto puede afectar la funcionalidad de la aplicación (especialmente avisos en tiempo real).
 
+**Cookies de seguridad utilizadas:**
+
+* `elyx_rt`: refresh token de sesión. Es `HttpOnly` (JavaScript no puede leerla) y viaja solo a `/api/auth`.
+* `elyx_csrf`: token de doble envío para proteger las operaciones que modifican datos. No contiene información del usuario y se rota en cada inicio de sesión.
+
+### 8.1 Verificación de interacción humana
+
+Para distinguir personas de automatizaciones, Elyx mide señales de interacción en el navegador:
+
+* Tipo de evento (movimiento de ratón, pulsación de tecla, clic, desplazamiento)
+* Marcas de tiempo e intervalos entre eventos
+* Coordenadas relativas del cursor y tiempo total en el formulario
+* Indicador técnico `navigator.webdriver`
+
+**No se registran los valores escritos en los campos**, ni contraseñas, ni el contenido de los mensajes. Los datos se usan para calcular un puntaje de riesgo, se conservan un máximo de 30 días y no se comparten con terceros. El resultado se utiliza para reforzar la verificación (por ejemplo, exigir un segundo CAPTCHA tras varios intentos fallidos), nunca para tomar decisiones comerciales sobre el usuario.
+
 ## 9. Privacidad por rol de usuario
 
 ### Condominos

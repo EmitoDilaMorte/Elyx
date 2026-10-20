@@ -1,4 +1,5 @@
 import type { PagoStatus, UnidadConOcupante, VoteChoice } from '../types/app';
+import { getApiBaseUrl } from './apiBase';
 
 let authToken: string | null = null;
 
@@ -114,12 +115,6 @@ type BackendLoginUser = {
   membresias: BackendLoginMembership[];
 };
 
-type BackendLoginResponse = {
-  accessToken: string;
-  tokenType: 'Bearer';
-  user: BackendLoginUser;
-};
-
 type BackendEvidenciaPago = {
   idEvidencia: number;
   idPago: number;
@@ -178,21 +173,42 @@ type BackendSolicitudCambio = {
   fechaEjecucion: string | null;
 };
 
-function getApiBaseUrl() {
-  const raw = (import.meta.env.VITE_API_URL as string | undefined)?.trim();
-  if (raw && raw.length > 0) {
-    return raw.endsWith('/api') ? raw : `${raw}/api`;
-  }
-  return '/api';
+type BackendLoginResponse = {
+  accessToken: string;
+  tokenType: 'Bearer';
+  expiresIn?: string;
+  user: BackendLoginUser;
+  behavior?: { score: number; verdict: string } | null;
+};
+
+export type { BackendLoginResponse };
+
+export type BackendMfaChallenge = {
+  mfaRequired: true;
+  challengeId: string;
+  metodos: Array<'TOTP' | 'EMAIL'>;
+  message: string;
+};
+
+export type LoginResult = BackendLoginResponse | BackendMfaChallenge;
+
+export type LoginOutcome =
+  | { status: 'ok' }
+  | { status: 'mfa'; challengeId: string; metodos: Array<'TOTP' | 'EMAIL'> }
+  | { status: 'error' };
+
+export type LoginPayload = {
+  captchaToken: string;
+  mathChallengeId: string;
+  mathAnswer: string;
+  behaviorSessionId: string;
+};
+
+export function esDesafioMfa(resultado: LoginResult): resultado is BackendMfaChallenge {
+  return 'mfaRequired' in resultado && resultado.mfaRequired === true;
 }
 
-export function getApiHostUrl() {
-  const raw = (import.meta.env.VITE_API_URL as string | undefined)?.trim();
-  if (raw && raw.length > 0) {
-    return raw.endsWith('/api') ? raw.slice(0, -4) : raw;
-  }
-  return '';
-}
+export { getApiHostUrl } from './apiBase';
 
 /**
  * Error de API con metadatos de rate limiting.
@@ -234,17 +250,155 @@ function parseRetryAfter(headerValue: string | null, body: string): number | nul
   return null;
 }
 
-async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+const METODOS_MUTANTES = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+const RUTAS_SIN_REFRESH = ['/auth/login', '/auth/refresh', '/auth/logout', '/auth/mfa', '/auth/forgot-password', '/auth/reset-password'];
+
+function leerCookie(nombre: string): string | null {
+  if (typeof document === 'undefined') {
+    return null;
+  }
+
+  const prefijo = `${nombre}=`;
+  const encontrada = document.cookie.split('; ').find((fila) => fila.startsWith(prefijo));
+  if (!encontrada) {
+    return null;
+  }
+
+  try {
+    return decodeURIComponent(encontrada.slice(prefijo.length));
+  } catch {
+    return encontrada.slice(prefijo.length);
+  }
+}
+
+let csrfInflight: Promise<string | null> | null = null;
+
+/**
+ * Garantiza un token CSRF. La cookie la emite el backend y es legible por JS
+ * (doble envio); si aun no existe (primer arranque) se pide una vez.
+ *
+ * Con `forzar = true` se ignora la cookie local y se pregunta al backend: el
+ * endpoint devuelve el token vigente o emite uno nuevo si la cookie ya no es
+ * valida (por ejemplo, tras rotar `CSRF_SECRET` o al expirar).
+ */
+async function asegurarCsrf(forzar = false): Promise<string | null> {
+  if (!forzar) {
+    const existente = leerCookie('elyx_csrf');
+    if (existente) {
+      return existente;
+    }
+  }
+
+  if (!csrfInflight) {
+    csrfInflight = (async () => {
+      try {
+        const response = await fetch(`${getApiBaseUrl()}/auth/csrf`, {
+          credentials: 'include',
+          cache: 'no-store',
+        });
+        if (!response.ok) {
+          return null;
+        }
+        const data = (await response.json()) as { csrfToken?: string };
+        return data.csrfToken ?? leerCookie('elyx_csrf');
+      } catch {
+        return null;
+      }
+    })().finally(() => {
+      csrfInflight = null;
+    });
+  }
+
+  return csrfInflight;
+}
+
+let refreshInflight: Promise<BackendLoginResponse | null> | null = null;
+let restauracionInflight: Promise<BackendLoginResponse | null> | null = null;
+
+/** Renueva el access token una sola vez aunque varias peticiones reciban 401. */
+function intentarRefresh(): Promise<BackendLoginResponse | null> {
+  if (!refreshInflight) {
+    refreshInflight = (async () => {
+      try {
+        let csrf = await asegurarCsrf();
+        let response = await fetch(`${getApiBaseUrl()}/auth/refresh`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: csrf ? { 'X-CSRF-Token': csrf } : {},
+        });
+
+        if (response.status === 403) {
+          // Cookie CSRF caducada o firmada con otro secreto: se pide una nueva.
+          csrf = await asegurarCsrf(true);
+          response = await fetch(`${getApiBaseUrl()}/auth/refresh`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: csrf ? { 'X-CSRF-Token': csrf } : {},
+          });
+        }
+
+        if (!response.ok) {
+          return null;
+        }
+
+        const data = (await response.json()) as BackendLoginResponse;        if (!data.accessToken) {
+          return null;
+        }
+
+        authToken = data.accessToken;
+        return data;
+      } catch {
+        return null;
+      }
+    })().finally(() => {
+      refreshInflight = null;
+    });
+  }
+
+  return refreshInflight;
+}
+
+async function requestJson<T>(path: string, init?: RequestInit, permitirRefresh = true): Promise<T> {
   const hasFormDataBody = init?.body instanceof FormData;
+  const metodo = (init?.method ?? 'GET').toUpperCase();
+  const csrf = METODOS_MUTANTES.has(metodo) ? await asegurarCsrf() : null;
 
   const response = await fetch(`${getApiBaseUrl()}${path}`, {
+    ...init,
+    credentials: 'include',
     headers: {
       ...(hasFormDataBody ? {} : { 'Content-Type': 'application/json' }),
       ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+      ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
       ...(init?.headers ?? {}),
     },
-    ...init,
   });
+
+  if (
+    response.status === 403 &&
+    permitirRefresh &&
+    METODOS_MUTANTES.has(metodo)
+  ) {
+    // El guard CSRF rechazo la peticion: la cookie local puede estar caducada
+    // o firmada con un secreto anterior. Se fuerza un token nuevo y se
+    // reintenta una sola vez (los guards corren antes del controlador, asi que
+    // ningun token de un solo uso se ha consumido todavia).
+    const nuevo = await asegurarCsrf(true);
+    if (nuevo) {
+      return requestJson<T>(path, init, false);
+    }
+  }
+
+  if (
+    response.status === 401 &&
+    permitirRefresh &&
+    !RUTAS_SIN_REFRESH.some((ruta) => path.startsWith(ruta))
+  ) {
+    const renovado = await intentarRefresh();
+    if (renovado) {
+      return requestJson<T>(path, init, false);
+    }
+  }
 
   if (!response.ok) {
     const text = await response.text();
@@ -286,14 +440,100 @@ export const backendApi = {
     authToken = token;
   },
 
-  async login(correo: string, password: string, captchaToken?: string): Promise<BackendLoginResponse> {
-    const response = await requestJson<BackendLoginResponse>('/auth/login', {
+  /** Restaura la sesion usando la cookie HttpOnly del refresh token. */
+  async refreshSession(): Promise<BackendLoginResponse | null> {
+    // El refresh token es de un solo uso y React StrictMode monta los efectos
+    // dos veces en desarrollo: se comparte la misma promesa para no rotarlo
+    // dos veces con la misma cookie (el segundo intento daria 401 y revocaria
+    // la familia).
+    if (!restauracionInflight) {
+      restauracionInflight = intentarRefresh();
+    }
+    return restauracionInflight;
+  },
+
+  async logout(): Promise<void> {
+    try {
+      await requestJson<{ ok: boolean }>('/auth/logout', { method: 'POST' });
+    } catch {
+      /* la sesion local se cierra igual */
+    } finally {
+      authToken = null;
+    }
+  },
+
+  async login(correo: string, password: string, payload: LoginPayload): Promise<LoginResult> {
+    const response = await requestJson<LoginResult>('/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ correo, password, ...(captchaToken ? { captchaToken } : {}) }),
+      body: JSON.stringify({
+        correo,
+        password,
+        ...(payload.captchaToken ? { captchaToken: payload.captchaToken } : {}),
+        ...(payload.mathChallengeId ? { mathChallengeId: payload.mathChallengeId } : {}),
+        ...(payload.mathAnswer ? { mathAnswer: payload.mathAnswer } : {}),
+        ...(payload.behaviorSessionId ? { behaviorSessionId: payload.behaviorSessionId } : {}),
+      }),
+    });
+
+    if (!esDesafioMfa(response)) {
+      this.setAccessToken(response.accessToken);
+    }
+
+    return response;
+  },
+
+  async verifyMfa(
+    challengeId: string,
+    codigo: string,
+    metodo: 'TOTP' | 'EMAIL',
+  ): Promise<BackendLoginResponse> {
+    const response = await requestJson<BackendLoginResponse>('/auth/mfa/verify', {
+      method: 'POST',
+      body: JSON.stringify({ challengeId, codigo, metodo }),
     });
 
     this.setAccessToken(response.accessToken);
     return response;
+  },
+
+  async resendMfa(challengeId: string): Promise<{ ok: boolean; message: string }> {
+    return requestJson<{ ok: boolean; message: string }>('/auth/mfa/resend', {
+      method: 'POST',
+      body: JSON.stringify({ challengeId }),
+    });
+  },
+
+  async mfaEstado(): Promise<{ habilitado: boolean; canal: 'TOTP' | 'EMAIL' | 'AMBOS' }> {
+    return requestJson<{ habilitado: boolean; canal: 'TOTP' | 'EMAIL' | 'AMBOS' }>('/auth/mfa/estado');
+  },
+
+  async iniciarMfa(): Promise<{ secreto: string; otpauthUri: string; qrDataUrl: string | null }> {
+    return requestJson<{ secreto: string; otpauthUri: string; qrDataUrl: string | null }>('/auth/mfa/setup', {
+      method: 'POST',
+    });
+  },
+
+  async activarMfa(
+    codigo: string,
+    canal: 'TOTP' | 'EMAIL' | 'AMBOS',
+  ): Promise<{ recoveryCodes: string[] }> {
+    return requestJson<{ recoveryCodes: string[] }>('/auth/mfa/enable', {
+      method: 'POST',
+      body: JSON.stringify({ codigo, canal }),
+    });
+  },
+
+  async desactivarMfa(codigo: string): Promise<{ ok: boolean }> {
+    return requestJson<{ ok: boolean }>('/auth/mfa/disable', {
+      method: 'POST',
+      body: JSON.stringify({ codigo }),
+    });
+  },
+
+  async captchaMatematico(scope: string): Promise<{ challengeId: string; question: string; expiresIn: number }> {
+    return requestJson<{ challengeId: string; question: string; expiresIn: number }>(
+      `/captcha/challenge?scope=${encodeURIComponent(scope)}`,
+    );
   },
 
   async updatePerfilCorreo(correo: string) {
@@ -310,17 +550,31 @@ export const backendApi = {
     });
   },
 
-  async forgotPassword(correo: string, captchaToken?: string) {
+  async forgotPassword(correo: string, captchaToken?: string, math?: { challengeId: string; answer: string }) {
     return requestJson<{ ok: boolean; message: string }>('/auth/forgot-password', {
       method: 'POST',
-      body: JSON.stringify({ correo, ...(captchaToken ? { captchaToken } : {}) }),
+      body: JSON.stringify({
+        correo,
+        ...(captchaToken ? { captchaToken } : {}),
+        ...(math ? { mathChallengeId: math.challengeId, mathAnswer: math.answer } : {}),
+      }),
     });
   },
 
-  async resetPassword(token: string, passwordNueva: string, captchaToken?: string) {
+  async resetPassword(
+    token: string,
+    passwordNueva: string,
+    captchaToken?: string,
+    math?: { challengeId: string; answer: string },
+  ) {
     return requestJson<{ ok: boolean; message: string }>('/auth/reset-password', {
       method: 'POST',
-      body: JSON.stringify({ token, passwordNueva, ...(captchaToken ? { captchaToken } : {}) }),
+      body: JSON.stringify({
+        token,
+        passwordNueva,
+        ...(captchaToken ? { captchaToken } : {}),
+        ...(math ? { mathChallengeId: math.challengeId, mathAnswer: math.answer } : {}),
+      }),
     });
   },
 

@@ -2,6 +2,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
+import * as cookieParser from 'cookie-parser';
 import { CorsOptions } from '@nestjs/common/interfaces/external/cors-options.interface';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
@@ -33,6 +34,24 @@ function buildCorsOptions(): CorsOptions {
     allowedOrigins.add('http://127.0.0.1:5173');
   }
 
+  // `elyx-app.com` y `www.elyx-app.com` son origenes distintos para CORS.
+  // Si el operador configura uno, se acepta tambien su variante con/sin `www.`
+  // (antes, entrar por `www` rompia el login tambien para humanos).
+  for (const origin of Array.from(allowedOrigins)) {
+    try {
+      const url = new URL(origin);
+      if (url.hostname.startsWith('www.')) {
+        url.hostname = url.hostname.slice(4);
+        allowedOrigins.add(url.origin);
+      } else if (url.hostname.includes('.')) {
+        url.hostname = `www.${url.hostname}`;
+        allowedOrigins.add(url.origin);
+      }
+    } catch {
+      /* origen mal formado: se ignora la variante */
+    }
+  }
+
   const origins = Array.from(allowedOrigins);
 
   return {
@@ -46,8 +65,11 @@ function buildCorsOptions(): CorsOptions {
       callback(null, false);
     },
     methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-    credentials: false,
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'X-Requested-With'],
+    // `Retry-After` y el score de comportamiento no son cabeceras CORS seguras:
+    // sin exponerlas, el frontend no puede leerlas en respuestas cross-origin.
+    exposedHeaders: ['Retry-After', 'X-Behavior-Score', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
+    credentials: true,
     maxAge: 86400,
   };
 }
@@ -60,6 +82,9 @@ async function bootstrap() {
   // corre detras de un reverse proxy o de Cloudflare.
   app.set('trust proxy', 'loopback');
 
+  // Necesario para leer la cookie HttpOnly del refresh token y la cookie
+  // legible del token CSRF (doble envio).
+  app.use(cookieParser());
   app.enableCors(buildCorsOptions());
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
 

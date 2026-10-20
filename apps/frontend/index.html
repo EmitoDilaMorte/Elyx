@@ -6,6 +6,62 @@
     <title>Elyx</title>
     <link rel="preconnect" href="https://challenges.cloudflare.com" />
     <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
+    <script>
+      (function () {
+        var base = "%VITE_API_URL%";
+        if (!base || base.indexOf("%") === 0) {
+          base = window.location.origin;
+        }
+        if (base.slice(-4) === "/api") {
+          base = base.slice(0, -4);
+        }
+
+        var estado = {
+          endpoint: base + "/api/behavior",
+          inicio: Date.now(),
+          eventos: [],
+          ultimo: {}
+        };
+        window.__ELYX_BEHAVIOR__ = estado;
+
+        function registrar(tipo, datos) {
+          var ahora = Date.now();
+          var evento = { tipo: tipo, t: ahora - estado.inicio };
+          var anterior = estado.ultimo[tipo];
+          if (anterior) {
+            evento.dt = ahora - anterior;
+          }
+          estado.ultimo[tipo] = ahora;
+          if (datos) {
+            for (var clave in datos) {
+              if (Object.prototype.hasOwnProperty.call(datos, clave)) {
+                evento[clave] = datos[clave];
+              }
+            }
+          }
+          estado.eventos.push(evento);
+          if (estado.eventos.length > 200) {
+            estado.eventos.shift();
+          }
+        }
+
+        window.addEventListener("mousemove", function (evento) {
+          registrar("mousemove", { x: Math.round(evento.clientX), y: Math.round(evento.clientY) });
+        }, { passive: true });
+        window.addEventListener("keydown", function () {
+          registrar("keydown");
+        }, { passive: true });
+        window.addEventListener("pointerdown", function () {
+          registrar("pointerdown");
+        }, { passive: true });
+        window.addEventListener("scroll", function () {
+          registrar("scroll");
+        }, { passive: true });
+        document.addEventListener("visibilitychange", function () {
+          registrar("visibilitychange");
+        }, { passive: true });
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

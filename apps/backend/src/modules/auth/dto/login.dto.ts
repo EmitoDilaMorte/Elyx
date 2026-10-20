@@ -15,4 +15,18 @@ export class LoginDto {
   @IsOptional()
   @IsString()
   captchaToken?: string;
+
+  /** Segmento de la operacion matematica (segundo CAPTCHA propio). */
+  @IsOptional()
+  @IsString()
+  mathChallengeId?: string;
+
+  @IsOptional()
+  @IsString()
+  mathAnswer?: string;
+
+  /** Identificador de la sesion de telemetria de comportamiento. */
+  @IsOptional()
+  @IsString()
+  behaviorSessionId?: string;
 }

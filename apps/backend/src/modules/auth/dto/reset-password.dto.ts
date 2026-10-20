@@ -11,4 +11,12 @@ export class ResetPasswordDto {
   @IsOptional()
   @IsString()
   captchaToken?: string;
+
+  @IsOptional()
+  @IsString()
+  mathChallengeId?: string;
+
+  @IsOptional()
+  @IsString()
+  mathAnswer?: string;
 }

@@ -14,6 +14,7 @@ import type { NavItem } from '../types/app';
 import { statusLabel } from '../constants/status';
 import { CondominioSwitcher } from '../components/CondominioSwitcher';
 import { Icon } from '../components/Icon';
+import { MfaSettings } from '../components/MfaSettings';
 import { backendApi, getApiHostUrl } from '../services/backendApi.service';
 
 type DashboardPageProps = {
@@ -1575,6 +1576,8 @@ export function DashboardPage({
                   </button>
                 </div>
               </article>
+
+              <MfaSettings />
 
               {role === 'condomino' && (
                 <article className="panel animate-in stagger-1">

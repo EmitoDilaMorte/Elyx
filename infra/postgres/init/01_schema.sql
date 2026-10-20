@@ -8,7 +8,11 @@ CREATE TABLE IF NOT EXISTS usuarios (
   correo VARCHAR(150) NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   es_superusuario BOOLEAN NOT NULL DEFAULT FALSE,
-  requiere_cambio_password BOOLEAN NOT NULL DEFAULT FALSE
+  requiere_cambio_password BOOLEAN NOT NULL DEFAULT FALSE,
+  mfa_habilitado BOOLEAN NOT NULL DEFAULT FALSE,
+  mfa_canal VARCHAR(10) NOT NULL DEFAULT 'TOTP' CHECK (mfa_canal IN ('TOTP', 'EMAIL', 'AMBOS')),
+  mfa_secreto TEXT,
+  mfa_confirmado_en TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS condominios (
@@ -376,3 +380,63 @@ CREATE INDEX IF NOT EXISTS idx_intentos_login_correo_fecha
 
 CREATE INDEX IF NOT EXISTS idx_intentos_login_fecha
   ON intentos_login (fecha DESC);
+
+-- Sesiones persistentes: solo se guarda el hash del refresh token.
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+  id_refresh SERIAL PRIMARY KEY,
+  id_usuario INT NOT NULL,
+  token_hash VARCHAR(64) NOT NULL UNIQUE,
+  familia UUID NOT NULL,
+  expira TIMESTAMPTZ NOT NULL,
+  revocado BOOLEAN NOT NULL DEFAULT FALSE,
+  creado_en TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  revocado_en TIMESTAMPTZ,
+  ip VARCHAR(64),
+  user_agent VARCHAR(255),
+  CONSTRAINT fk_refresh_tokens_usuario
+    FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario)
+    ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_familia
+  ON refresh_tokens (familia);
+
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_usuario
+  ON refresh_tokens (id_usuario, creado_en DESC);
+
+-- Codigos de recuperacion de MFA (hash, nunca el codigo en claro).
+CREATE TABLE IF NOT EXISTS mfa_recovery_codes (
+  id_codigo SERIAL PRIMARY KEY,
+  id_usuario INT NOT NULL,
+  codigo_hash VARCHAR(64) NOT NULL,
+  usado BOOLEAN NOT NULL DEFAULT FALSE,
+  creado_en TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  usado_en TIMESTAMPTZ,
+  CONSTRAINT fk_mfa_recovery_usuario
+    FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario)
+    ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_mfa_recovery_usuario
+  ON mfa_recovery_codes (id_usuario, usado);
+
+-- Telemetria de comportamiento (solo metadatos: nunca valores de campos).
+CREATE TABLE IF NOT EXISTS behavior_events (
+  id_evento SERIAL PRIMARY KEY,
+  session_id VARCHAR(64) NOT NULL,
+  id_usuario INT,
+  ruta VARCHAR(255),
+  tipo VARCHAR(32),
+  payload JSONB NOT NULL,
+  score INT NOT NULL DEFAULT 0,
+  verdict VARCHAR(16) NOT NULL DEFAULT 'unknown',
+  ip VARCHAR(64),
+  user_agent VARCHAR(255),
+  creado_en TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_behavior_events_session
+  ON behavior_events (session_id, creado_en DESC);
+
+CREATE INDEX IF NOT EXISTS idx_behavior_events_fecha
+  ON behavior_events (creado_en DESC);

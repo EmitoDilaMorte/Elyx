@@ -7,7 +7,8 @@ import { formatShortDate, seedData } from './lib/appData';
 import { DashboardPage } from './pages/DashboardPage';
 import { LoginPage } from './pages/LoginPage';
 import { SuperuserPage } from './pages/SuperuserPage';
-import { backendApi, getApiHostUrl } from './services/backendApi.service';
+import { backendApi, esDesafioMfa, getApiHostUrl, type BackendLoginResponse, type LoginOutcome, type LoginPayload } from './services/backendApi.service';
+import { iniciarTelemetria } from './services/behavior.service';
 import {
   closeVotacionInCondominio,
   getCobranzaProgreso,
@@ -383,6 +384,25 @@ function AppContent() {
   const [solicitudesCambio, setSolicitudesCambio] = useState<SolicitudCambioState[]>([]);
   const [cuotaCambioForm, setCuotaCambioForm] = useState<CuotaCambioVotacionFormState>(DEFAULT_CUOTA_CAMBIO_FORM);
   const [votacionesCambioCuota, setVotacionesCambioCuota] = useState<VotacionActiva[]>([]);
+
+  // Telemetria de comportamiento (medida por el sitio desde el primer evento).
+  useEffect(() => iniciarTelemetria(), []);
+
+  // Restaurar sesion al recargar usando la cookie HttpOnly del refresh token.
+  useEffect(() => {
+    let cancelado = false;
+
+    void (async () => {
+      const restaurada = await backendApi.refreshSession();
+      if (!cancelado && restaurada) {
+        aplicarSesion(restaurada);
+      }
+    })();
+
+    return () => {
+      cancelado = true;
+    };
+  }, []);
 
   const navItems = role === 'condomino' ? navCondomino : navAdministrador;
 
@@ -1039,122 +1059,165 @@ function AppContent() {
     runAction('Cambiando condominio...', `Mostrando ${condominioName ?? 'condominio seleccionado'}`);
   };
 
-  const handleLogin = async (captchaToken: string): Promise<boolean> => {
+  const aplicarSesion = (response: BackendLoginResponse): boolean => {
+    const matchedUser: DemoUser = {
+      idUsuario: response.user.idUsuario,
+      correo: response.user.correo,
+      nombre: response.user.nombre,
+      role: response.user.role,
+      membresias: response.user.membresias.map((item) => ({
+        idUsuarioCondominio: item.idUsuarioCondominio,
+        idCondominio: item.idCondominio,
+        rol: item.rol === 'ADMINISTRADOR' ? 'administrador' : 'condomino',
+        estado: item.estado === 'ACTIVO' ? ('ACTIVO' as MembershipState) : ('INACTIVO' as MembershipState),
+      })),
+    };
+
+    const membresiasActivas = matchedUser.membresias.filter((item: UserMembership) => item.estado === 'ACTIVO');
+    if (membresiasActivas.length === 0 && matchedUser.role !== 'superusuario') {
+      setLoginError('Tu usuario no tiene condominios activos asignados.');
+      setLoadingLabel(null);
+      return false;
+    }
+
+    const condominiosDesdeMembresias = response.user.membresias
+      .filter((item) => item.idCondominio > 0)
+      .map((item) => ({
+        idCondominio: item.idCondominio,
+        nombre: item.nombreCondominio || `Condominio #${item.idCondominio}`,
+        direccion: item.direccionCondominio || '',
+      }));
+
+    const seen = new Set<number>();
+    const condominiosUnicos = condominiosDesdeMembresias.filter((c) => {
+      if (seen.has(c.idCondominio)) return false;
+      seen.add(c.idCondominio);
+      return true;
+    });
+
+    setLoginError(null);
+    setLoadingLabel('Iniciando sesion...');
+
+    const persistedCondominio = getPersistedActiveCondominio(matchedUser.correo);
+    const condominioValido = persistedCondominio
+      ? membresiasActivas.find((item: UserMembership) => item.idCondominio === persistedCondominio)
+      : undefined;
+
+    const selectedCondominioId =
+      condominioValido?.idCondominio ??
+      membresiasActivas[0]?.idCondominio ??
+      appData.condominios[0]?.idCondominio ??
+      0;
+
+    window.setTimeout(() => {
+      setRole(matchedUser.role);
+      setSessionUser(matchedUser);
+      setPerfil({
+        correo: matchedUser.correo,
+        passwordActual: '',
+        passwordNueva: '',
+      });
+      if (condominiosUnicos.length > 0) {
+        setAppData((prev) => {
+          const existingIds = new Set(prev.condominios.map((c) => c.idCondominio));
+          const nuevos = condominiosUnicos.filter((c) => !existingIds.has(c.idCondominio));
+          return {
+            ...prev,
+            condominios: [...prev.condominios, ...nuevos],
+          };
+        });
+      }
+      if (response.user.requiereCambioPassword) {
+        setRequiereCambio(true);
+        setIsAuthenticated(true);
+        setLoadingLabel(null);
+        return;
+      }
+      if (selectedCondominioId > 0) {
+        setActiveCondominioId(selectedCondominioId);
+        persistActiveCondominio(matchedUser.correo, selectedCondominioId);
+      }
+      setActiveView('inicio');
+      setIsAuthenticated(true);
+      setMenuOpen(false);
+      setCuotaCambioForm(DEFAULT_CUOTA_CAMBIO_FORM);
+      setVotacionesCambioCuota([]);
+      setLoadingLabel(null);
+      setFeedback('Bienvenido a Elyx');
+      window.setTimeout(() => setFeedback(null), 2200);
+    }, 380);
+
+    return true;
+  };
+
+  const handleLogin = async (payload: LoginPayload): Promise<LoginOutcome> => {
     const correoNormalizado = correo.trim().toLowerCase();
 
     try {
       setLoadingLabel('Validando credenciales...');
-      const response = await backendApi.login(correoNormalizado, password, captchaToken);
-      const matchedUser: DemoUser = {
-        idUsuario: response.user.idUsuario,
-        correo: response.user.correo,
-        nombre: response.user.nombre,
-        role: response.user.role,
-        membresias: response.user.membresias.map((item) => ({
-          idUsuarioCondominio: item.idUsuarioCondominio,
-          idCondominio: item.idCondominio,
-          rol: item.rol === 'ADMINISTRADOR' ? 'administrador' : 'condomino',
-          estado: item.estado === 'ACTIVO' ? ('ACTIVO' as MembershipState) : ('INACTIVO' as MembershipState),
-        })),
-      };
+      const response = await backendApi.login(correoNormalizado, password, payload);
 
-      const membresiasActivas = matchedUser.membresias.filter((item: UserMembership) => item.estado === 'ACTIVO');
-      if (membresiasActivas.length === 0 && matchedUser.role !== 'superusuario') {
-        setLoginError('Tu usuario no tiene condominios activos asignados.');
+      if (esDesafioMfa(response)) {
+        setLoginError(null);
         setLoadingLabel(null);
-        return false;
+        return {
+          status: 'mfa',
+          challengeId: response.challengeId,
+          metodos: response.metodos,
+        };
       }
 
-      const condominiosDesdeMembresias = response.user.membresias
-        .filter((item) => item.idCondominio > 0)
-        .map((item) => ({
-          idCondominio: item.idCondominio,
-          nombre: item.nombreCondominio || `Condominio #${item.idCondominio}`,
-          direccion: item.direccionCondominio || '',
-        }));
-
-      const seen = new Set<number>();
-      const condominiosUnicos = condominiosDesdeMembresias.filter((c) => {
-        if (seen.has(c.idCondominio)) return false;
-        seen.add(c.idCondominio);
-        return true;
-      });
-
-      setLoginError(null);
-      setLoadingLabel('Iniciando sesion...');
-
-      const persistedCondominio = getPersistedActiveCondominio(matchedUser.correo);
-      const condominioValido = persistedCondominio
-        ? membresiasActivas.find((item: UserMembership) => item.idCondominio === persistedCondominio)
-        : undefined;
-
-      const selectedCondominioId =
-        condominioValido?.idCondominio ??
-        membresiasActivas[0]?.idCondominio ??
-        appData.condominios[0]?.idCondominio ??
-        0;
-
-      window.setTimeout(() => {
-        setRole(matchedUser.role);
-        setSessionUser(matchedUser);
-        setPerfil({
-          correo: matchedUser.correo,
-          passwordActual: '',
-          passwordNueva: '',
-        });
-        if (condominiosUnicos.length > 0) {
-          setAppData((prev) => {
-            const existingIds = new Set(prev.condominios.map((c) => c.idCondominio));
-            const nuevos = condominiosUnicos.filter((c) => !existingIds.has(c.idCondominio));
-            return {
-              ...prev,
-              condominios: [...prev.condominios, ...nuevos],
-            };
-          });
-        }
-        if (response.user.requiereCambioPassword) {
-          setRequiereCambio(true);
-          setIsAuthenticated(true);
-          setLoadingLabel(null);
-          return;
-        }
-        if (selectedCondominioId > 0) {
-          setActiveCondominioId(selectedCondominioId);
-          persistActiveCondominio(matchedUser.correo, selectedCondominioId);
-        }
-        setActiveView('inicio');
-        setIsAuthenticated(true);
-        setMenuOpen(false);
-        setCuotaCambioForm(DEFAULT_CUOTA_CAMBIO_FORM);
-        setVotacionesCambioCuota([]);
-        setLoadingLabel(null);
-        setFeedback('Bienvenido a Elyx');
-        window.setTimeout(() => setFeedback(null), 2200);
-      }, 380);
-
-      return true;
+      return aplicarSesion(response) ? { status: 'ok' } : { status: 'error' };
     } catch (error) {
       console.error(error);
       backendApi.setAccessToken(null);
       setLoadingLabel(null);
 
       const status = (error as { status?: number } | undefined)?.status;
+      const detalle = String((error as { message?: string } | undefined)?.message ?? '');
+
       if (status === 429) {
         const retryAfter = (error as { retryAfter?: number | null } | undefined)?.retryAfter;
         setLoginError(formatRetryAfterMessage(retryAfter));
+      } else if (status === 400 && /matem/i.test(detalle)) {
+        setLoginError('La verificacion matematica es incorrecta. Resuelve la nueva operacion.');
       } else if (status === 400) {
         // El backend rechaza el token de Turnstile con 400 + mensaje generico.
         setLoginError('Verificacion de seguridad fallida. Intenta de nuevo.');
+      } else if (status === 403) {
+        setLoginError('La verificacion CSRF expiro. Recarga la pagina e intenta de nuevo.');
       } else {
         setLoginError('Credenciales no validas. Revisa correo y contraseña.');
       }
 
-      return false;
+      return { status: 'error' };
     }
   };
 
+  const handleVerifyMfa = async (
+    challengeId: string,
+    codigo: string,
+    metodo: 'TOTP' | 'EMAIL',
+  ): Promise<LoginOutcome> => {
+    try {
+      setLoadingLabel('Verificando codigo...');
+      const response = await backendApi.verifyMfa(challengeId, codigo, metodo);
+      return aplicarSesion(response) ? { status: 'ok' } : { status: 'error' };
+    } catch (error) {
+      console.error(error);
+      backendApi.setAccessToken(null);
+      setLoadingLabel(null);
+      return { status: 'error' };
+    }
+  };
+
+  const handleResendMfa = async (challengeId: string): Promise<string> => {
+    const respuesta = await backendApi.resendMfa(challengeId);
+    return respuesta.message;
+  };
+
   const cerrarSesion = () => {
-    backendApi.setAccessToken(null);
+    void backendApi.logout();
     setIsAuthenticated(false);
     setSessionUser(null);
     setPerfil(DEFAULT_PERFIL);
@@ -2644,6 +2707,8 @@ function AppContent() {
         onCorreoChange={setCorreo}
         onPasswordChange={setPassword}
         onLogin={handleLogin}
+        onVerifyMfa={handleVerifyMfa}
+        onResendMfa={handleResendMfa}
         onPerfilChange={setPerfil}
         onCambiarPasswordForzado={cambiarPasswordForzado}
       />

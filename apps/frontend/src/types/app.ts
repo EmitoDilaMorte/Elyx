@@ -149,6 +149,7 @@ export type UnidadConOcupante = {
   tipoOcupacion: 'PROPIETARIO' | 'INQUILINO' | 'HABITANTE';
   fechaInicio: string;
   fechaFin: string | null;
+  ocupante: OcupanteInfo | null;
 };
 
 export type Gasto = {

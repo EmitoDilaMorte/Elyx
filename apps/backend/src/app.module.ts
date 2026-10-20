@@ -7,9 +7,13 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AppController } from './app.controller';
 import { RateLimitExceptionFilter } from './common/throttler/rate-limit.filter';
 import { ThrottlerBehindProxyGuard } from './common/throttler/throttler-behind-proxy.guard';
+import { CsrfGuard } from './common/csrf/csrf.guard';
+import { CsrfModule } from './common/csrf/csrf.module';
 import { AdministradoresModule } from './modules/administradores/administradores.module';
 import { AvisosModule } from './modules/avisos/avisos.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { BehaviorModule } from './modules/behavior/behavior.module';
+import { CaptchaModule } from './modules/captcha/captcha.module';
 import { CondominosModule } from './modules/condominos/condominos.module';
 import { ConfigNotificacionesModule } from './modules/config-notificaciones/config-notificaciones.module';
 import { CuotasModule } from './modules/cuotas/cuotas.module';
@@ -66,11 +70,16 @@ import { VotacionesModule } from './modules/votaciones/votaciones.module';
     GastosModule,
     ReportesFinancierosModule,
     UnidadesModule,
+    BehaviorModule,
+    CaptchaModule,
+    CsrfModule,
   ],
   controllers: [AppController],
   providers: [
     // Rate limiting global (por usuario autenticado o por IP).
     { provide: APP_GUARD, useClass: ThrottlerBehindProxyGuard },
+    // CSRF de doble envio en todos los metodos mutantes (excepto @SkipCsrf()).
+    { provide: APP_GUARD, useClass: CsrfGuard },
     // Respuestas 429 uniformes con cabecera `Retry-After`.
     { provide: APP_FILTER, useClass: RateLimitExceptionFilter },
   ],

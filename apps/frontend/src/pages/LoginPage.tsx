@@ -1,6 +1,10 @@
 import { type ChangeEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { Icon } from '../components/Icon';
+import { MathCaptcha } from '../components/MathCaptcha';
+import { MfaStep } from '../components/MfaStep';
 import TurnstileWidget, { type TurnstileWidgetHandle } from '../components/TurnstileWidget';
+import { backendApi, type LoginOutcome, type LoginPayload } from '../services/backendApi.service';
+import { getBehaviorSessionId } from '../services/behavior.service';
 
 type LoginPageProps = {
   correo: string;
@@ -14,8 +18,10 @@ type LoginPageProps = {
   passwordNueva: string;
   onCorreoChange: (value: string) => void;
   onPasswordChange: (value: string) => void;
-  /** Devuelve `true` si el inicio de sesion fue exitoso. */
-  onLogin: (captchaToken: string) => Promise<boolean>;
+  /** Devuelve el desenlace: sesion iniciada, MFA pendiente o error. */
+  onLogin: (payload: LoginPayload) => Promise<LoginOutcome>;
+  onVerifyMfa: (challengeId: string, codigo: string, metodo: 'TOTP' | 'EMAIL') => Promise<LoginOutcome>;
+  onResendMfa: (challengeId: string) => Promise<string>;
   onPerfilChange: (value: { correo: string; passwordActual: string; passwordNueva: string }) => void;
   onCambiarPasswordForzado: () => void;
 };
@@ -33,6 +39,8 @@ export function LoginPage({
   onCorreoChange,
   onPasswordChange,
   onLogin,
+  onVerifyMfa,
+  onResendMfa,
   onPerfilChange,
   onCambiarPasswordForzado,
 }: LoginPageProps) {
@@ -57,6 +65,24 @@ export function LoginPage({
   const [forgotCaptchaToken, setForgotCaptchaToken] = useState('');
   const [resetCaptchaToken, setResetCaptchaToken] = useState('');
 
+  // Segundo CAPTCHA propio. El token CSRF no se guarda en estado: viaja en la
+  // cookie y lo copia `requestJson` a la cabecera en cada peticion mutante.
+  const [math, setMath] = useState<{ challengeId: string; question: string } | null>(null);
+  const [mathAnswer, setMathAnswer] = useState('');
+  const [forgotMath, setForgotMath] = useState<{ challengeId: string; question: string } | null>(null);
+  const [forgotMathAnswer, setForgotMathAnswer] = useState('');
+  const [resetMath, setResetMath] = useState<{ challengeId: string; question: string } | null>(null);
+  const [resetMathAnswer, setResetMathAnswer] = useState('');
+  const [enviando, setEnviando] = useState(false);
+
+  // Paso MFA.
+  const [mfa, setMfa] = useState<{ challengeId: string; metodos: Array<'TOTP' | 'EMAIL'> } | null>(null);
+  const [mfaCodigo, setMfaCodigo] = useState('');
+  const [mfaMetodo, setMfaMetodo] = useState<'TOTP' | 'EMAIL'>('TOTP');
+  const [mfaError, setMfaError] = useState<string | null>(null);
+  const [mfaMensaje, setMfaMensaje] = useState<string | null>(null);
+  const [mfaLoading, setMfaLoading] = useState(false);
+
   const handleLoginCaptchaToken = useCallback((token: string) => setLoginCaptchaToken(token), []);
   const handleForgotCaptchaToken = useCallback((token: string) => setForgotCaptchaToken(token), []);
   const handleResetCaptchaToken = useCallback((token: string) => setResetCaptchaToken(token), []);
@@ -69,12 +95,115 @@ export function LoginPage({
     onPasswordChange(event.target.value);
   };
 
+  const cargarMath = useCallback(async (scope: 'login' | 'forgot' | 'reset') => {
+    try {
+      const data = await backendApi.captchaMatematico(scope);
+      const desafio = { challengeId: data.challengeId, question: data.question };
+      if (scope === 'login') {
+        setMath(desafio);
+        setMathAnswer('');
+      } else if (scope === 'forgot') {
+        setForgotMath(desafio);
+        setForgotMathAnswer('');
+      } else {
+        setResetMath(desafio);
+        setResetMathAnswer('');
+      }
+    } catch {
+      // Sin segundo CAPTCHA disponible: el backend decidira si lo exige.
+    }
+  }, []);
+
+  useEffect(() => {
+    void cargarMath('login');
+  }, [cargarMath]);
+
+  useEffect(() => {
+    if (forgotStep === 'email') {
+      void cargarMath('forgot');
+    } else if (forgotStep === 'password') {
+      void cargarMath('reset');
+    }
+  }, [forgotStep, cargarMath]);
+
   const handleLoginClick = async () => {
-    const ok = await onLogin(loginCaptchaToken);
-    if (!ok) {
+    if (enviando) {
+      return;
+    }
+
+    setEnviando(true);
+
+    try {
+      const outcome = await onLogin({
+        captchaToken: loginCaptchaToken,
+        mathChallengeId: math?.challengeId ?? '',
+        mathAnswer,
+        behaviorSessionId: getBehaviorSessionId(),
+      });
+
+      if (outcome.status === 'mfa') {
+        setMfa({ challengeId: outcome.challengeId, metodos: outcome.metodos });
+        setMfaMetodo(outcome.metodos.includes('TOTP') ? 'TOTP' : 'EMAIL');
+        setMfaCodigo('');
+        setMfaError(null);
+        setMfaMensaje(null);
+        return;
+      }
+
       loginCaptchaRef.current?.reset();
       setLoginCaptchaToken('');
+
+      if (outcome.status === 'error') {
+        void cargarMath('login');
+      }
+    } finally {
+      setEnviando(false);
     }
+  };
+
+  const handleMfaVerify = async () => {
+    if (!mfa) {
+      return;
+    }
+
+    setMfaLoading(true);
+    setMfaError(null);
+    const outcome = await onVerifyMfa(mfa.challengeId, mfaCodigo.trim(), mfaMetodo);
+    setMfaLoading(false);
+
+    if (outcome.status === 'error') {
+      setMfaError('Codigo de verificacion invalido o expirado. Intenta de nuevo.');
+    } else if (outcome.status === 'mfa') {
+      setMfa({ challengeId: outcome.challengeId, metodos: outcome.metodos });
+      setMfaCodigo('');
+    }
+  };
+
+  const handleMfaResend = async () => {
+    if (!mfa) {
+      return;
+    }
+
+    setMfaLoading(true);
+    setMfaError(null);
+    setMfaMensaje(null);
+    try {
+      const mensaje = await onResendMfa(mfa.challengeId);
+      setMfaMensaje(mensaje);
+      setMfaMetodo('EMAIL');
+    } catch (error) {
+      setMfaError(getErrorMessage(error));
+    } finally {
+      setMfaLoading(false);
+    }
+  };
+
+  const cancelarMfa = () => {
+    setMfa(null);
+    setMfaCodigo('');
+    setMfaError(null);
+    setMfaMensaje(null);
+    void cargarMath('login');
   };
 
   useEffect(() => {
@@ -95,12 +224,16 @@ export function LoginPage({
     setForgotLoading(true);
     setForgotError(null);
     try {
-      const apiModule = await import('../services/backendApi.service');
-      const res = await apiModule.backendApi.forgotPassword(forgotCorreo.trim(), forgotCaptchaToken);
+      const res = await backendApi.forgotPassword(
+        forgotCorreo.trim(),
+        forgotCaptchaToken,
+        forgotMath ? { challengeId: forgotMath.challengeId, answer: forgotMathAnswer } : undefined,
+      );
       setForgotMsg(res.message);
     } catch (error) {
       console.error(error);
       setForgotError(getErrorMessage(error));
+      void cargarMath('forgot');
     } finally {
       forgotCaptchaRef.current?.reset();
       setForgotCaptchaToken('');
@@ -117,8 +250,12 @@ export function LoginPage({
     setForgotLoading(true);
     setForgotError(null);
     try {
-      const apiModule = await import('../services/backendApi.service');
-      const res = await apiModule.backendApi.resetPassword(resetToken.trim(), resetPassword, resetCaptchaToken);
+      const res = await backendApi.resetPassword(
+        resetToken.trim(),
+        resetPassword,
+        resetCaptchaToken,
+        resetMath ? { challengeId: resetMath.challengeId, answer: resetMathAnswer } : undefined,
+      );
       setForgotMsg(res.message);
       setForgotStep('none');
       setForgotCorreo('');
@@ -127,6 +264,7 @@ export function LoginPage({
     } catch (error) {
       console.error(error);
       setForgotError(getErrorMessage(error));
+      void cargarMath('reset');
     } finally {
       resetCaptchaRef.current?.reset();
       setResetCaptchaToken('');
@@ -147,6 +285,37 @@ export function LoginPage({
       window.history.replaceState({}, '', window.location.pathname);
     }
   };
+
+  if (mfa) {
+    return (
+      <div className="app-bg login-bg">
+        <section className="login-shell animate-in">
+          <div className="login-brand">
+            <p className="brand-kicker">Plataforma condominal</p>
+            <h1>Elyx</h1>
+            <p><strong>Segundo factor de seguridad</strong></p>
+            <p>Tu contraseña es correcta. Falta verificar que eres tu.</p>
+          </div>
+          <article className="login-card">
+            <MfaStep
+              metodos={mfa.metodos}
+              codigo={mfaCodigo}
+              metodo={mfaMetodo}
+              loading={mfaLoading}
+              error={mfaError}
+              mensaje={mfaMensaje}
+              onChangeCodigo={setMfaCodigo}
+              onChangeMetodo={setMfaMetodo}
+              onVerify={() => void handleMfaVerify()}
+              onResend={() => void handleMfaResend()}
+              onCancel={cancelarMfa}
+            />
+          </article>
+        </section>
+        {loadingLabel && <div className="loading-pill" role="status"><span className="spinner" />{loadingLabel}</div>}
+      </div>
+    );
+  }
 
   if (requiereCambio) {
     return (
@@ -230,11 +399,19 @@ export function LoginPage({
                     <p className="helper-text">Ingresa tu correo para recibir un enlace de recuperacion.</p>
                     <label className="field-label" htmlFor="forgot-correo">Correo</label>
                     <input id="forgot-correo" type="email" value={forgotCorreo} onChange={(e) => setForgotCorreo(e.target.value)} placeholder="usuario@elyx.mx" />
+                    <MathCaptcha
+                      challengeId={forgotMath?.challengeId ?? ''}
+                      question={forgotMath?.question ?? ''}
+                      value={forgotMathAnswer}
+                      onChange={setForgotMathAnswer}
+                      onRefresh={() => void cargarMath('forgot')}
+                      disabled={forgotLoading}
+                    />
                     <TurnstileWidget ref={forgotCaptchaRef} action="forgot-password" onTokenChange={handleForgotCaptchaToken} />
                     {forgotError && <p className="login-error">{forgotError}</p>}
                     <div className="btn-row" style={{ marginTop: '0.75rem' }}>
                       <button className="soft-btn" type="button" onClick={cerrarForgot}>Cancelar</button>
-                      <button className="primary-btn" type="button" onClick={handleForgotPassword} disabled={!forgotCorreo.trim() || forgotLoading || (turnstileConfigured && !forgotCaptchaToken)}>{forgotLoading ? 'Enviando...' : 'Enviar enlace'}</button>
+                      <button className="primary-btn" type="button" onClick={handleForgotPassword} disabled={!forgotCorreo.trim() || forgotLoading || (turnstileConfigured && !forgotCaptchaToken) || (Boolean(forgotMath) && !forgotMathAnswer.trim())}>{forgotLoading ? 'Enviando...' : 'Enviar enlace'}</button>
                     </div>
                   </>
                 )
@@ -244,12 +421,20 @@ export function LoginPage({
                   <p className="helper-text">{forgotMsg || 'Define una nueva contraseña.'}</p>
                   <label className="field-label" htmlFor="reset-password">Nueva contraseña</label>
                   <input id="reset-password" type="password" value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} placeholder="Minimo 8 caracteres" />
+                  <MathCaptcha
+                    challengeId={resetMath?.challengeId ?? ''}
+                    question={resetMath?.question ?? ''}
+                    value={resetMathAnswer}
+                    onChange={setResetMathAnswer}
+                    onRefresh={() => void cargarMath('reset')}
+                    disabled={forgotLoading}
+                  />
                   <TurnstileWidget ref={resetCaptchaRef} action="reset-password" onTokenChange={handleResetCaptchaToken} />
                   {forgotMsg && <p className="helper-text" style={{ color: 'var(--green)' }}>{forgotMsg}</p>}
                   {forgotError && <p className="login-error">{forgotError}</p>}
                   <div className="btn-row" style={{ marginTop: '0.75rem' }}>
                     <button className="soft-btn" type="button" onClick={cerrarForgot}>Cancelar</button>
-                    <button className="primary-btn" type="button" onClick={handleResetPassword} disabled={!resetPassword.trim() || forgotLoading || (turnstileConfigured && !resetCaptchaToken)}>{forgotLoading ? 'Cambiando...' : 'Cambiar contraseña'}</button>
+                    <button className="primary-btn" type="button" onClick={handleResetPassword} disabled={!resetPassword.trim() || forgotLoading || (turnstileConfigured && !resetCaptchaToken) || (Boolean(resetMath) && !resetMathAnswer.trim())}>{forgotLoading ? 'Cambiando...' : 'Cambiar contraseña'}</button>
                   </div>
                 </>
               )}
@@ -279,6 +464,15 @@ export function LoginPage({
           <label className="field-label" htmlFor="password-login">contraseña</label>
           <input id="password-login" type="password" value={password} onChange={handlePasswordChange} placeholder="********" />
 
+          <MathCaptcha
+            challengeId={math?.challengeId ?? ''}
+            question={math?.question ?? ''}
+            value={mathAnswer}
+            onChange={setMathAnswer}
+            onRefresh={() => void cargarMath('login')}
+            disabled={Boolean(loadingLabel)}
+          />
+
           <TurnstileWidget ref={loginCaptchaRef} action="login" onTokenChange={handleLoginCaptchaToken} />
 
           {loginError && <p className="login-error">{loginError}</p>}
@@ -287,7 +481,7 @@ export function LoginPage({
             className="primary-btn login-btn"
             type="button"
             onClick={handleLoginClick}
-            disabled={Boolean(loadingLabel) || (turnstileConfigured && !loginCaptchaToken)}
+            disabled={enviando || Boolean(loadingLabel) || (turnstileConfigured && !loginCaptchaToken) || (Boolean(math) && !mathAnswer.trim())}
           >
             Entrar
           </button>
