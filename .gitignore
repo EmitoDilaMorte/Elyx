@@ -3,6 +3,11 @@ node_modules/
 dist/
 coverage/
 
+# TypeScript: artefactos de `tsc -b` (no deben vivir junto al codigo fuente)
+*.tsbuildinfo
+apps/frontend/vite.config.js
+apps/frontend/vite.config.d.ts
+
 # Env
 .env
 .env.local
