@@ -6,6 +6,7 @@ coverage/
 # Env
 .env
 .env.local
+.env.prod
 
 # Logs
 *.log
