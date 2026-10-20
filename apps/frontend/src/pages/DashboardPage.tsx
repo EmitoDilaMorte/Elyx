@@ -15,6 +15,8 @@ import { statusLabel } from '../constants/status';
 import { CondominioSwitcher } from '../components/CondominioSwitcher';
 import { Icon } from '../components/Icon';
 import { MfaSettings } from '../components/MfaSettings';
+import { PagosListaCondomino } from '../components/PagosListaCondomino';
+import { ValidacionesLista } from '../components/ValidacionesLista';
 import { backendApi, getApiHostUrl } from '../services/backendApi.service';
 
 type DashboardPageProps = {
@@ -412,8 +414,6 @@ export function DashboardPage({
     return estado;
   };
 
-  const cuotaMap = Object.fromEntries(appData.cuotas.map((c) => [c.id, c]));
-
   const pagoPorCuota: Record<number, AppData['pagos'][number]> = {};
   for (const pago of appData.pagos) {
     if (!pagoPorCuota[pago.cuotaId] || pago.fecha > pagoPorCuota[pago.cuotaId].fecha) {
@@ -427,6 +427,13 @@ export function DashboardPage({
       condominoNameByMembership[mem.idUsuarioCondominio] = user.nombre;
     }
   }
+
+  // Membresia activa del usuario en el condominio seleccionado (limita el
+  // listado de cuotas del condomino a sus propias unidades).
+  const idUsuarioCondominioActivo =
+    sessionUser?.membresias.find(
+      (item) => item.idCondominio === activeCondominioId && item.estado === 'ACTIVO',
+    )?.idUsuarioCondominio ?? null;
 
   const formatSolicitudDetalle = (detalle: Record<string, unknown> | null) => {
     if (!detalle) {
@@ -674,134 +681,29 @@ export function DashboardPage({
           )}
 
           {role === 'condomino' && activeView === 'pagos' && (
-            <section className="panel animate-in">
-              <h4>Pagos y cuotas</h4>
-              <div className="payment-list">
-                {appData.cuotas.map((cuota) => {
-                  const pago = pagoPorCuota[cuota.id];
-                  const evidencias = pago ? (evidenciasPorPago[pago.id] ?? []) : [];
-                  return (
-                  <article key={cuota.id} className="payment-item">
-                    <div>
-                      <p className="item-title">{cuota.periodo}</p>
-                      <small>
-                        {cuota.tipo} | Limite: {cuota.fechaLimite} | Recargo: ${cuota.recargo}
-                      </small>
-                    </div>
-                    <p className="item-amount">${cuota.monto.toLocaleString('es-MX')}</p>
-                    <span className={`status-pill status-${cuota.status.toLowerCase()}`}>{statusLabel[cuota.status]}</span>
-                    <div className="btn-row">
-                      <button className="primary-btn" onClick={() => onRegistrarPago(cuota.id)} disabled={cuota.status !== 'PENDIENTE'}>
-                        Registrar pago
-                      </button>
-                      <label className="soft-btn" htmlFor={`comprobante-${cuota.id}`} style={{ cursor: 'pointer' }}>
-                        Subir comprobante
-                      </label>
-                      <input
-                        id={`comprobante-${cuota.id}`}
-                        type="file"
-                        accept="image/*,application/pdf"
-                        style={{ display: 'none' }}
-                        onChange={(event) => {
-                          const file = event.target.files?.[0];
-                          if (file) {
-                            onSubirComprobante(cuota.id, file);
-                          }
-                          event.currentTarget.value = '';
-                        }}
-                      />
-                      <button
-                        className="soft-btn"
-                        onClick={() => onDescargarReciboCuota(cuota.id)}
-                      >
-                        <Icon name="download" />
-                        Descargar recibo
-                      </button>
-                    </div>
-                    {evidencias.length > 0 && (
-                      <div style={{ marginTop: '0.5rem' }}>
-                        <p className="helper-text" style={{ margin: '0 0 0.3rem' }}>
-                          Comprobantes: {evidencias.length}
-                        </p>
-                        <ul className="clean-list">
-                          {evidencias.map((evidencia) => (
-                            <li key={evidencia.idEvidencia} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.2rem' }}>
-                              <a href={evidencia.urlArchivo} target="_blank" rel="noopener noreferrer">
-                                {evidencia.nombreArchivo}
-                              </a>
-                              <small>{formatShortDate(evidencia.fechaCarga)}</small>
-                              {pago && pago.status === 'PENDIENTE' && (
-                                <button
-                                  className="soft-btn"
-                                  style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
-                                  onClick={() => onEliminarEvidenciaPago(evidencia.idEvidencia)}
-                                >
-                                  Eliminar
-                                </button>
-                              )}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                  </article>
-                  );
-                })}
-              </div>
-            </section>
+            <PagosListaCondomino
+              idCondominio={activeCondominioId}
+              idUsuarioCondominio={idUsuarioCondominioActivo}
+              pagoPorCuota={pagoPorCuota}
+              evidenciasPorPago={evidenciasPorPago}
+              formatShortDate={formatShortDate}
+              onRegistrarPago={onRegistrarPago}
+              onSubirComprobante={onSubirComprobante}
+              onDescargarReciboCuota={onDescargarReciboCuota}
+              onEliminarEvidenciaPago={onEliminarEvidenciaPago}
+            />
           )}
 
           {role !== 'condomino' && activeView === 'validaciones' && (
-            <section className="panel animate-in">
-              <h4>Validacion de pagos</h4>
-              <div className="payment-list">
-                {appData.pagos.length === 0 && <p className="empty-state">No hay pagos registrados.</p>}
-                {appData.pagos.map((pago) => {
-                  const cuota = cuotaMap[pago.cuotaId];
-                  const nombreCondomino = condominoNameByMembership[pago.idUsuarioCondominioPaga ?? 0];
-                  return (
-                  <article key={pago.id} className="payment-item">
-                    <div>
-                      <p className="item-title">Pago #{pago.id} — {cuota?.tipo ?? 'Cuota'}</p>
-                      <small>
-                        {nombreCondomino ? `Condomino: ${nombreCondomino} | ` : ''}Unidad: {pago.condominio} | Fecha: {formatShortDate(pago.fecha)}
-                      </small>
-                    </div>
-                    <p className="item-amount">${pago.monto.toLocaleString('es-MX')}</p>
-                    <span className={`status-pill status-${pago.status.toLowerCase()}`}>{statusLabel[pago.status]}</span>
-                    <div style={{ marginBottom: '0.55rem' }}>
-                      <p className="helper-text" style={{ margin: '0 0 0.3rem' }}>
-                        Comprobantes: {(evidenciasPorPago[pago.id] ?? []).length}
-                      </p>
-                      {(evidenciasPorPago[pago.id] ?? []).length > 0 && (
-                        <ul className="clean-list" style={{ marginBottom: '0.3rem' }}>
-                          {(evidenciasPorPago[pago.id] ?? []).slice(0, 3).map((evidencia) => (
-                            <li key={evidencia.idEvidencia}>
-                              <a href={evidencia.urlArchivo} target="_blank" rel="noopener noreferrer">
-                                {evidencia.nombreArchivo}
-                              </a>
-                              <small>{formatShortDate(evidencia.fechaCarga)}</small>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                    <div className="btn-row">
-                      <button className="primary-btn" onClick={() => onAprobarPago(pago.id)} disabled={pago.status !== 'PENDIENTE'}>
-                        Aprobar pago
-                      </button>
-                      <button className="soft-btn" onClick={() => onRechazarPago(pago.id)} disabled={pago.status !== 'PENDIENTE'}>
-                        Rechazar pago
-                      </button>
-                      <button className="soft-btn" onClick={() => onGenerarReciboPago(pago.id)}>
-                        Generar recibo
-                      </button>
-                    </div>
-                  </article>
-                  );
-                })}
-              </div>
-            </section>
+            <ValidacionesLista
+              idCondominio={activeCondominioId}
+              nombrePorMembresia={condominoNameByMembership}
+              evidenciasPorPago={evidenciasPorPago}
+              formatShortDate={formatShortDate}
+              onAprobarPago={onAprobarPago}
+              onRechazarPago={onRechazarPago}
+              onGenerarReciboPago={onGenerarReciboPago}
+            />
           )}
 
           {activeView === 'avisos' && (

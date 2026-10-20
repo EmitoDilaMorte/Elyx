@@ -38,7 +38,13 @@ export class MathCaptchaGuard implements CanActivate {
       requerido = fallos >= 3;
     }
 
-    if (!requerido && challengeId.length === 0) {
+    if (!requerido) {
+      // El formulario visible siempre trae un `challengeId`; si la verificacion
+      // no es obligatoria y el usuario no respondio, se deja pasar. Solo se
+      // valida cuando hay una respuesta (para no aceptar una respuesta erronea).
+      if (challengeId && respuesta) {
+        await this.captchaService.verificar(challengeId, respuesta);
+      }
       return true;
     }
 

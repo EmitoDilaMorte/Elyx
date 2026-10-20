@@ -5,6 +5,7 @@ export default defineConfig({
     server: {
         host: '0.0.0.0',
         port: 5173,
+        allowedHosts: ['elyx-app.com', 'www.elyx-app.com'],
         watch: {
             usePolling: true,
             interval: 120,

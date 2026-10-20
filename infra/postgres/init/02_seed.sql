@@ -12,7 +12,7 @@ INSERT INTO usuarios (id_usuario, nombre, primer_apellido, segundo_apellido, cor
 ( 1, 'Carlos',     'Mendoza',      'García',      'superadmin@elyx.mx',        '$2b$10$Cig1FWSTErgAlbYEVpDWzOm5ShpGBV8X8QCm0pAg6ANfU4.3oyFZC', TRUE,  FALSE ),
 ( 2, 'Ana Sofía',  'Ramírez',      'López',       'ana.ramirez@elyx.mx',       '$2b$10$Cig1FWSTErgAlbYEVpDWzOm5ShpGBV8X8QCm0pAg6ANfU4.3oyFZC', FALSE, FALSE),
 ( 3, 'Luis',       'Torres',       'Vega',        'luis.torres@elyx.mx',       '$2b$10$Cig1FWSTErgAlbYEVpDWzOm5ShpGBV8X8QCm0pAg6ANfU4.3oyFZC', FALSE, FALSE),
-( 4, 'María José', 'Hernández',    'Díaz',        'maria.hernandez@elyx.mx',   '$2b$10$Cig1FWSTErgAlbYEVpDWzOm5ShpGBV8X8QCm0pAg6ANfU4.3oyFZC', FALSE, TRUE ),
+( 4, 'María José', 'Hernández',    'Díaz',        'maria.hernandez@elyx.mx',   '$2b$10$Cig1FWSTErgAlbYEVpDWzOm5ShpGBV8X8QCm0pAg6ANfU4.3oyFZC', FALSE, FALSE ),
 ( 5, 'Juan Pablo', 'Castro',       'Ruiz',        'juan.castro@gmail.com',      '$2b$10$Cig1FWSTErgAlbYEVpDWzOm5ShpGBV8X8QCm0pAg6ANfU4.3oyFZC', FALSE, FALSE),
 ( 6, 'Valeria',    'Ortega',       'Morales',     'valeria.ortega@outlook.com', '$2b$10$Cig1FWSTErgAlbYEVpDWzOm5ShpGBV8X8QCm0pAg6ANfU4.3oyFZC', FALSE, FALSE),
 ( 7, 'Diego',      'Navarro',      'Silva',       'diego.navarro@yahoo.com',    '$2b$10$Cig1FWSTErgAlbYEVpDWzOm5ShpGBV8X8QCm0pAg6ANfU4.3oyFZC', FALSE, FALSE),

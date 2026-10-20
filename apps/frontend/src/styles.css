@@ -175,6 +175,34 @@ body {
   color: #06706a;
 }
 
+/* "Mantener sesion iniciada": casilla alineada con su etiqueta. */
+.recordarme-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0.6rem 0 0.9rem;
+}
+
+.recordarme-row input[type='checkbox'] {
+  width: auto;
+  margin: 0;
+}
+
+.recordarme-row label {
+  font-size: 0.88rem;
+  color: var(--muted, #6b6257);
+  cursor: pointer;
+}
+
+.recordarme-ayuda {
+  margin: -0.55rem 0 0.9rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  align-items: center;
+  line-height: 1.4;
+}
+
 .compact-btn {
   padding: 0.45rem 0.8rem;
   min-height: 38px;

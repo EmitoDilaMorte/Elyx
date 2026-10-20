@@ -2,7 +2,7 @@ import { Body, Controller, Get, HttpCode, Patch, Post, Req, Res, UseGuards } fro
 import { Throttle } from '@nestjs/throttler';
 import { Request, Response } from 'express';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
-import { REFRESH_COOKIE } from '../../common/auth/session-cookies';
+import { REFRESH_COOKIE, COOKIE_RECORDAR, setRecordarCookie } from '../../common/auth/session-cookies';
 import { extractClientIp, TurnstileGuard } from '../../common/turnstile/turnstile.guard';
 import { MathCaptcha } from '../captcha/math-captcha.decorator';
 import { MathCaptchaGuard } from '../captcha/math-captcha.guard';
@@ -55,6 +55,10 @@ export class AuthController {
       typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : undefined,
     );
 
+    // La preferencia se guarda en una cookie legible para el frontend: asi el
+    // formulario recuerda la eleccion sin tocar el refresh token (HttpOnly).
+    setRecordarCookie(res, dto.recordarme ?? true);
+
     if ('mfaRequired' in resultado) {
       res.status(202);
       return resultado;
@@ -71,13 +75,16 @@ export class AuthController {
   @HttpCode(200)
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   refresh(@Req() req: AuthRequest, @Res({ passthrough: true }) res: Response) {
-    return this.authService.refrescar(req.cookies?.[REFRESH_COOKIE], res, metaDe(req));
+    // Solo recordamos la sesion si el dispositivo lo declaro explicitamente.
+    const recordarme = req.cookies?.[COOKIE_RECORDAR] === '1';
+    return this.authService.refrescar(req.cookies?.[REFRESH_COOKIE], res, metaDe(req), recordarme);
   }
 
   @Post('logout')
   @HttpCode(200)
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   logout(@Req() req: AuthRequest, @Res({ passthrough: true }) res: Response) {
+    setRecordarCookie(res, false);
     return this.authService.cerrarSesion(req.cookies?.[REFRESH_COOKIE], res);
   }
 
@@ -85,12 +92,14 @@ export class AuthController {
   @HttpCode(200)
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   verificarMfa(@Req() req: AuthRequest, @Res({ passthrough: true }) res: Response, @Body() dto: MfaVerifyDto) {
+    setRecordarCookie(res, dto.recordarme ?? true);
     return this.authService.verificarMfa(
       dto.challengeId,
       dto.codigo,
       (dto.metodo ?? 'TOTP') as MfaMetodo,
       res,
       metaDe(req),
+      dto.recordarme ?? true,
     );
   }
 

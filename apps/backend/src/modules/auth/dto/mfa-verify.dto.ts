@@ -1,4 +1,4 @@
-import { IsIn, IsOptional, IsString, Length } from 'class-validator';
+import { IsBoolean, IsIn, IsOptional, IsString, Length } from 'class-validator';
 import type { MfaMetodo } from '../mfa.service';
 
 export class MfaVerifyDto {
@@ -13,4 +13,9 @@ export class MfaVerifyDto {
   @IsOptional()
   @IsIn(['TOTP', 'EMAIL'])
   metodo?: MfaMetodo;
+
+  /** Misma preferencia que en el login: cookie persistente o de sesion. */
+  @IsOptional()
+  @IsBoolean()
+  recordarme?: boolean;
 }

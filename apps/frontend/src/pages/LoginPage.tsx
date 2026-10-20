@@ -20,7 +20,12 @@ type LoginPageProps = {
   onPasswordChange: (value: string) => void;
   /** Devuelve el desenlace: sesion iniciada, MFA pendiente o error. */
   onLogin: (payload: LoginPayload) => Promise<LoginOutcome>;
-  onVerifyMfa: (challengeId: string, codigo: string, metodo: 'TOTP' | 'EMAIL') => Promise<LoginOutcome>;
+  onVerifyMfa: (
+    challengeId: string,
+    codigo: string,
+    metodo: 'TOTP' | 'EMAIL',
+    recordarme: boolean,
+  ) => Promise<LoginOutcome>;
   onResendMfa: (challengeId: string) => Promise<string>;
   onPerfilChange: (value: { correo: string; passwordActual: string; passwordNueva: string }) => void;
   onCambiarPasswordForzado: () => void;
@@ -74,6 +79,30 @@ export function LoginPage({
   const [resetMath, setResetMath] = useState<{ challengeId: string; question: string } | null>(null);
   const [resetMathAnswer, setResetMathAnswer] = useState('');
   const [enviando, setEnviando] = useState(false);
+
+  // "Mantener sesion iniciada": el backend deja una cookie legible con la
+  // ultima eleccion, asi el formulario la recuerda sin tocar el refresh token.
+  const [recordarme, setRecordarme] = useState(true);
+  const [preferenciaGuardada, setPreferenciaGuardada] = useState(false);
+
+  useEffect(() => {
+    const galleta = document.cookie
+      .split('; ')
+      .find((item) => item.startsWith('elyx_recordar='));
+    if (!galleta) {
+      return;
+    }
+
+    const valor = galleta.split('=')[1];
+    setRecordarme(valor !== '0');
+    setPreferenciaGuardada(true);
+  }, []);
+
+  const olvidarDispositivo = () => {
+    document.cookie = 'elyx_recordar=; path=/; max-age=0';
+    setRecordarme(true);
+    setPreferenciaGuardada(false);
+  };
 
   // Paso MFA.
   const [mfa, setMfa] = useState<{ challengeId: string; metodos: Array<'TOTP' | 'EMAIL'> } | null>(null);
@@ -139,6 +168,7 @@ export function LoginPage({
         mathChallengeId: math?.challengeId ?? '',
         mathAnswer,
         behaviorSessionId: getBehaviorSessionId(),
+        recordarme,
       });
 
       if (outcome.status === 'mfa') {
@@ -168,7 +198,7 @@ export function LoginPage({
 
     setMfaLoading(true);
     setMfaError(null);
-    const outcome = await onVerifyMfa(mfa.challengeId, mfaCodigo.trim(), mfaMetodo);
+    const outcome = await onVerifyMfa(mfa.challengeId, mfaCodigo.trim(), mfaMetodo, recordarme);
     setMfaLoading(false);
 
     if (outcome.status === 'error') {
@@ -461,8 +491,27 @@ export function LoginPage({
           <label className="field-label" htmlFor="correo-login">Correo</label>
           <input id="correo-login" type="email" value={correo} onChange={handleCorreoChange} placeholder="usuario@elyx.mx" />
 
-          <label className="field-label" htmlFor="password-login">contraseña</label>
+          <label className="field-label" htmlFor="password-login">Contraseña</label>
           <input id="password-login" type="password" value={password} onChange={handlePasswordChange} placeholder="********" />
+
+          <div className="recordarme-row">
+            <input
+              id="recordarme-login"
+              type="checkbox"
+              name="recordarme"
+              checked={recordarme}
+              onChange={(evento) => setRecordarme(evento.target.checked)}
+            />
+            <label htmlFor="recordarme-login">Mantener sesión iniciada</label>
+          </div>
+          {preferenciaGuardada && (
+            <p className="helper-text recordarme-ayuda">
+              Este dispositivo ya tiene una preferencia guardada.{' '}
+              <button className="link-btn" type="button" onClick={olvidarDispositivo}>
+                No recordar este dispositivo
+              </button>
+            </p>
+          )}
 
           <MathCaptcha
             challengeId={math?.challengeId ?? ''}
@@ -481,7 +530,7 @@ export function LoginPage({
             className="primary-btn login-btn"
             type="button"
             onClick={handleLoginClick}
-            disabled={enviando || Boolean(loadingLabel) || (turnstileConfigured && !loginCaptchaToken) || (Boolean(math) && !mathAnswer.trim())}
+            disabled={enviando || Boolean(loadingLabel) || (turnstileConfigured && !loginCaptchaToken)}
           >
             Entrar
           </button>

@@ -5,7 +5,7 @@ import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
 import type { Response } from 'express';
 import { RateLimitException } from '../../common/throttler/rate-limit.exception';
-import { setRefreshCookie, clearRefreshCookie } from '../../common/auth/session-cookies';
+import { setRefreshCookie, setRefreshCookieDeSesion, clearRefreshCookie } from '../../common/auth/session-cookies';
 import { CsrfService } from '../../common/csrf/csrf.service';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
@@ -197,7 +197,7 @@ export class AuthService {
       throw new UnauthorizedException('Verificacion de comportamiento fallida. Intenta de nuevo.');
     }
 
-    return this.finalizarSesion(user, payload, { ip, userAgent }, res, behavior);
+    return this.finalizarSesion(user, payload, { ip, userAgent }, res, behavior, undefined, input.recordarme ?? true);
   }
 
   /** Verifica el codigo MFA y solo entonces emite la sesion. */
@@ -207,9 +207,10 @@ export class AuthService {
     metodo: MfaMetodo,
     res?: Response,
     meta: MetaSesion = {},
+    recordarme = true,
   ): Promise<SesionEmitida> {
     const { idUsuario } = await this.mfaService.verificar(challengeId, codigo, metodo);
-    return this.emitirSesion(idUsuario, res, meta);
+    return this.emitirSesion(idUsuario, res, meta, recordarme);
   }
 
   async reenviarMfa(challengeId: string): Promise<{ ok: true; message: string }> {
@@ -233,13 +234,18 @@ export class AuthService {
   }
 
   /** Rota el refresh token y emite un access token nuevo. */
-  async refrescar(token: string | undefined, res?: Response, meta: MetaSesion = {}): Promise<SesionEmitida> {
+  async refrescar(
+    token: string | undefined,
+    res?: Response,
+    meta: MetaSesion = {},
+    recordarme?: boolean,
+  ): Promise<SesionEmitida> {
     if (!token) {
       throw new UnauthorizedException('Sesion expirada. Inicia sesion de nuevo.');
     }
 
     const nuevo = await this.refreshTokensService.rotar(token, meta);
-    return this.emitirSesionConRefresh(nuevo.idUsuario, res, meta, nuevo);
+    return this.emitirSesionConRefresh(nuevo.idUsuario, res, meta, nuevo, recordarme ?? true);
   }
 
   async cerrarSesion(token: string | undefined, res?: Response): Promise<{ ok: true }> {
@@ -259,9 +265,10 @@ export class AuthService {
     idUsuario: number,
     res: Response | undefined,
     meta: MetaSesion,
+    recordarme = true,
   ): Promise<SesionEmitida> {
     const { user, payload } = await this.cargarUsuario(idUsuario);
-    return this.finalizarSesion(user, payload, meta, res, null);
+    return this.finalizarSesion(user, payload, meta, res, null, undefined, recordarme);
   }
 
   private async emitirSesionConRefresh(
@@ -269,9 +276,10 @@ export class AuthService {
     res: Response | undefined,
     meta: MetaSesion,
     refresh: { token: string; expira: Date },
+    recordarme = true,
   ): Promise<SesionEmitida> {
     const { user, payload } = await this.cargarUsuario(idUsuario);
-    return this.finalizarSesion(user, payload, meta, res, null, refresh);
+    return this.finalizarSesion(user, payload, meta, res, null, refresh, recordarme);
   }
 
   private async finalizarSesion(
@@ -281,6 +289,7 @@ export class AuthService {
     res: Response | undefined,
     behavior: ResumenComportamiento | null,
     refreshPrevio?: { token: string; expira: Date },
+    recordarme = true,
   ): Promise<SesionEmitida> {
     const expiresIn = process.env.ACCESS_TOKEN_TTL ?? process.env.JWT_EXPIRES_IN ?? '15m';
 
@@ -289,10 +298,16 @@ export class AuthService {
       expiresIn: expiresIn as never,
     });
 
-    const refresh = refreshPrevio ?? (await this.refreshTokensService.emitir(user.idUsuario, meta));
+    const refresh =
+      refreshPrevio ?? (await this.refreshTokensService.emitir(user.idUsuario, meta, undefined, recordarme));
 
     if (res) {
-      setRefreshCookie(res, refresh.token, refresh.expira);
+      if (recordarme) {
+        setRefreshCookie(res, refresh.token, refresh.expira);
+      } else {
+        // Sin `expires`: el navegador la borra al cerrarse.
+        setRefreshCookieDeSesion(res, refresh.token);
+      }
       // Al iniciar sesion se rota el token CSRF: el bot observa el cambio de
       // firma y lo reporta como "el token roto" en el punto 4.
       this.csrfService.emitir(res);

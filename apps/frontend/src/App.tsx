@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import { navAdministrador, navCondomino } from './constants/navigation';
 import { statusLabel } from './constants/status';
@@ -40,6 +41,28 @@ import type {
 } from './types/app';
 
 const ACTIVE_CONDOMINIO_STORAGE_PREFIX = 'elyx-active-condominio';
+
+/** Ruta publica de cada seccion: el bot puede navegar sin adivinar menus. */
+const RUTA_POR_VISTA: Record<ViewKey, string> = {
+  inicio: '/inicio',
+  pagos: '/pagos',
+  avisos: '/avisos',
+  votaciones: '/votaciones',
+  mantenimiento: '/mantenimiento',
+  reportes: '/reportes',
+  validaciones: '/validaciones',
+  finanzas: '/finanzas',
+  perfil: '/perfil',
+  solicitudes: '/solicitudes',
+};
+
+function vistaDesdeRuta(pathname: string): ViewKey {
+  const limpia = pathname.replace(/\/+$/, '') || '/';
+  const entrada = (Object.entries(RUTA_POR_VISTA) as Array<[ViewKey, string]>).find(
+    ([, ruta]) => ruta === limpia,
+  );
+  return entrada ? entrada[0] : 'inicio';
+}
 
 function getActiveCondominioStorageKey(correo: string) {
   return `${ACTIVE_CONDOMINIO_STORAGE_PREFIX}-${correo}`;
@@ -350,7 +373,13 @@ function AppContent() {
   const [correo, setCorreo] = useState('');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
-  const [activeView, setActiveView] = useState<ViewKey>('inicio');
+  const location = useLocation();
+  const navigate = useNavigate();
+  const activeView = vistaDesdeRuta(location.pathname);
+  const setActiveView = useCallback(
+    (view: ViewKey) => navigate(RUTA_POR_VISTA[view] ?? '/inicio'),
+    [navigate],
+  );
   const [menuOpen, setMenuOpen] = useState(false);
   const [loadingLabel, setLoadingLabel] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -405,6 +434,24 @@ function AppContent() {
   }, []);
 
   const navItems = role === 'condomino' ? navCondomino : navAdministrador;
+
+  // La URL no es un mecanismo de autorizacion, pero si de navegacion: una ruta
+  // desconocida o una vista que no existe para el rol vuelve al inicio.
+  useEffect(() => {
+    const rutasValidas = Object.values(RUTA_POR_VISTA);
+    if (!rutasValidas.includes(location.pathname)) {
+      navigate(RUTA_POR_VISTA.inicio, { replace: true });
+      return;
+    }
+
+    if (!isAuthenticated) {
+      return;
+    }
+
+    if (!navItems.some((item) => item.key === activeView)) {
+      navigate(RUTA_POR_VISTA.inicio, { replace: true });
+    }
+  }, [location.pathname, isAuthenticated, activeView, navItems, navigate]);
 
   const memberships = useMemo(() => {
     if (!sessionUser) {
@@ -1137,7 +1184,6 @@ function AppContent() {
         setActiveCondominioId(selectedCondominioId);
         persistActiveCondominio(matchedUser.correo, selectedCondominioId);
       }
-      setActiveView('inicio');
       setIsAuthenticated(true);
       setMenuOpen(false);
       setCuotaCambioForm(DEFAULT_CUOTA_CAMBIO_FORM);
@@ -1167,7 +1213,13 @@ function AppContent() {
         };
       }
 
-      return aplicarSesion(response) ? { status: 'ok' } : { status: 'error' };
+      if (!aplicarSesion(response)) {
+        return { status: 'error' };
+      }
+      if (location.pathname === '/') {
+        navigate('/inicio', { replace: true });
+      }
+      return { status: 'ok' };
     } catch (error) {
       console.error(error);
       backendApi.setAccessToken(null);
@@ -1180,7 +1232,11 @@ function AppContent() {
         const retryAfter = (error as { retryAfter?: number | null } | undefined)?.retryAfter;
         setLoginError(formatRetryAfterMessage(retryAfter));
       } else if (status === 400 && /matem/i.test(detalle)) {
-        setLoginError('La verificacion matematica es incorrecta. Resuelve la nueva operacion.');
+        setLoginError(
+          /requerid/i.test(detalle)
+            ? 'Resuelve la verificacion adicional para continuar.'
+            : 'La verificacion matematica es incorrecta. Resuelve la nueva operacion.',
+        );
       } else if (status === 400) {
         // El backend rechaza el token de Turnstile con 400 + mensaje generico.
         setLoginError('Verificacion de seguridad fallida. Intenta de nuevo.');
@@ -1198,11 +1254,19 @@ function AppContent() {
     challengeId: string,
     codigo: string,
     metodo: 'TOTP' | 'EMAIL',
+    recordarme: boolean,
   ): Promise<LoginOutcome> => {
     try {
       setLoadingLabel('Verificando codigo...');
-      const response = await backendApi.verifyMfa(challengeId, codigo, metodo);
-      return aplicarSesion(response) ? { status: 'ok' } : { status: 'error' };
+      const response = await backendApi.verifyMfa(challengeId, codigo, metodo, recordarme);
+
+      if (!aplicarSesion(response)) {
+        return { status: 'error' };
+      }
+      if (location.pathname === '/') {
+        navigate('/inicio', { replace: true });
+      }
+      return { status: 'ok' };
     } catch (error) {
       console.error(error);
       backendApi.setAccessToken(null);
@@ -1232,6 +1296,8 @@ function AppContent() {
     setLoginError(null);
     setRequiereCambio(false);
     setCambioFeedback(null);
+    // La vista no se hereda entre sesiones: al salir se vuelve al inicio.
+    navigate(RUTA_POR_VISTA.inicio, { replace: true });
   };
 
   const registrarPagoCondomino = async (cuotaId: number) => {

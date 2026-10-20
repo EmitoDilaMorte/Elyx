@@ -41,14 +41,27 @@ export class RefreshTokensService {
     return Number.isFinite(dias) && dias > 0 ? dias : 7;
   }
 
+  /**
+   * Vigencia de un refresh token que no se recuerda entre visitas: cubre la
+   * jornada de trabajo pero muere al cerrar el navegador (cookie de sesion).
+   */
+  private horasVigenciaSesion(): number {
+    const horas = Number(process.env.REFRESH_TOKEN_TTL_SESSION_HOURS ?? 12);
+    return Number.isFinite(horas) && horas > 0 ? horas : 12;
+  }
+
   async emitir(
     idUsuario: number,
     meta: RequestMeta = {},
     familia?: string,
+    recordar = true,
   ): Promise<RefreshTokenEmitido> {
     const token = crypto.randomBytes(32).toString('base64url');
     const familiaFinal = familia ?? crypto.randomUUID();
-    const expira = new Date(Date.now() + this.diasVigencia() * 24 * 60 * 60 * 1000);
+    const vigenciaMs = recordar
+      ? this.diasVigencia() * 24 * 60 * 60 * 1000
+      : this.horasVigenciaSesion() * 60 * 60 * 1000;
+    const expira = new Date(Date.now() + vigenciaMs);
 
     await this.dataSource.query(
       `
@@ -68,17 +81,24 @@ export class RefreshTokensService {
     return { idUsuario, token, expira, familia: familiaFinal };
   }
 
-  /** Valida y rota el token. Devuelve uno nuevo en la misma familia. */
+  /**
+   * Valida y rota el token. Devuelve uno nuevo en la misma familia y conserva
+   * la preferencia de "recordarme" con la que se creo la familia.
+   */
   async rotar(token: string, meta: RequestMeta = {}): Promise<RefreshTokenEmitido> {
     const rows = (await this.dataSource.query(
       `
-      SELECT id_usuario, familia, expira, revocado
+      SELECT id_usuario, familia, expira, revocado,
+        COALESCE(
+          (SELECT MAX(r2.expira) FROM refresh_tokens r2 WHERE r2.familia = refresh_tokens.familia),
+          expira
+        ) AS expira_familia
       FROM refresh_tokens
       WHERE token_hash = $1
       LIMIT 1
       `,
       [this.hash(token)],
-    )) as RefreshTokenRow[];
+    )) as Array<RefreshTokenRow & { expira_familia: Date | string }>;
 
     if (rows.length === 0) {
       throw new UnauthorizedException('Sesion expirada. Inicia sesion de nuevo.');
@@ -106,7 +126,17 @@ export class RefreshTokensService {
       [this.hash(token)],
     );
 
-    return this.emitir(Number(row.id_usuario), meta, row.familia);
+    return this.emitir(Number(row.id_usuario), meta, row.familia, this.recuerdaFamilia(row));
+  }
+
+  /**
+   * Una familia "recordada" dura mas de un dia; la de sesion caduca el mismo
+   * dia, asi que su expiracion mas lejana no supera el umbral diario.
+   */
+  private recuerdaFamilia(row: RefreshTokenRow & { expira_familia?: Date | string }): boolean {
+    const referencia = row.expira_familia ?? row.expira;
+    const ms = new Date(referencia).getTime() - Date.now();
+    return Number.isFinite(ms) && ms > 24 * 60 * 60 * 1000;
   }
 
   async revocar(token: string | undefined): Promise<void> {

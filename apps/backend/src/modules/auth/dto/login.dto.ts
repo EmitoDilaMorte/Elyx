@@ -1,4 +1,4 @@
-import { IsOptional, IsString, MinLength } from 'class-validator';
+import { IsBoolean, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class LoginDto {
   @IsString()
@@ -7,6 +7,14 @@ export class LoginDto {
   @IsString()
   @MinLength(6)
   password!: string;
+
+  /**
+   * Cookie persistente ("mantener sesion iniciada"). Si es `false`, el refresh
+   * token vive solo lo que dure la sesion del navegador.
+   */
+  @IsOptional()
+  @IsBoolean()
+  recordarme?: boolean;
 
   /**
    * Token de Cloudflare Turnstile. Se marca opcional para no romper clientes

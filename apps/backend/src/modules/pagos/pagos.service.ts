@@ -22,6 +22,38 @@ type PagoRecord = {
   claveUnidad: string | null;
 };
 
+/** Pago con los datos de su cuota: lo que necesita el listado paginado. */
+export type PagoPaginado = PagoRecord & {
+  periodo: string;
+  tipo: string;
+  referencia: string | null;
+};
+
+export type MetaPaginacion = {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+};
+
+export type OpcionesListadoPagos = {
+  idCondominio: number;
+  idUsuarioCondominio?: number | null;
+  page: number;
+  pageSize: number;
+  q?: string;
+  estado?: PagoEstado | null;
+  orden?: string;
+};
+
+/** Whitelist de ordenamientos: el valor nunca se interpola sin validar. */
+const ORDENES: Record<string, string> = {
+  reciente: 'fecha_pago DESC, id_pago DESC',
+  antiguo: 'fecha_pago ASC, id_pago ASC',
+  monto_desc: 'monto DESC, fecha_pago DESC',
+  monto_asc: 'monto ASC, fecha_pago DESC',
+};
+
 @Injectable()
 export class PagosService {
   constructor(
@@ -63,6 +95,102 @@ export class PagosService {
 
     const rows = this.normalizeQueryRows(rawRows);
     return rows.map((row: Record<string, unknown>) => this.toPagoRecord(row));
+  }
+
+  /**
+   * Listado paginado con busqueda, filtro por estado y orden.
+   *
+   * - `q` busca en periodo, tipo de cuota, unidad y referencia del pago.
+   * - `idUsuarioCondominio` limita el listado a los pagos de esa membresia
+   *   (lo usa la vista del condomino); el administrador lo omite.
+   */
+  async listarPaginado(
+    opciones: OpcionesListadoPagos,
+  ): Promise<{ items: PagoPaginado[]; meta: MetaPaginacion }> {
+    const page =
+      Number.isFinite(opciones.page) && opciones.page > 0 ? Math.floor(opciones.page) : 1;
+    const pageSize =
+      Number.isFinite(opciones.pageSize) && opciones.pageSize > 0
+        ? Math.min(Math.floor(opciones.pageSize), 50)
+        : 12;
+    const busqueda = opciones.q && opciones.q.trim() ? opciones.q.trim() : null;
+    const estado = opciones.estado ?? null;
+    const idUsuarioCondominio =
+      typeof opciones.idUsuarioCondominio === 'number' && opciones.idUsuarioCondominio > 0
+        ? opciones.idUsuarioCondominio
+        : null;
+    const claveOrden = String(opciones.orden ?? '');
+    const orden = ORDENES[claveOrden] ? claveOrden : 'reciente';
+
+    const filtros = [opciones.idCondominio, idUsuarioCondominio, busqueda, estado];
+
+    const base = `
+      WITH base AS (
+        SELECT
+          p.id_pago,
+          c.id_condominio,
+          c.id_cuota,
+          c.periodo,
+          c.tipo,
+          p.monto,
+          p.fecha_pago,
+          p.estado,
+          p.referencia,
+          p.id_usuario_condominio_paga,
+          p.id_usuario_condominio_admin,
+          p.motivo_rechazo,
+          u.clave_unidad
+        FROM pagos p
+        INNER JOIN cuotas c ON c.id_cuota = p.id_cuota
+        LEFT JOIN unidades_ocupantes uo
+          ON uo.id_usuario_condominio = p.id_usuario_condominio_paga
+         AND (uo.fecha_fin IS NULL OR uo.fecha_fin >= CURRENT_DATE)
+        LEFT JOIN unidades u ON u.id_unidad = uo.id_unidad
+        WHERE c.id_condominio = $1
+          AND ($2::int IS NULL OR p.id_usuario_condominio_paga = $2)
+          AND ($3::text IS NULL
+               OR c.periodo ILIKE '%' || $3 || '%'
+               OR c.tipo ILIKE '%' || $3 || '%'
+               OR u.clave_unidad ILIKE '%' || $3 || '%'
+               OR p.referencia ILIKE '%' || $3 || '%')
+      )
+    `;
+
+    const totalRaw = await this.dataSource.query(
+      `${base}
+       SELECT COUNT(*)::int AS total
+       FROM base
+       WHERE ($4::text IS NULL OR estado = $4)`,
+      filtros,
+    );
+    const totalRows = this.normalizeQueryRows(totalRaw);
+    const total = Number(totalRows[0]?.total ?? 0);
+
+    const rowsRaw = await this.dataSource.query(
+      `${base}
+       SELECT *
+       FROM base
+       WHERE ($4::text IS NULL OR estado = $4)
+       ORDER BY ${ORDENES[orden]}
+       LIMIT $5 OFFSET $6`,
+      [...filtros, pageSize, (page - 1) * pageSize],
+    );
+    const rows = this.normalizeQueryRows(rowsRaw);
+
+    return {
+      items: rows.map((row) => ({
+        ...this.toPagoRecord(row),
+        periodo: row.periodo ? String(row.periodo) : '',
+        tipo: row.tipo ? String(row.tipo) : 'Cuota de mantenimiento',
+        referencia: row.referencia ? String(row.referencia) : null,
+      })),
+      meta: {
+        page,
+        pageSize,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / pageSize)),
+      },
+    };
   }
 
   async capturar(input: CapturarPagoDto): Promise<PagoRecord> {

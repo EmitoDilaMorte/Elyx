@@ -1,4 +1,4 @@
-import { Body, Controller, Get, ParseEnumPipe, ParseIntPipe, Patch, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, DefaultValuePipe, Get, ParseEnumPipe, ParseIntPipe, Patch, Query, UseGuards } from '@nestjs/common';
 import { CondominioAccessGuard } from '../../common/auth/condominio-access.guard';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { Role } from '../../common/auth/role.enum';
@@ -20,6 +20,34 @@ export class PagosController {
     @Query('estado', new ParseEnumPipe(PagoEstado, { optional: true })) estado?: PagoEstado,
   ) {
     return this.pagosService.listByCondominio(idCondominio, estado);
+  }
+
+  /** Listado paginado con busqueda, filtro y orden (vista de validacion de pagos). */
+  @Get('paginado')
+  listarPaginado(
+    @Query('idCondominio', ParseIntPipe) idCondominio: number,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('pageSize', new DefaultValuePipe(12), ParseIntPipe) pageSize: number,
+    @Query('q') q?: string,
+    @Query('estado') estado?: string,
+    @Query('orden') orden?: string,
+    @Query('idUsuarioCondominio') idUsuarioCondominio?: string,
+  ) {
+    const estadosValidos = Object.values(PagoEstado) as string[];
+    const estadoFiltrado = estadosValidos.includes(String(estado))
+      ? (estado as PagoEstado)
+      : null;
+    const usuario = Number(idUsuarioCondominio);
+
+    return this.pagosService.listarPaginado({
+      idCondominio,
+      idUsuarioCondominio: Number.isInteger(usuario) && usuario > 0 ? usuario : null,
+      page,
+      pageSize,
+      q: q?.slice(0, 80),
+      estado: estadoFiltrado,
+      orden,
+    });
   }
 
   @Patch('capturar')

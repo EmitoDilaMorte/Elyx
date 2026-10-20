@@ -1,7 +1,41 @@
-import type { PagoStatus, UnidadConOcupante, VoteChoice } from '../types/app';
+import type { CuotaStatus, PagoStatus, UnidadConOcupante, VoteChoice } from '../types/app';
 import { getApiBaseUrl } from './apiBase';
 
 let authToken: string | null = null;
+
+export type CuotaPaginada = {
+  idCuota: number;
+  idCondominio: number;
+  periodo: string;
+  tipo: string;
+  monto: number;
+  fechaLimite: string;
+  recargo: number;
+  estado: CuotaStatus;
+  claveUnidad: string | null;
+};
+
+export type MetaPaginacion = {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+};
+
+export type PagoPaginado = {
+  idPago: number;
+  idCuota: number;
+  periodo: string;
+  tipo: string;
+  claveUnidad: string | null;
+  referencia: string | null;
+  monto: number;
+  fechaPago: string;
+  status: PagoStatus;
+  estadoBackend: 'CAPTURADO' | 'VALIDADO' | 'RECHAZADO';
+  idUsuarioCondominioPaga: number;
+  motivoRechazo: string | null;
+};
 
 type BackendCuota = {
   idCuota: number;
@@ -202,6 +236,8 @@ export type LoginPayload = {
   mathChallengeId: string;
   mathAnswer: string;
   behaviorSessionId: string;
+  /** Cookie persistente ("mantener sesion iniciada"). */
+  recordarme: boolean;
 };
 
 export function esDesafioMfa(resultado: LoginResult): resultado is BackendMfaChallenge {
@@ -472,6 +508,7 @@ export const backendApi = {
         ...(payload.mathChallengeId ? { mathChallengeId: payload.mathChallengeId } : {}),
         ...(payload.mathAnswer ? { mathAnswer: payload.mathAnswer } : {}),
         ...(payload.behaviorSessionId ? { behaviorSessionId: payload.behaviorSessionId } : {}),
+        recordarme: payload.recordarme,
       }),
     });
 
@@ -486,10 +523,11 @@ export const backendApi = {
     challengeId: string,
     codigo: string,
     metodo: 'TOTP' | 'EMAIL',
+    recordarme = true,
   ): Promise<BackendLoginResponse> {
     const response = await requestJson<BackendLoginResponse>('/auth/mfa/verify', {
       method: 'POST',
-      body: JSON.stringify({ challengeId, codigo, metodo }),
+      body: JSON.stringify({ challengeId, codigo, metodo, recordarme }),
     });
 
     this.setAccessToken(response.accessToken);
@@ -591,6 +629,39 @@ export const backendApi = {
       recargo: item.recargo,
       status: item.estado,
     }));
+  },
+
+  async listCuotasPaginado(params: {
+    idCondominio: number;
+    idUsuarioCondominio?: number | null;
+    page?: number;
+    pageSize?: number;
+    q?: string;
+    estados?: string[];
+    orden?: string;
+  }): Promise<{ items: CuotaPaginada[]; meta: MetaPaginacion }> {
+    const query = new URLSearchParams();
+    query.set('idCondominio', String(params.idCondominio));
+    if (params.idUsuarioCondominio) {
+      query.set('idUsuarioCondominio', String(params.idUsuarioCondominio));
+    }
+    query.set('page', String(params.page ?? 1));
+    query.set('pageSize', String(params.pageSize ?? 12));
+    if (params.q && params.q.trim().length > 0) {
+      query.set('q', params.q.trim());
+    }
+    for (const estado of params.estados ?? []) {
+      if (estado) {
+        query.append('estado', estado);
+      }
+    }
+    if (params.orden) {
+      query.set('orden', params.orden);
+    }
+
+    return requestJson<{ items: CuotaPaginada[]; meta: MetaPaginacion }>(
+      `/cuotas/paginado?${query.toString()}`,
+    );
   },
 
   async listCuotasByCondomino(idCondominio: number, idUsuarioCondominio: number) {
@@ -783,6 +854,58 @@ export const backendApi = {
       idUsuarioCondominioPaga: item.idUsuarioCondominioPaga,
       idUsuarioCondominioAdmin: item.idUsuarioCondominioAdmin ?? undefined,
     }));
+  },
+
+  async listPagosPaginado(params: {
+    idCondominio: number;
+    idUsuarioCondominio?: number | null;
+    page?: number;
+    pageSize?: number;
+    q?: string;
+    estados?: string[];
+    orden?: string;
+  }): Promise<{ items: PagoPaginado[]; meta: MetaPaginacion }> {
+    const query = new URLSearchParams();
+    query.set('idCondominio', String(params.idCondominio));
+    if (params.idUsuarioCondominio) {
+      query.set('idUsuarioCondominio', String(params.idUsuarioCondominio));
+    }
+    query.set('page', String(params.page ?? 1));
+    query.set('pageSize', String(params.pageSize ?? 12));
+    if (params.q && params.q.trim().length > 0) {
+      query.set('q', params.q.trim());
+    }
+    for (const estado of params.estados ?? []) {
+      if (estado) {
+        query.append('estado', estado);
+      }
+    }
+    if (params.orden) {
+      query.set('orden', params.orden);
+    }
+
+    const data = await requestJson<{
+      items: Array<BackendPago & { periodo: string; tipo: string; referencia: string | null }>;
+      meta: MetaPaginacion;
+    }>(`/pagos/paginado?${query.toString()}`);
+
+    return {
+      items: data.items.map((item) => ({
+        idPago: item.idPago,
+        idCuota: item.idCuota,
+        periodo: item.periodo,
+        tipo: item.tipo ?? 'Cuota de mantenimiento',
+        claveUnidad: item.claveUnidad,
+        referencia: item.referencia ?? null,
+        monto: item.monto,
+        fechaPago: item.fechaPago,
+        status: mapPagoStatus(item.estado),
+        estadoBackend: item.estado,
+        idUsuarioCondominioPaga: item.idUsuarioCondominioPaga,
+        motivoRechazo: item.motivoRechazo,
+      })),
+      meta: data.meta,
+    };
   },
 
   async capturarPago(input: { idCondominio: number; idCuota: number; idUsuarioCondominioPaga: number }) {
