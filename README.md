@@ -2,6 +2,8 @@
 
 # Elyx
 
+![og-image](apps/frontend/public/og-image.png)
+
 **Administración de condominios sin papeles: cuotas, pagos, avisos, votaciones y finanzas en un solo lugar.**
 
 [![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=white)](https://react.dev)
