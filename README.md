@@ -34,10 +34,6 @@
 
 ## Capturas
 
-> **Nota para quien mantiene el repositorio:** las imágenes viven en `docs/capturas/`.
-> Consulta [Agregar las capturas](#agregar-las-capturas) al final para los nombres y
-> el formato exactos.
-
 | Inicio de sesión | Panel del condómino |
 |:---:|:---:|
 | ![Inicio de sesión](docs/capturas/01-login.png) | ![Panel del condómino](docs/capturas/02-panel-condomino.png) |
