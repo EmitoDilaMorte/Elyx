@@ -1,0 +1,59 @@
+# ============================================================================
+# Elyx frontend - imagen de PRODUCCION
+#
+# Compila la SPA con Vite y la sirve con nginx como archivos estaticos.
+# No usa el servidor de desarrollo: no existen source maps, ni HMR, ni
+# transformacion bajo demanda, ni acceso al arbol del proyecto por HTTP.
+#
+# Uso (desde apps/frontend):
+#   docker build -f Dockerfile.prod \
+#     --build-arg VITE_API_URL=https://api.elyx-app.com \
+#     --build-arg VITE_TURNSTILE_SITE_KEY=0x... \
+#     -t elyx-frontend:prod .
+# ============================================================================
+
+# ---------------------------------------------------------------------------
+# Etapa 1: compilar
+# ---------------------------------------------------------------------------
+FROM node:24-alpine AS build
+
+WORKDIR /app
+
+# Las dependencias primero: si package*.json no cambia, esta capa se reutiliza.
+COPY package*.json ./
+RUN npm ci --legacy-peer-deps
+
+COPY . .
+
+# Las variables VITE_* se HORNEAN en el bundle al compilar.
+# Si cambian, hay que reconstruir la imagen.
+ARG VITE_API_URL=""
+ARG VITE_TURNSTILE_SITE_KEY=""
+ENV VITE_API_URL=$VITE_API_URL \
+    VITE_TURNSTILE_SITE_KEY=$VITE_TURNSTILE_SITE_KEY
+
+# `npm run build` = tsc -b && vite build
+RUN npm run build
+
+# ---------------------------------------------------------------------------
+# Etapa 2: servir
+# ---------------------------------------------------------------------------
+FROM nginx:1.27-alpine
+
+# Cabeceras de seguridad basicas para un sitio estatico.
+# La CSP se deja fuera a proposito: el sitio carga Cloudflare Turnstile y
+# se conecta al API y al WebSocket, asi que necesita una politica revisada.
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+COPY --from=build /app/dist /usr/share/nginx/html
+
+# nginx necesita escribir sus temporales
+RUN chown -R nginx:nginx /var/cache/nginx /var/run && \
+    chmod -R 755 /usr/share/nginx/html
+
+EXPOSE 80
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget -q -O /dev/null http://127.0.0.1/ || exit 1
+
+CMD ["nginx", "-g", "daemon off;"]

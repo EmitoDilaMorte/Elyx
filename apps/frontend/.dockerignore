@@ -9,6 +9,8 @@ yarn-debug.log*
 yarn-error.log*
 # Artefactos de `tsc -b`: si llegan a la imagen, Vite los trata como fuente.
 **/Dockerfile
+**/Dockerfile.*
+**/.dockerignore
 **/*.tsbuildinfo
 vite.config.js
 vite.config.d.ts

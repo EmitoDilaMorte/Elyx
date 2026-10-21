@@ -245,6 +245,11 @@ Si el `pull` trajo cambios en el esquema, aplica la migración correspondiente d
 
 ### Producción
 
+En producción la aplicación web **no** se sirve con el servidor de desarrollo de Vite:
+se compila y se sirve como archivos estáticos con nginx. El archivo
+`docker-compose-prod.yml` trae esa configuración (imagen `Dockerfile.prod`, sin bind
+mounts del frontend y con el puerto del host apuntando al `80` del contenedor).
+
 1. Copia tu configuración de producción en `.env` y ajusta como mínimo:
 
    ```env
@@ -252,20 +257,48 @@ Si el `pull` trajo cambios en el esquema, aplica la migración correspondiente d
    COOKIE_SECURE=true
    AUTH_REQUIRED=true
    FRONTEND_URL=https://tu-dominio.com
+   VITE_API_URL=https://api.tu-dominio.com
    PUBLIC_FILES_BASE_URL=https://api.tu-dominio.com
    CORS_ALLOWED_ORIGINS=https://tu-dominio.com,https://www.tu-dominio.com
+   VITE_TURNSTILE_SITE_KEY=<sitekey pública de Turnstile>
    JWT_SECRET=<cadena aleatoria larga>
    CSRF_SECRET=<cadena aleatoria larga>
    MFA_ENCRYPTION_KEY=<cadena aleatoria larga>
    ```
 
-2. Publica la API y la web detrás de un proxy inverso con TLS (nginx, Caddy, Traefik) y
+2. Levanta el stack con el archivo de producción:
+
+   ```bash
+   docker compose -f docker-compose-prod.yml up -d --build
+   ```
+
+3. Publica la API y la web detrás de un proxy inverso con TLS (nginx, Caddy, Traefik) y
    no expongas los puertos de los contenedores a internet.
-3. Programa respaldos del volumen de PostgreSQL (`postgres_data`) y del directorio de
+4. Programa respaldos del volumen de PostgreSQL (`postgres_data`) y del directorio de
    archivos subidos (`apps/backend/uploads`).
+
+**Al actualizar en producción:**
+
+```bash
+git fetch --all && git pull --ff-only
+
+# Solo lo que cambió. Si tocaste el frontend, se recompila el bundle.
+docker compose -f docker-compose-prod.yml up -d --build frontend
+```
+
+> `VITE_API_URL` y `VITE_TURNSTILE_SITE_KEY` se **hornean en el bundle** al compilar. Si
+> cambias alguna, hay que reconstruir la imagen del frontend (`--build`); reiniciar el
+> contenedor no basta.
 
 > Con `COOKIE_SECURE=true` el navegador exige HTTPS: sin TLS el inicio de sesión no
 > funcionará. Es intencional.
+
+**Por qué no se usa Vite en producción:** el servidor de desarrollo transforma archivos
+bajo demanda y con un bind mount deja accesible todo el árbol del proyecto por HTTP
+(`Dockerfile`, `.dockerignore`, `tsconfig.json`…). Al pedir uno de esos archivos, Vite
+intenta parsearlo como JavaScript y responde con
+`Failed to parse source for import analysis`. Compilar y servir con nginx elimina el
+problema de raíz, además de reducir memoria y no exponer source maps.
 
 ---
 
