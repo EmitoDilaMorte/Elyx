@@ -609,6 +609,33 @@ function PrivacyContent() {
             'Configuracion de notificaciones y preferencias administrativas',
           ],
         },
+        {
+          subtitle: '1.6 Informacion de autenticacion y segundo factor',
+          items: [
+            'Contraseña almacenada solo como hash bcrypt, nunca en texto claro',
+            'Historial de intentos de inicio de sesion: correo, IP, resultado y motivo',
+            'Sesiones activas: familia del token, creacion, expiracion, IP y agente de usuario',
+            'Estado del segundo factor y secreto TOTP cifrado con AES-256-GCM',
+            'Codigos de recuperacion almacenados como hash y su estado de uso',
+            'Preferencia "mantener sesion iniciada" del dispositivo',
+          ],
+        },
+        {
+          subtitle: '1.7 Verificacion de interaccion humana',
+          items: [
+            'Tipo de evento, marcas de tiempo e intervalos entre eventos',
+            'Coordenadas relativas del cursor y tiempo en el formulario',
+            'Indicador tecnico de automatizacion del navegador',
+            'Puntaje de riesgo y veredicto resultante',
+          ],
+        },
+        {
+          subtitle: '1.8 Verificacion de seguridad de terceros',
+          items: [
+            'Cloudflare Turnstile recibe IP, agente de usuario y señales tecnicas del navegador',
+            'Elyx recibe unicamente el resultado de la verificacion',
+          ],
+        },
       ],
     },
     {
@@ -632,11 +659,17 @@ function PrivacyContent() {
     },
     {
       title: '4. Comparticion de la informacion',
-      body: 'Elyx no vende informacion personal. Compartimos datos con administradores del condominio, proveedores de servicios bajo confidencialidad y por requerimiento legal.',
+      items: [
+        'Elyx no vende informacion personal',
+        'Con administradores del condominio, para su gestion',
+        'Con proveedores bajo confidencialidad: hosting, envio de correo transaccional y verificacion de seguridad (Cloudflare Turnstile, que recibe IP y agente de usuario)',
+        'Por requerimiento legal o para proteger derechos y seguridad',
+        'Ningun proveedor recibe contraseñas, tokens de sesion, secretos de segundo factor ni codigos de recuperacion',
+      ],
     },
     {
       title: '5. Proteccion de la informacion',
-      body: 'Implementamos encriptacion en transito y reposo, autenticacion JWT, accesos restringidos por roles, monitoreo continuo y actualizaciones regulares de seguridad.',
+      body: 'Token de acceso de vida corta (15 minutos) y token de sesion rotatorio en cookie HttpOnly inaccesible para JavaScript; si se reutiliza un token ya rotado se cierran todas las sesiones de esa cadena. Proteccion CSRF de doble envio en las operaciones que modifican datos. Segundo factor opcional (aplicacion autenticadora o codigo por correo) con el secreto TOTP cifrado con AES-256-GCM y codigos de recuperacion con hash. Bloqueo progresivo tras varios intentos fallidos (5, 15, 30 y 60 minutos) y limite de frecuencia de peticiones. Contraseñas con hash bcrypt. Aislamiento por condominio en cada peticion. Auditoria permanente de intentos de acceso.',
     },
     {
       title: '6. Derechos del usuario',
@@ -644,14 +677,32 @@ function PrivacyContent() {
     },
     {
       title: '7. Retencion de datos',
-      body: 'Datos activos mientras la cuenta este activa. Registros financieros minimo 7 anos. Logs entre 90 y 365 dias.',
+      items: [
+        'Cuotas, pagos, recibos y reportes financieros: minimo 7 anos',
+        'Comprobantes y evidencias de pago: mientras el pago exista, 7 anos tras su validacion',
+        'Intentos de inicio de sesion: hasta 12 meses',
+        'Sesiones rotadas o revocadas: hasta 30 dias despues de expirar',
+        'Telemetria de interaccion humana: maximo 30 dias',
+        'Codigos de recuperacion de MFA: mientras el segundo factor este activo',
+        'Bloqueos por intentos fallidos: 24 horas',
+        'Preferencia "mantener sesion iniciada": hasta 30 dias o hasta eliminarla',
+      ],
     },
     {
       title: '8. Cookies',
-      body: 'Usamos cookies esenciales para sesiones seguras y de analisis para mejorar el servicio. Puedes rechazarlas, aunque puede afectar funcionalidades en tiempo real.',
+      items: [
+        'elyx_rt (esencial): token de sesion rotatorio. HttpOnly, viaja solo a las rutas de autenticacion. Dura 7 dias si se marca "mantener sesion iniciada"; si no, termina al cerrar el navegador (maximo 12 horas)',
+        'elyx_csrf (esencial): token de doble envio para proteger operaciones que modifican datos. No contiene informacion del usuario. Dura 2 horas',
+        'elyx_recordar (esencial): recuerda si se marco "mantener sesion iniciada" en este dispositivo. Solo contiene 1 o 0. Dura 30 dias o se elimina al pulsar "no recordar este dispositivo"',
+        'No usamos cookies publicitarias ni de perfilado. Puedes rechazar las cookies en tu navegador, aunque la sesion y las notificaciones en tiempo real dejarian de funcionar',
+      ],
     },
     {
-      title: '9. Privacidad por rol',
+      title: '9. Verificacion de interaccion humana',
+      body: 'Para distinguir personas de automatizaciones medimos tipo de evento, marcas de tiempo, coordenadas del cursor y el indicador navigator.webdriver. No se registran los valores escritos en los campos, ni contraseñas, ni el contenido de los mensajes. Los datos se conservan un maximo de 30 dias, no se comparten con terceros y solo refuerzan la verificacion: un puntaje bajo no afecta el estado de cuenta, las cuotas ni los pagos.',
+    },
+    {
+      title: '10. Privacidad por rol',
       items: [
         'Condominos: acceso a su propia informacion financiera.',
         'Administradores: acceso agregado del condominio y gestion de usuarios.',
@@ -659,22 +710,22 @@ function PrivacyContent() {
       ],
     },
     {
-      title: '10. Cambios a esta politica',
-      body: 'Notificamos cambios significativos via la aplicacion o correo electronico.',
+      title: '11. Cambios a esta politica',
+      body: 'Notificamos cambios significativos via la aplicacion o correo electronico. Ultima actualizacion: Octubre 2026, con el segundo factor de autenticacion, la rotacion de sesiones, la proteccion CSRF, la verificacion de interaccion humana y la auditoria de accesos.',
     },
     {
-      title: '11. Responsabilidad internacional',
+      title: '12. Responsabilidad internacional',
       body: 'Los datos se almacenan y procesan en Mexico.',
     },
     {
-      title: '12. Contacto',
+      title: '13. Contacto',
       body: 'Correo: emiliano.aristarod@gmail.com. Soporte tecnico y reportes de seguridad al mismo correo.',
     },
   ];
 
   return (
     <div className="privacy-full-content">
-      <p><strong>Ultima actualizacion:</strong> Mayo 2026</p>
+      <p><strong>Ultima actualizacion:</strong> Octubre 2026</p>
 
       <p>En <strong>Elyx</strong>, nos comprometemos a proteger la privacidad de nuestros usuarios. Esta Politica de Privacidad explica como recopilamos, usamos, almacenamos y protegemos la informacion personal de quienes utilizan nuestra plataforma de gestion y administracion de condominios.</p>
 
