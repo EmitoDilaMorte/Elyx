@@ -65,8 +65,13 @@ donde cada parte ve exactamente lo que le corresponde:
 - El **administrador** valida pagos, emite cuotas, publica avisos, convoca votaciones
   —incluido el cambio de la cuota de mantenimiento— y lleva el control de gastos y
   reportes financieros.
-- El **superusuario** da de alta condominios completos con sus unidades y su primer
-  administrador.
+- El **superusuario** atiende la plataforma completa: consulta todos los condominios, ajusta
+  roles y confirma las suscripciones pendientes.
+
+El alta es **de autoservicio**: cualquier administrador registra su condominio en
+[elyx-app.com/crear-condominio](https://elyx-app.com/crear-condominio), confirma su correo,
+paga la suscripción y obtiene un enlace para que sus condóminos se sumen solos. No hace falta
+que nadie intervenga del lado de la plataforma.
 
 Todo el dinero que se mueve en el condominio queda trazado: cada pago tiene su
 comprobante, su validación, su recibo y su línea en el reporte financiero del periodo.
@@ -105,17 +110,17 @@ comprobante, su validación, su recibo y su línea en el reporte financiero del 
 
 | Módulo | Qué resuelve |
 |---|---|
-| **Alta de condominios** | Crear el condominio, sus unidades y el primer administrador en un solo flujo |
+| **Alta de condominios** | Crear el condominio, sus unidades y el primer administrador en un solo flujo; útil como respaldo del registro público |
 | **Administración multi-condominio** | Consultar y operar los condominios de la plataforma |
 | **Roles** | Ascender o degradar administradores; nunca deja un condominio sin ninguno |
 | **Suscripciones** | Confirmar pagos, ver historial y activar, vencer o cancelar una suscripción |
 
 ### Transversal
 
-- **Registro público ("Crea tu condominio")**: cualquier administrador puede registrar su
-  condominio, declarar el número de unidades y generar la cuota inicial. Se activa con
-  `REGISTRO_PUBLICO_ENABLED`; con la suscripción activa, el condominio nace
-  `PENDIENTE_PAGO` hasta que el pago se confirma.
+- **Registro público ("Crea tu condominio")**: el camino normal de alta. El administrador
+  registra su condominio, confirma su correo y paga; todo queda creado sin intervención
+  manual. Se controla con `REGISTRO_PUBLICO_ENABLED`. El detalle paso a paso está en la
+  sección **Usar Elyx**, más abajo.
 - **Invitación por enlace**: el administrador comparte un link; cada condómino envía su
   solicitud, confirma su correo y el administrador la aprueba. El enlace se desactiva
   solo al agotarse las unidades libres.
@@ -142,7 +147,10 @@ proteger. Estas son las medidas implementadas, no intenciones:
 | **CSRF** | Doble envío: cookie `elyx_csrf` + cabecera `X-CSRF-Token`, validada por un guard global en todos los métodos mutantes |
 | **Autorización por condominio** | Cada petición se contrasta contra las membresías del token; un condómino no puede leer otro condominio |
 | **Segundo CAPTCHA propio** | Operación matemática de un solo uso, obligatoria tras 3 fallos de login y siempre en la recuperación de contraseña |
-| **Turnstile** | Cloudflare Turnstile en el inicio de sesión y la recuperación de contraseña (`TURNSTILE_ENABLED`) |
+| **Turnstile** | Cloudflare Turnstile en el inicio de sesión, la recuperación de contraseña y el registro público (`TURNSTILE_ENABLED`) |
+| **Verificación de correo** | Los enlaces de registro e invitación se guardan **solo como hash SHA-256** y caducan (24 h y 30 días). Un enlace filtrado no revela el token de otro |
+| **Anti-abuso del registro** | 5 altas por cada 10 minutos por IP, bloqueo de dominios de correo desechables y respuesta genérica que no confirma si un correo ya tiene cuenta |
+| **Anti-enumeración** | El registro responde igual exista o no la cuenta, y el correo de verificación se envía en ambos casos: la propiedad del buzón se prueba sin filtrar qué correos están dados de alta |
 | **MFA** | TOTP compatible con Microsoft Authenticator o Google Authenticator (código QR + códigos de recuperación), con OTP de 6 dígitos por correo como alternativa |
 | **Bloqueo progresivo** | Tras varios intentos fallidos la cuenta se bloquea de forma escalonada (5 → 15 → 30 → 60 minutos) |
 | **Límite de peticiones** | `@nestjs/throttler` con almacenamiento en Redis |
@@ -173,12 +181,89 @@ Hay dos caminos. Ambos usan exactamente el mismo código.
 
 ### A) Usar Elyx alojado — [elyx-app.com](https://elyx-app.com)
 
-Si no quieres administrar servidores, bases de datos ni respaldos, te damos de alta tu
-condominio en la instancia oficial y te entregamos los accesos de administrador listos
-para usar.
+La instancia oficial es **de autoservicio**: registras tu condominio en la web, pagas la
+suscripción y quedas operando el mismo día. Si prefieres que lo hagamos nosotros, hay un
+camino alternativo al final de esta sección.
 
-**Cómo empezar:** escríbenos con el nombre de tu condominio, su dirección y el número de
-unidades. Nosotros hacemos el registro y te enviamos las credenciales del administrador.
+#### 1. Registra tu condominio
+
+Entra a **[elyx-app.com/crear-condominio](https://elyx-app.com/crear-condominio)** y completa
+el asistente de tres pasos. No hace falta instalar nada ni hablar con nadie.
+
+| Paso | Qué se pide | Por qué |
+|---|---|---|
+| **1. Condominio** | Nombre, dirección, número de unidades, prefijo de las unidades (`Depto `, `Casa `, `Local `) y tipo | Con eso se generan las fichas de todas las unidades y se calcula la cuota |
+| **2. Unidades y cuota** | Monto de la cuota, día límite de pago y recargo por día de atraso | Se usa para emitir el primer periodo en cuanto confirmes tu correo |
+| **3. Tu cuenta** | Nombre, apellidos, correo, teléfono y contraseña | Serás el primer administrador del condominio |
+
+Al terminar, Elyx te envía un **correo de verificación con un enlace válido 24 horas**. El
+condominio aún **no existe**: se crea justo cuando abres ese enlace. Ese paso prueba que el
+buzón es tuyo, así nadie puede registrar un condominio a nombre de un correo ajeno.
+
+> **Cómo se nombran las unidades:** el prefijo se respeta tal cual, incluido el espacio final.
+> Con `Depto ` y 20 unidades obtienes `Depto 1` … `Depto 20`. El nombre de las unidades se
+> puede cambiar después, pero conviene definirlo bien desde el inicio.
+
+**Al confirmar el correo, en una sola transacción se crea:**
+
+- el condominio, en estado `PENDIENTE_PAGO` (o `ACTIVO` si la instancia no cobra suscripción);
+- todas las unidades con su clave;
+- tu usuario administrador y tu membresía;
+- la cuota del primer periodo para cada unidad;
+- la suscripción pendiente, con su referencia de pago.
+
+Después entras con el correo y la contraseña que elegiste, y el panel te muestra el estado de
+tu suscripción con el desglose de la cuota.
+
+#### 2. Paga la suscripción y activa el condominio
+
+Con la suscripción activa en la instancia, el condominio nace **pendiente de pago**: puedes
+entrar y ver el panel, pero no puedes generar invitaciones ni dar de alta condóminos hasta
+regularizarlo. La operación diaria no se bloquea, porque el impago es del administrador y no
+de los condóminos. El cobro se hace **dentro de la plataforma**, sin salir a otra pestaña:
+
+1. Captura tus **datos fiscales** (RFC, razón social, régimen fiscal y código postal). Se
+   piden antes del primer pago porque migrarlos después, con clientes activos, cuesta mucho más.
+2. Pulsa **Continuar al pago**. Elyx muestra el desglose completo: cuota base, costo por unidad,
+   ajuste a la cuota mínima si aplica, subtotal, IVA y total.
+3. Paga con **tarjeta de débito, crédito o American Express**, o con
+   [Stripe Link](https://stripe.com/mx/payments/link) si ya guardaste tus datos.
+4. El pago lo confirma Stripe; el condominio pasa a **activo** en segundos y queda registrado
+   el comprobante con su periodo.
+
+> Si el pago no se confirma al instante (por ejemplo, porque el webhook no llegó), una
+> **reconciliación diaria** consulta el estado real en Stripe y corrige la suscripción. No
+> tienes que escribirnos para que se active.
+
+#### 3. Suma a tus condóminos con un enlace
+
+En **Invitaciones**, el administrador genera un enlace y lo comparte por WhatsApp, correo o
+donde prefiera. Cada condómino:
+
+1. abre el enlace y ve el nombre del condominio y **cuántas unidades libres quedan**;
+2. elige su unidad, escribe sus datos, define su contraseña y confirma su correo;
+3. espera la aprobación del administrador.
+
+El administrador revisa la solicitud y la **aprueba o rechaza**. Al aprobarla, el condómino
+entra con la contraseña que eligió y ya tiene su estado de cuenta con la cuota del periodo.
+
+Detalles que conviene saber:
+
+- El **cupo del enlace es igual al número de unidades libres**. Al reclamar la última, el enlace
+  se desactiva solo y avisa al administrador.
+- Solo hay **un enlace activo a la vez**: si lo regeneras, el anterior queda revocado.
+- Si el correo ya tiene cuenta en Elyx, no se le crea otra: se le suma el condominio a la
+  misma cuenta.
+- El enlace caduca a los `INVITACION_EXPIRACION_DIAS` días (30 por defecto).
+
+#### 4. Alternativa: nosotros lo hacemos por ti
+
+Si no quieres pasar por el asistente, escríbenos con el nombre de tu condominio, su dirección
+y el número de unidades. Te lo dejamos creado y te enviamos las credenciales.
+
+**Contacto:** [contacto@elyx-app.com](mailto:contacto@elyx-app.com)
+
+#### 5. Costo
 
 **Tarifa mensual** (pesos mexicanos, MXN): cuota base más costo por unidad, con piso mensual.
 El IVA se muestra aparte porque se entera al SAT: **no es ingreso de Elyx**.
@@ -193,23 +278,19 @@ El IVA se muestra aparte porque se entera al SAT: **no es ingreso de Elyx**.
 La fórmula es **$200 de cuota base + $7 por unidad**, con un piso de **$250** al mes (para que
 un condominio pequeño no pague menos que eso). Con 60 unidades serían $620 + IVA = $719.20.
 
-El cobro se hace **dentro de la plataforma**, con tarjeta de débito, crédito o American Express,
-o con [Stripe Link](https://stripe.com/mx/payments/link) si el administrador ya guardó sus datos.
-Desde el panel se ve el estado, el desglose de la cuota y el total pagado; las facturas y el
-cambio de tarjeta se gestionan en el portal de cliente de Stripe. Puedes cancelar cuando quieras.
-
-¿Tu condominio tiene otro tamaño? Escríbenos y te preparamos una cotización a la medida.
-
-**Contacto:** [contacto@elyx-app.com](mailto:contacto@elyx-app.com)
+Desde el panel se ve el estado de la suscripción, el desglose de la cuota y el total pagado;
+las facturas y el cambio de tarjeta se gestionan en el portal de cliente de Stripe. Puedes
+cancelar cuando quieras y el condominio sigue operando hasta el final del periodo pagado.
 
 <!--
   TODO: sustituye contacto@elyx-app.com por tu correo real y, si quieres,
   añade aquí tu teléfono o un enlace de WhatsApp.
 -->
 
-> ¿Prefieres verlo antes de decidir? La instancia oficial está en
-> **https://elyx-app.com** — podemos crear un condominio de demostración con datos de
-> ejemplo para que lo recorras con calma.
+> ¿Prefieres verlo antes de decidir? Entra a **https://elyx-app.com/crear-condominio** y
+> regístrate: verás el asistente completo y el panel con tu condominio real. Si prefieres que
+> te preparemos una demostración con datos de ejemplo, escríbenos a
+> contacto@elyx-app.com.
 
 ### B) Autoalojarlo tú
 
@@ -578,6 +659,17 @@ curl -i -X POST https://api.tu-dominio.com/api/auth/login \
 
 ### Rutas de la aplicación
 
+**Públicas** (no requieren sesión):
+
+| Ruta | Vista |
+|---|---|
+| `/crear-condominio` | Asistente de registro de un condominio nuevo |
+| `/crear-condominio/verificar` | Confirmación del correo: aquí se crea el condominio |
+| `/invitacion/:token` | Alta de un condómino mediante el enlace del administrador |
+| `/invitacion/confirmar` | Confirmación del correo de la solicitud |
+
+**Privadas** (requieren sesión):
+
 | Ruta | Vista |
 |---|---|
 | `/inicio` | Panel (condómino o administrador, según el rol) |
@@ -589,6 +681,9 @@ curl -i -X POST https://api.tu-dominio.com/api/auth/login \
 | `/reportes` | Reportes del condómino |
 | `/finanzas` | Gastos y reportes financieros |
 | `/solicitudes` | Altas, bajas y cambios |
+| `/invitaciones` | Enlace de invitación y solicitudes pendientes (administrador) |
+| `/suscripcion` | Estado de la suscripción y datos fiscales (administrador) |
+| `/nuevo-condominio` | Alta de otro condominio desde una sesión ya iniciada |
 | `/perfil` | Datos personales, contraseña y MFA |
 
 ### Tiempo real
@@ -610,12 +705,19 @@ Elyx/
 │   │   │   ├── common/     # auth, CSRF, guards, utilidades, MFA (TOTP)
 │   │   │   ├── database/   # migraciones SQL
 │   │   │   └── modules/    # auth, cuotas, pagos, avisos, votaciones, gastos, …
+│   │   │       ├── condominio-alta/   # alta compartida (registro, onboarding, invitaciones)
+│   │   │       ├── cupo/              # cupo de unidades y operatividad del condominio
+│   │   │       ├── registro/          # "Crea tu condominio" + verificación de correo
+│   │   │       ├── invitaciones/      # enlace, solicitudes y aprobación
+│   │   │       ├── suscripciones/     # cobro de la plataforma (MANUAL | STRIPE)
+│   │   │       └── membresias/        # cambio de rol con guard de último administrador
 │   │   └── uploads/        # comprobantes y evidencias (volumen persistente)
 │   └── frontend/           # SPA React + Vite
 │       ├── public/         # robots.txt, imágenes
 │       └── src/
-│           ├── components/ # lista paginada, CAPTCHA, MFA, navegación
+│           ├── components/ # lista paginada, CAPTCHA, MFA, checkout, paneles
 │           ├── pages/      # Login, Dashboard, Superusuario
+│           │   └── public/ # crear condominio, verificación, invitación
 │           ├── services/   # cliente de la API y telemetría
 │           └── types/
 ├── docs/
@@ -623,13 +725,21 @@ Elyx/
 │   ├── estructura-proyecto.md
 │   └── politica-privacidad.md
 ├── infra/postgres/init/    # esquema y datos de ejemplo
+├── scripts/                # datos de prueba
 ├── docker-compose.yml
+├── docker-compose-prod.yml
 └── .env.example
 ```
 
 ---
 
 ## Preguntas frecuentes
+
+**¿Cómo doy de alta mi condominio?**
+Entra a [elyx-app.com/crear-condominio](https://elyx-app.com/crear-condominio), completa el
+asistente de tres pasos y confirma el correo que te llega. El condominio, sus unidades, tu
+cuenta de administrador y la primera cuota se crean en ese momento. Después pagas la
+suscripción y generas el enlace para tus condóminos.
 
 **¿Necesito instalar algo en las computadoras de los condóminos?**
 No. Elyx funciona en el navegador, en escritorio y en móvil.
