@@ -61,13 +61,18 @@ type BackendVotacion = {
   idVotacion: number;
   idCondominio: number;
   pregunta: string;
-  tipo?: 'GENERAL' | 'CAMBIO_CUOTA';
+  tipo?: 'GENERAL' | 'CAMBIO_CUOTA' | 'CAMBIO_ROL';
   estado: 'ABIERTA' | 'CERRADA';
   fechaInicio: string;
   fechaFin: string;
   aFavor: number;
   enContra: number;
   totalVotos: number;
+  totalHabilitados?: number | null;
+  votosRequeridos?: number | null;
+  votosFaltantes?: number | null;
+  /** Booleano, no el sentido del voto: el sufragio ajeno no se expone. */
+  yaVoto?: boolean;
   cambioCuota?: {
     montoPropuesto: number;
     recargoPropuesto: number;
@@ -77,6 +82,30 @@ type BackendVotacion = {
     motivo: string | null;
     ejecutable: boolean;
   } | null;
+  cambioRol?: {
+    idUsuarioCondominioObjetivo: number;
+    nombreObjetivo: string;
+    rolPropuesto: 'ADMINISTRADOR' | 'CONDOMINO';
+    estadoPropuesta: 'PENDIENTE' | 'APROBADA' | 'RECHAZADA' | 'EJECUTADA';
+    motivo: string | null;
+    comentarioResolucion: string | null;
+    ejecutable: boolean;
+  } | null;
+};
+
+/** Miembro con derecho a voto: ocupa al menos una unidad activa. */
+export type ElectoradoMiembro = {
+  idUsuarioCondominio: number;
+  nombre: string;
+  correo: string;
+  rol: 'ADMINISTRADOR' | 'CONDOMINO';
+  unidades: string[];
+};
+
+export type ElectoradoResponse = {
+  habilitados: ElectoradoMiembro[];
+  totalHabilitados: number;
+  votosRequeridos: number;
 };
 
 type BackendPago = {
@@ -450,7 +479,21 @@ async function requestJson<T>(path: string, init?: RequestInit, permitirRefresh 
     throw new ApiError(response.status, `API ${response.status}: ${text || 'Error desconocido'}`);
   }
 
-  return (await response.json()) as T;
+  // NestJS responde 200 con cuerpo vacio cuando el handler devuelve null o
+  // undefined (por ejemplo `GET /suscripciones/mia` sin suscripcion).
+  // `response.json()` sobre un cuerpo vacio lanza "unexpected end of data".
+  const cuerpo = await response.text();
+  if (!cuerpo.trim()) {
+    return null as T;
+  }
+
+  try {
+    return JSON.parse(cuerpo) as T;
+  } catch {
+    // Respuesta no-JSON con estado 2xx: se trata como ausencia de datos en
+    // lugar de romper la vista con un error de parseo.
+    return null as T;
+  }
 }
 
 function formatDateLabel(isoDate: string) {
@@ -469,6 +512,25 @@ function mapPagoStatus(status: BackendPago['estado']): PagoStatus {
     return 'RECHAZADO';
   }
   return 'PENDIENTE';
+}
+
+/** Normaliza una votacion del backend al modelo de la app (una sola vez). */
+function mapVotacion(item: BackendVotacion) {
+  return {
+    id: item.idVotacion,
+    idCondominio: item.idCondominio,
+    pregunta: item.pregunta,
+    tipo: item.tipo ?? 'GENERAL',
+    cambioCuota: item.cambioCuota ?? null,
+    cambioRol: item.cambioRol ?? null,
+    totalHabilitados: item.totalHabilitados ?? null,
+    votosRequeridos: item.votosRequeridos ?? null,
+    votosFaltantes: item.votosFaltantes ?? null,
+    yaVoto: item.yaVoto === true,
+    aFavor: item.aFavor,
+    enContra: item.enContra,
+    votosPorUsuario: {},
+  };
 }
 
 export const backendApi = {
@@ -568,10 +630,15 @@ export const backendApi = {
     });
   },
 
-  async captchaMatematico(scope: string): Promise<{ challengeId: string; question: string; expiresIn: number }> {
-    return requestJson<{ challengeId: string; question: string; expiresIn: number }>(
-      `/captcha/challenge?scope=${encodeURIComponent(scope)}`,
-    );
+  async captchaMatematico(
+    scope: string,
+  ): Promise<{ habilitado: boolean; challengeId: string; question: string; expiresIn: number }> {
+    return requestJson<{
+      habilitado: boolean;
+      challengeId: string;
+      question: string;
+      expiresIn: number;
+    }>(`/captcha/challenge?scope=${encodeURIComponent(scope)}`);
   },
 
   async updatePerfilCorreo(correo: string) {
@@ -718,19 +785,24 @@ export const backendApi = {
     };
   },
 
-  async listVotaciones(idCondominio: number) {
-    const data = await requestJson<BackendVotacion[]>(`/votaciones?idCondominio=${idCondominio}&estado=ABIERTA`);
+  async listVotaciones(idCondominio: number, idUsuarioCondominio?: number | null) {
+    // `idUsuarioCondominio` solo sirve para que el backend marque `yaVoto` y
+    // los botones no reaparezcan al recargar la pagina.
+    const membresia =
+      typeof idUsuarioCondominio === 'number' && idUsuarioCondominio > 0
+        ? `&idUsuarioCondominio=${idUsuarioCondominio}`
+        : '';
+    const data = await requestJson<BackendVotacion[]>(
+      `/votaciones?idCondominio=${idCondominio}&estado=ABIERTA${membresia}`,
+    );
+    return data.map(mapVotacion);
+  },
 
-    return data.map((item) => ({
-      id: item.idVotacion,
-      idCondominio: item.idCondominio,
-      pregunta: item.pregunta,
-      tipo: item.tipo ?? 'GENERAL',
-      cambioCuota: item.cambioCuota ?? null,
-      aFavor: item.aFavor,
-      enContra: item.enContra,
-      votosPorUsuario: {},
-    }));
+  /** Miembros con derecho a voto y cuantos votos hacen falta. */
+  async listElectorado(idCondominio: number): Promise<ElectoradoResponse> {
+    return requestJson<ElectoradoResponse>(
+      `/votaciones/electorado?idCondominio=${idCondominio}`,
+    );
   },
 
   async createVotacion(input: {
@@ -743,16 +815,7 @@ export const backendApi = {
       body: JSON.stringify(input),
     });
 
-    return {
-      id: item.idVotacion,
-      idCondominio: item.idCondominio,
-      pregunta: item.pregunta,
-      tipo: item.tipo ?? 'GENERAL',
-      cambioCuota: item.cambioCuota ?? null,
-      aFavor: item.aFavor,
-      enContra: item.enContra,
-      votosPorUsuario: {},
-    };
+    return mapVotacion(item);
   },
 
   async createVotacionCambioCuota(input: {
@@ -768,16 +831,23 @@ export const backendApi = {
       body: JSON.stringify(input),
     });
 
-    return {
-      id: item.idVotacion,
-      idCondominio: item.idCondominio,
-      pregunta: item.pregunta,
-      tipo: item.tipo ?? 'CAMBIO_CUOTA',
-      cambioCuota: item.cambioCuota ?? null,
-      aFavor: item.aFavor,
-      enContra: item.enContra,
-      votosPorUsuario: {},
-    };
+    return mapVotacion(item);
+  },
+
+  async createVotacionCambioRol(input: {
+    idCondominio: number;
+    idUsuarioCondominioAdmin: number;
+    idUsuarioCondominioObjetivo: number;
+    rolPropuesto: 'ADMINISTRADOR' | 'CONDOMINO';
+    motivo: string;
+    fechaFin?: string;
+  }) {
+    const item = await requestJson<BackendVotacion>('/votaciones/cambio-rol', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+
+    return mapVotacion(item);
   },
 
   async votar(input: {
@@ -796,37 +866,21 @@ export const backendApi = {
       }),
     });
 
-    return {
-      id: item.idVotacion,
-      idCondominio: item.idCondominio,
-      pregunta: item.pregunta,
-      tipo: item.tipo ?? 'GENERAL',
-      cambioCuota: item.cambioCuota ?? null,
-      aFavor: item.aFavor,
-      enContra: item.enContra,
-      votosPorUsuario: {},
-    };
+    return mapVotacion(item);
   },
 
   async cerrarVotacion(input: { idCondominio: number; idVotacion: number }) {
-    return requestJson<BackendVotacion>('/votaciones/cerrar', {
+    const item = await requestJson<BackendVotacion>('/votaciones/cerrar', {
       method: 'PATCH',
       body: JSON.stringify(input),
     });
+
+    return mapVotacion(item);
   },
 
   async listCambiosCuota(idCondominio: number) {
     const data = await requestJson<BackendVotacion[]>(`/votaciones/cambios-cuota?idCondominio=${idCondominio}`);
-    return data.map((item) => ({
-      id: item.idVotacion,
-      idCondominio: item.idCondominio,
-      pregunta: item.pregunta,
-      tipo: item.tipo ?? 'CAMBIO_CUOTA',
-      cambioCuota: item.cambioCuota ?? null,
-      aFavor: item.aFavor,
-      enContra: item.enContra,
-      votosPorUsuario: {},
-    }));
+    return data.map(mapVotacion);
   },
 
   async ejecutarCambioCuota(input: {
@@ -1406,3 +1460,6 @@ export const backendApi = {
     });
   },
 };
+/** Helper compartido para endpoints nuevos: aplica CSRF y refresh automatico. */
+export { requestJson as apiRequest };
+

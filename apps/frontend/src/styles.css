@@ -1451,3 +1451,416 @@ th {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* Paginas publicas: registro de condominio e invitaciones            */
+/* ------------------------------------------------------------------ */
+
+.public-shell-wide {
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 780px;
+}
+
+.public-card {
+  width: 100%;
+}
+
+.public-footer {
+  margin-top: 1rem;
+  text-align: center;
+  font-size: 0.9rem;
+  color: #6f6353;
+}
+
+.public-footer a {
+  color: #0a8a7c;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.public-note {
+  display: block;
+  padding: 0.85rem 1rem;
+  border-radius: 12px;
+  background: rgba(255, 236, 214, 0.6);
+  border: 1px solid rgba(226, 176, 116, 0.5);
+  margin: 0.4rem 0 0.9rem;
+}
+
+.public-note strong {
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.public-note p {
+  margin: 0.35rem 0 0;
+}
+
+.public-captcha {
+  margin: 0.6rem 0 0.9rem;
+}
+
+.public-resumen {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1rem;
+}
+
+.public-resumen li {
+  padding: 0.5rem 0;
+  border-bottom: 1px dashed rgba(160, 140, 110, 0.35);
+}
+
+.public-resumen li:last-child {
+  border-bottom: none;
+}
+
+.form-grid {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.wizard-steps {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.1rem;
+}
+
+.wizard-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.4rem 0.8rem;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(180, 160, 130, 0.4);
+  color: #6f6353;
+}
+
+.wizard-step span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 999px;
+  background: rgba(160, 140, 110, 0.22);
+  font-weight: 700;
+  font-size: 0.75rem;
+}
+
+.wizard-step.activo {
+  border-color: #0a8a7c;
+  color: #0a5f57;
+  font-weight: 600;
+}
+
+.wizard-step.activo span {
+  background: #0a8a7c;
+  color: #fff;
+}
+
+.wizard-step.completado {
+  border-color: rgba(10, 138, 124, 0.5);
+  color: #0a5f57;
+}
+
+.wizard-step.completado span {
+  background: rgba(10, 138, 124, 0.6);
+  color: #fff;
+}
+
+/* Estados adicionales de los chips (suscripcion y solicitudes de alta) */
+.status-activa,
+.status-aprobada,
+.status-verificada {
+  background: rgba(10, 138, 124, 0.16);
+  color: #0a5f57;
+  border-color: rgba(10, 138, 124, 0.4);
+}
+
+.status-vencida,
+.status-cancelada,
+.status-rechazada,
+.status-expirada {
+  background: rgba(190, 70, 60, 0.14);
+  color: #9c3b31;
+  border-color: rgba(190, 70, 60, 0.35);
+}
+
+.status-pendiente {
+  background: rgba(226, 176, 116, 0.22);
+  color: #8a5a1e;
+}
+
+@media (max-width: 640px) {
+  .public-shell-wide {
+    max-width: 100%;
+  }
+
+  .wizard-steps {
+    gap: 0.35rem;
+  }
+
+  .wizard-step {
+    font-size: 0.76rem;
+  }
+}
+
+.registro-link {
+  margin: 1rem 0 0;
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+.registro-link a {
+  color: #0a8a7c;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.registro-link a:hover {
+  text-decoration: underline;
+}
+
+/* Los formularios del registro publico envuelven el input dentro del label:
+   ahi el label debe ocupar su propia linea y el control el ancho completo. */
+.form-grid .field-label {
+  display: block;
+  margin-bottom: 0.75rem;
+}
+
+.form-grid .field-label > input,
+.form-grid .field-label > select,
+.form-grid .field-label > textarea {
+  display: block;
+  width: 100%;
+  margin-top: 0.35rem;
+  box-sizing: border-box;
+}
+
+.form-grid .field-label > small {
+  display: block;
+  margin-top: 0.3rem;
+  font-weight: 400;
+}
+
+/* ------------------------------------------------------------------ */
+/* Bloques de datos en paneles (suscripcion, invitaciones)            */
+/* Etiqueta arriba, valor abajo: nunca en la misma linea.             */
+/* ------------------------------------------------------------------ */
+
+.datos-fila {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: 0.6rem;
+  margin: 0.4rem 0 1rem;
+}
+
+.datos-fila .dato {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.7rem 0.85rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(180, 160, 130, 0.35);
+}
+
+.dato-etiqueta {
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--ink-soft);
+  font-weight: 600;
+}
+
+.dato-valor {
+  font-size: 1.2rem;
+  font-weight: 800;
+  color: var(--brand-strong);
+  line-height: 1.2;
+}
+
+.datos-lista {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1rem;
+}
+
+.datos-lista li {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 0.55rem 0;
+  border-bottom: 1px dashed rgba(160, 140, 110, 0.35);
+}
+
+.datos-lista li:last-child {
+  border-bottom: none;
+}
+
+.datos-lista li > span {
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
+.datos-lista li > strong {
+  font-weight: 700;
+  text-align: right;
+  word-break: break-word;
+}
+
+.datos-tarjeta {
+  margin-top: 0.9rem;
+  padding: 0.9rem 1rem;
+  border-radius: 14px;
+  background: rgba(255, 236, 214, 0.55);
+  border: 1px solid rgba(226, 176, 116, 0.5);
+}
+
+.dato-referencia {
+  display: block;
+  margin-top: 0.35rem;
+  font-size: 1.15rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--brand-strong);
+  word-break: break-all;
+}
+
+/* Bloque plegable: mantiene la funcion sin competir con el flujo principal. */
+.panel-plegable {
+  border-radius: 14px;
+  border: 1px solid rgba(180, 160, 130, 0.35);
+  background: rgba(255, 255, 255, 0.5);
+  padding: 0.35rem 0.85rem 0.85rem;
+  margin-bottom: 0.85rem;
+}
+
+.panel-plegable > summary {
+  cursor: pointer;
+  font-weight: 700;
+  padding: 0.6rem 0;
+  list-style: none;
+}
+
+.panel-plegable > summary::-webkit-details-marker {
+  display: none;
+}
+
+.panel-plegable > summary::before {
+  content: '+';
+  display: inline-block;
+  width: 1.1rem;
+  font-weight: 800;
+  color: var(--brand-strong);
+}
+
+.panel-plegable[open] > summary::before {
+  content: '\2212';
+}
+
+@media (max-width: 640px) {
+  .datos-fila {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .datos-lista li {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.2rem;
+  }
+
+  .datos-lista li > strong {
+    text-align: left;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Suscripcion: desglose de precio, checkout embebido y datos fiscales*/
+/* ------------------------------------------------------------------ */
+
+.desglose-lista {
+  list-style: none;
+  padding: 0;
+  margin: 0.6rem 0 0;
+}
+
+.desglose-lista li {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 0.4rem 0;
+  font-size: 0.92rem;
+}
+
+.desglose-lista li > span {
+  color: var(--ink-soft);
+}
+
+.desglose-lista li > strong {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.desglose-lista .desglose-subtotal {
+  border-top: 1px dashed rgba(160, 140, 110, 0.45);
+  margin-top: 0.25rem;
+  padding-top: 0.6rem;
+}
+
+.desglose-lista .desglose-total {
+  border-top: 2px solid rgba(10, 138, 124, 0.35);
+  margin-top: 0.25rem;
+  padding-top: 0.6rem;
+  font-size: 1.05rem;
+}
+
+.desglose-lista .desglose-total > strong {
+  color: var(--brand-strong);
+  font-size: 1.25rem;
+}
+
+/* El contenedor del iframe de Stripe necesita ancho completo y un minimo. */
+.checkout-embebido {
+  margin-top: 1rem;
+}
+
+.checkout-embebido #checkout-embebido {
+  width: 100%;
+  min-height: 320px;
+}
+
+.checkout-embebido #checkout-embebido iframe {
+  width: 100% !important;
+  min-height: 320px;
+}
+
+.datos-fiscales h4 {
+  margin: 0;
+}
+
+.datos-fiscales .form-grid {
+  margin-top: 0.85rem;
+}
+
+.datos-fiscales .btn-row {
+  margin-top: 0.85rem;
+}
+
+@media (max-width: 640px) {
+  .desglose-lista li {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.15rem;
+  }
+
+  .desglose-lista li > strong {
+    white-space: normal;
+  }
+}

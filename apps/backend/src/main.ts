@@ -75,7 +75,9 @@ function buildCorsOptions(): CorsOptions {
 }
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // `rawBody` preserva el cuerpo sin parsear: Stripe firma los bytes exactos
+  // del payload y `JSON.stringify(req.body)` NO reproduce la firma.
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true });
   app.setGlobalPrefix('api');
 
   // Necesario para que `req.ip` sea la IP real del visitante cuando la app

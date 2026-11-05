@@ -98,6 +98,8 @@ comprobante, su validación, su recibo y su línea en el reporte financiero del 
 | **Gastos** | Registro de gastos por categoría, proveedor y comprobante |
 | **Reportes financieros** | Ingresos, egresos y adeudos por periodo, con exportación a **PDF** y **Excel** |
 | **Altas, bajas y cambios** | Administrar unidades, ocupantes y membresías del condominio |
+| **Invitaciones** | Generar un enlace para que los condóminos se registren, con cupo igual a las unidades libres, y aprobar cada solicitud |
+| **Suscripción** | Estado de la suscripción a Elyx, desglose de la cuota, pago con tarjeta o Link y datos fiscales (solo si esta instancia la cobra) |
 
 ### Para el superusuario
 
@@ -105,9 +107,18 @@ comprobante, su validación, su recibo y su línea en el reporte financiero del 
 |---|---|
 | **Alta de condominios** | Crear el condominio, sus unidades y el primer administrador en un solo flujo |
 | **Administración multi-condominio** | Consultar y operar los condominios de la plataforma |
+| **Roles** | Ascender o degradar administradores; nunca deja un condominio sin ninguno |
+| **Suscripciones** | Confirmar pagos, ver historial y activar, vencer o cancelar una suscripción |
 
 ### Transversal
 
+- **Registro público ("Crea tu condominio")**: cualquier administrador puede registrar su
+  condominio, declarar el número de unidades y generar la cuota inicial. Se activa con
+  `REGISTRO_PUBLICO_ENABLED`; con la suscripción activa, el condominio nace
+  `PENDIENTE_PAGO` hasta que el pago se confirma.
+- **Invitación por enlace**: el administrador comparte un link; cada condómino envía su
+  solicitud, confirma su correo y el administrador la aprueba. El enlace se desactiva
+  solo al agotarse las unidades libres.
 - **Actualizaciones en tiempo real** por WebSocket: cuando cambia un pago o una cuota,
   la vista se refresca sin recargar la página.
 - **Multi-condominio**: un usuario con membresías en varios condominios alterna entre
@@ -169,13 +180,23 @@ para usar.
 **Cómo empezar:** escríbenos con el nombre de tu condominio, su dirección y el número de
 unidades. Nosotros hacemos el registro y te enviamos las credenciales del administrador.
 
-**Tarifa mensual** (pesos mexicanos, MXN):
+**Tarifa mensual** (pesos mexicanos, MXN): cuota base más costo por unidad, con piso mensual.
+El IVA se muestra aparte porque se entera al SAT: **no es ingreso de Elyx**.
 
-| Unidades | Tarifa mensual |
-|---:|:---:|
-| 30 | **$450** |
-| 40 | **$480** |
-| 50 | **$500** |
+| Unidades | Cuota mensual (antes de IVA) | IVA 16% | Total a pagar |
+|---:|---:|---:|---:|
+| 10 | $270.00 | $43.20 | **$313.20** |
+| 30 | $410.00 | $65.60 | **$475.60** |
+| 40 | $480.00 | $76.80 | **$556.80** |
+| 50 | $550.00 | $88.00 | **$638.00** |
+
+La fórmula es **$200 de cuota base + $7 por unidad**, con un piso de **$250** al mes (para que
+un condominio pequeño no pague menos que eso). Con 60 unidades serían $620 + IVA = $719.20.
+
+El cobro se hace **dentro de la plataforma**, con tarjeta de débito, crédito o American Express,
+o con [Stripe Link](https://stripe.com/mx/payments/link) si el administrador ya guardó sus datos.
+Desde el panel se ve el estado, el desglose de la cuota y el total pagado; las facturas y el
+cambio de tarjeta se gestionan en el portal de cliente de Stripe. Puedes cancelar cuando quieras.
 
 ¿Tu condominio tiene otro tamaño? Escríbenos y te preparamos una cotización a la medida.
 
@@ -342,6 +363,75 @@ Todas las variables viven en `.env`. Las más relevantes:
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | Envío por SMTP (recuperación de contraseña, OTP) |
 | `RESEND_API_KEY` | Alternativa a SMTP vía Resend |
 
+### Registro público e invitaciones
+
+| Variable | Por defecto | Para qué |
+|---|---|---|
+| `REGISTRO_PUBLICO_ENABLED` | `true` | `false` oculta "Crea tu condominio": solo el superusuario crea condominios |
+| `REGISTRO_EXPIRACION_HORAS` | `24` | Vigencia del enlace de verificación de correo |
+| `INVITACION_EXPIRACION_DIAS` | `30` | Vigencia del enlace de invitación de condóminos |
+| `PUBLIC_APP_URL` | `http://localhost:5173` | Base de los enlaces enviados por correo |
+
+### Suscripción a Elyx (opcional)
+
+Al ser un proyecto open source, el cobro de suscripción está **desactivado por defecto**.
+Con `SUSCRIPCION_ENABLED=false` el producto funciona completo y sin límites comerciales.
+
+| Variable | Por defecto | Para qué |
+|---|---|---|
+| `SUSCRIPCION_ENABLED` | `false` | `true` exige suscripción activa para invitar y dar de alta |
+| `SUSCRIPCION_PROVIDER` | `MANUAL` | `MANUAL` (transferencia), `STRIPE` (checkout) o `NULL` |
+| `SUSCRIPCION_PRECIO_BASE` | `200` | Cuota base mensual **neta** (MXN) |
+| `SUSCRIPCION_PRECIO_UNIDAD` | `7` | Costo mensual **neto** por unidad contratada |
+| `SUSCRIPCION_PRECIO_PISO` | `250` | Piso mensual **neto**: evita precios irrisorios en condominios pequeños |
+| `SUSCRIPCION_IVA_PORCENTAJE` | `16` | IVA que se **desglosa** sobre el neto (no es ingreso de Elyx) |
+| `SUSCRIPCION_DIAS_GRACIA` | `7` | Días antes de suspender tras un cobro fallido. Suspender bloquea altas e invitaciones, no la operación diaria |
+| `SUSCRIPCION_DIAS_PRUEBA` | `0` | `0` = pago inmediato, sin periodo de prueba |
+| `SUSCRIPCION_DATOS_PAGO` | vacío | Instrucciones de transferencia (solo con `MANUAL`) |
+| `SUSCRIPCION_PURGA_DIAS` | `30` | Días antes de borrar un condominio que nunca pagó |
+
+**Precio:** `max(piso, base + (unidades × costo por unidad))`, todo **neto**. El IVA se suma
+después y se muestra desglosado.
+
+| Unidades | Neto | IVA 16% | Total cobrado |
+|---|---|---|---|
+| 10 | $270 | $43.20 | $313.20 |
+| 30 | $410 | $65.60 | $475.60 |
+| 40 | $480 | $76.80 | $556.80 |
+| 50 | $550 | $88.00 | $638.00 |
+
+> La prueba del producto es la **demo con datos de ejemplo** (`02_seed.sql`), no un periodo
+> de prueba.
+
+#### Cobro con Stripe (opcional)
+
+Con `SUSCRIPCION_PROVIDER=STRIPE` el administrador paga con un checkout **embebido** dentro de
+Elyx. [Stripe Link](https://stripe.com/mx/payments/link) aparece automáticamente como método de
+pago: es una **cartera**, no una pasarela aparte, y se activa en el Dashboard
+(`Settings → Payment methods`), sin código.
+
+| Variable | Para qué |
+|---|---|
+| `STRIPE_SECRET_KEY` | Clave secreta (`sk_test_…` en pruebas, `sk_live_…` en producción) |
+| `STRIPE_WEBHOOK_SECRET` | Secreto del endpoint de webhooks (`whsec_…`). Sin él los webhooks se rechazan |
+| `STRIPE_PRICE_BASE` / `STRIPE_PRICE_UNIDAD` | Price IDs recurrentes (`price_…`). Opcionales: sin ellos se usa `price_data` dinámico |
+| `STRIPE_TAX_RATE_ID` | Tax Rate del IVA (`txr_…`). Si falta, se crea/reutiliza uno al vuelo |
+| `VITE_STRIPE_PUBLISHABLE_KEY` | Clave publicable (`pk_test_…`) que usa el frontend |
+
+**Webhook:** apunta Stripe a `https://tu-dominio/api/webhooks/stripe`. En local:
+
+```bash
+stripe listen --forward-to localhost:3000/api/webhooks/stripe
+```
+
+La CLI imprime el `whsec_…` que debes poner en `STRIPE_WEBHOOK_SECRET`.
+
+> **Nota sobre Link:** es un método con tarjeta. SPEI y OXXO no sirven para cobros
+> recurrentes, por eso el proveedor `MANUAL` sigue disponible como alternativa.
+
+> **Facturación (CFDI):** fuera del alcance actual. Elyx captura RFC, razón social, régimen
+> fiscal y CP antes del checkout para poder emitir facturas más adelante sin migrar datos.
+
 > Sin correo configurado, los mensajes se escriben en el log del backend: útil en
 > desarrollo, insuficiente en producción.
 
@@ -436,7 +526,43 @@ y validan la pertenencia al condominio solicitado.
 | `PATCH` | `/api/condominos/solicitudes-cambio/ejecutar` | Aplica una solicitud aprobada |
 | `POST` | `/api/usuarios/onboarding-inicial` | Alta de condominio, unidades y primer administrador |
 | `GET` | `/api/usuarios/super/condominios` | Condominios de la plataforma (superusuario) |
+| `GET` | `/api/usuarios/super/condominios/:id/miembros` | Membresías con rol y unidades ocupadas |
+| `PATCH` | `/api/usuarios/super/condominios/:id/miembros/:idMembresia/rol` | Asciende o degrada a un administrador |
 | `PATCH` | `/api/usuarios/super/condominios/:id/estado` | Activa o suspende un condominio |
+
+### Registro público e invitaciones
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| `GET` | `/api/registro/disponible` | Indica si esta instancia acepta altas públicas |
+| `POST` | `/api/registro/condominio` | Solicita el alta de un condominio (envía verificación por correo) |
+| `GET` | `/api/registro/verificar?token=` | Confirma el correo y crea el condominio, unidades y cuota inicial |
+| `POST` | `/api/registro/reenviar-verificacion` | Reenvía el enlace de verificación |
+| `GET` | `/api/invitaciones` | Estado del enlace y cupo (administrador) |
+| `POST` | `/api/invitaciones` | Genera o regenera el enlace de invitación |
+| `PATCH` | `/api/invitaciones/revocar` | Desactiva el enlace vigente |
+| `GET` | `/api/invitaciones/solicitudes` | Solicitudes de alta recibidas |
+| `PATCH` | `/api/invitaciones/solicitudes/aprobar` | Aprueba una solicitud verificada |
+| `PATCH` | `/api/invitaciones/solicitudes/rechazar` | Rechaza una solicitud |
+| `GET` | `/api/invitaciones/publica/:token` | Datos públicos del enlace y unidades libres |
+| `POST` | `/api/invitaciones/publica/:token/solicitud` | Envía una solicitud de alta |
+| `POST` | `/api/invitaciones/publica/confirmar` | Confirma el correo de la solicitud |
+
+### Suscripción (opcional)
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| `GET` | `/api/suscripciones/mia` | Estado de la suscripción del condominio (administrador) |
+| `POST` | `/api/suscripciones/mia/cobro` | Genera el cobro: `clientSecret` (embebido) o referencia (manual) |
+| `POST` | `/api/suscripciones/mia/portal` | Abre el portal de cliente de Stripe (tarjeta, facturas, cancelar) |
+| `GET` | `/api/suscripciones/mia/datos-fiscales` | RFC, razón social, régimen fiscal y CP capturados |
+| `PATCH` | `/api/suscripciones/mia/datos-fiscales` | Captura los datos fiscales para el futuro CFDI |
+| `PATCH` | `/api/suscripciones/mia/unidades` | Ajusta la cantidad facturada en Stripe con prorrateo |
+| `GET` | `/api/suscripciones` | Todas las suscripciones (superusuario) |
+| `GET` | `/api/suscripciones/:id/pagos` | Historial de pagos de la suscripción |
+| `PATCH` | `/api/suscripciones/:id/confirmar-pago` | Confirma manualmente un pago (solo proveedor `MANUAL`) |
+| `PATCH` | `/api/suscripciones/:id/estado` | Activa, vence o cancela la suscripción |
+| `POST` | `/api/webhooks/stripe` | Webhook de Stripe (público, autenticado por firma) |
 | `POST` | `/api/behavior` | Telemetría de comportamiento (público, con límite de peticiones) |
 | `GET` | `/api/health` | Estado del servicio |
 
@@ -520,9 +646,14 @@ MFA activo, se te pedirá el segundo factor al entrar.
 En el volumen de archivos del backend, y sólo son accesibles para el condómino dueño del
 pago, el administrador de su condominio y el superusuario.
 
-**¿Elyx cobra comisión por los pagos?**
-No. Elyx registra y valida los pagos; el dinero se transfiere entre condómino y
-condominio por el medio que ellos acuerden.
+**¿Elyx cobra comisión por los pagos de los condóminos?**
+No. Elyx no intermedia el dinero de las cuotas: registra el pago, valida el comprobante y
+emite el recibo, pero el dinero va del condómino al condominio por el medio que ellos
+acuerden (transferencia, depósito, efectivo). Hoy **no** se paga la cuota de mantenimiento
+con tarjeta desde la plataforma.
+
+Lo que sí se cobra es la **suscripción a Elyx**: un cargo mensual distinto, a nombre del
+condominio, que se paga con tarjeta o Link desde el panel de administración.
 
 **¿Puedo exportar la información?**
 Sí. Los reportes financieros se exportan a PDF y Excel, y la base de datos es PostgreSQL

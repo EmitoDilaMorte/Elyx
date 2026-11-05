@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule, seconds } from '@nestjs/throttler';
 import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -17,15 +18,20 @@ import { CaptchaModule } from './modules/captcha/captcha.module';
 import { CondominosModule } from './modules/condominos/condominos.module';
 import { ConfigNotificacionesModule } from './modules/config-notificaciones/config-notificaciones.module';
 import { CuotasModule } from './modules/cuotas/cuotas.module';
+import { CupoModule } from './modules/cupo/cupo.module';
 import { EvidenciasPagoModule } from './modules/evidencias-pago/evidencias-pago.module';
 import { FotosMantenimientoModule } from './modules/fotos-mantenimiento/fotos-mantenimiento.module';
 import { GastosModule } from './modules/gastos/gastos.module';
+import { InvitacionesModule } from './modules/invitaciones/invitaciones.module';
 import { MailModule } from './modules/mail/mail.module';
+import { MembresiasModule } from './modules/membresias/membresias.module';
 import { NotificacionesModule } from './modules/notificaciones/notificaciones.module';
 import { PagosModule } from './modules/pagos/pagos.module';
 import { RecibosModule } from './modules/recibos/recibos.module';
+import { RegistroModule } from './modules/registro/registro.module';
 import { ReportesFinancierosModule } from './modules/reportes-financieros/reportes-financieros.module';
 import { ReportesMantenimientoModule } from './modules/reportes-mantenimiento/reportes-mantenimiento.module';
+import { SuscripcionesModule } from './modules/suscripciones/suscripciones.module';
 import { UnidadesModule } from './modules/unidades/unidades.module';
 import { UsuariosModule } from './modules/usuarios/usuarios.module';
 import { VotacionesModule } from './modules/votaciones/votaciones.module';
@@ -33,6 +39,9 @@ import { VotacionesModule } from './modules/votaciones/votaciones.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    // Habilita @Cron para expiraciones, limpieza de registros abandonados y
+    // suspension de suscripciones vencidas.
+    ScheduleModule.forRoot(),
     // Los contadores viven en Redis para compartirse entre instancias del
     // backend y sobrevivir a reinicios. Si se omite `storage`, @nestjs/throttler
     // vuelve al almacenamiento en memoria sin avisar.
@@ -57,6 +66,8 @@ import { VotacionesModule } from './modules/votaciones/votaciones.module';
     CondominosModule,
     AdministradoresModule,
     CuotasModule,
+    CupoModule,
+    RegistroModule,
     PagosModule,
     RecibosModule,
     EvidenciasPagoModule,
@@ -70,6 +81,9 @@ import { VotacionesModule } from './modules/votaciones/votaciones.module';
     GastosModule,
     ReportesFinancierosModule,
     UnidadesModule,
+    InvitacionesModule,
+    SuscripcionesModule,
+    MembresiasModule,
     BehaviorModule,
     CaptchaModule,
     CsrfModule,

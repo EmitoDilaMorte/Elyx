@@ -1,10 +1,11 @@
 ﻿import { Module } from '@nestjs/common';
-import { NotificacionesModule } from '../notificaciones/notificaciones.module';
+import { CondominioAltaModule } from '../condominio-alta/condominio-alta.module';
+import { MembresiasModule } from '../membresias/membresias.module';
 import { UsuariosController } from './usuarios.controller';
 import { UsuariosService } from './usuarios.service';
 
 @Module({
-	imports: [NotificacionesModule],
+	imports: [CondominioAltaModule, MembresiasModule],
 	controllers: [UsuariosController],
 	providers: [UsuariosService],
 })

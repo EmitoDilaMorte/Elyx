@@ -19,7 +19,16 @@ CREATE TABLE IF NOT EXISTS condominios (
   id_condominio SERIAL PRIMARY KEY,
   nombre VARCHAR(150) NOT NULL,
   direccion TEXT,
-  estado VARCHAR(20) NOT NULL DEFAULT 'ACTIVO' CHECK (estado IN ('ACTIVO', 'INACTIVO')),
+  -- Maximo de unidades que pueden existir (licencia). NULL = sin limite.
+  cupo_unidades INT,
+  -- Datos fiscales para CFDI (se piden antes de contratar; NULL = aun no capturados).
+  rfc VARCHAR(13),
+  razon_social VARCHAR(200),
+  regimen_fiscal VARCHAR(100),
+  cp_fiscal VARCHAR(5),
+  correo_facturacion VARCHAR(150),
+  estado VARCHAR(30) NOT NULL DEFAULT 'ACTIVO'
+    CHECK (estado IN ('PENDIENTE_VERIFICACION', 'PENDIENTE_PAGO', 'ACTIVO', 'INACTIVO', 'SUSPENDIDO')),
   fecha_alta TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -102,7 +111,20 @@ CREATE TABLE IF NOT EXISTS notificaciones (
     'SOLICITUD_CAMBIO_APROBADA',
     'SOLICITUD_CAMBIO_RECHAZADA',
     'SOLICITUD_CAMBIO_EJECUTADA',
-    'ALTA_INICIAL_USUARIO'
+    'ALTA_INICIAL_USUARIO',
+    'SOLICITUD_ALTA_CREADA',
+    'SOLICITUD_ALTA_VERIFICADA',
+    'SOLICITUD_ALTA_APROBADA',
+    'SOLICITUD_ALTA_RECHAZADA',
+    'SUSCRIPCION_PENDIENTE',
+    'SUSCRIPCION_ACTIVA',
+    'INVITACION_AGOTADA',
+    'VOTACION_ROL_CREADA',
+    'VOTACION_ROL_RESUELTA',
+    'ROL_CAMBIADO',
+    'SUSCRIPCION_PAGO_FALLIDO',
+    'SUSCRIPCION_SUSPENDIDA',
+    'DATOS_FISCALES_PENDIENTES'
   )),
   canal VARCHAR(20) NOT NULL CHECK (canal IN ('EMAIL', 'INTERNA')),
   asunto VARCHAR(150) NOT NULL,
@@ -241,9 +263,16 @@ CREATE TABLE IF NOT EXISTS avisos (
 CREATE TABLE IF NOT EXISTS votaciones (
   id_votacion SERIAL PRIMARY KEY,
   pregunta TEXT NOT NULL,
+  -- GENERAL | CAMBIO_CUOTA | CAMBIO_ROL. Antes se derivaba del JOIN con
+  -- votaciones_cambio_cuota, lo que no admite un tercer tipo.
+  tipo VARCHAR(20) NOT NULL DEFAULT 'GENERAL'
+    CHECK (tipo IN ('GENERAL', 'CAMBIO_CUOTA', 'CAMBIO_ROL')),
   fecha_inicio TIMESTAMP NOT NULL,
   fecha_fin TIMESTAMP NOT NULL,
   estado VARCHAR(20) NOT NULL CHECK (estado IN ('ABIERTA', 'CERRADA')),
+  -- Snapshot al crear: el quorum no cambia si el electorado cambia despues.
+  total_habilitados INT,
+  votos_requeridos INT,
   id_condominio INT NOT NULL,
   id_usuario_condominio_admin INT NOT NULL,
   CONSTRAINT fk_votacion_condominio
@@ -283,6 +312,31 @@ CREATE TABLE IF NOT EXISTS votaciones_cambio_cuota (
     FOREIGN KEY (id_votacion) REFERENCES votaciones(id_votacion)
     ON DELETE CASCADE
 );
+
+-- Propuesta de ascenso/degradacion de un miembro. La decision la toman los
+-- condominos con unidad (no los administradores por su rol).
+CREATE TABLE IF NOT EXISTS votaciones_cambio_rol (
+  id_votacion INT PRIMARY KEY,
+  id_usuario_condominio_objetivo INT NOT NULL,
+  rol_propuesto VARCHAR(20) NOT NULL
+    CHECK (rol_propuesto IN ('ADMINISTRADOR', 'CONDOMINO')),
+  estado_propuesta VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE'
+    CHECK (estado_propuesta IN ('PENDIENTE', 'APROBADA', 'RECHAZADA', 'EJECUTADA')),
+  motivo TEXT,
+  comentario_resolucion TEXT,
+  fecha_ejecucion TIMESTAMPTZ,
+  CONSTRAINT fk_votacion_cambio_rol
+    FOREIGN KEY (id_votacion) REFERENCES votaciones(id_votacion)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_votacion_cambio_rol_objetivo
+    FOREIGN KEY (id_usuario_condominio_objetivo) REFERENCES usuarios_condominios(id_usuario_condominio)
+    ON DELETE RESTRICT
+);
+
+-- Una sola propuesta viva por objetivo.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_votacion_cambio_rol_viva
+  ON votaciones_cambio_rol (id_usuario_condominio_objetivo)
+  WHERE estado_propuesta = 'PENDIENTE';
 
 CREATE TABLE IF NOT EXISTS gastos (
   id_gasto SERIAL PRIMARY KEY,
@@ -440,3 +494,229 @@ CREATE INDEX IF NOT EXISTS idx_behavior_events_session
 
 CREATE INDEX IF NOT EXISTS idx_behavior_events_fecha
   ON behavior_events (creado_en DESC);
+
+-- ---------------------------------------------------------------------------
+-- Registro publico de condominios ("Crea tu condominio")
+-- ---------------------------------------------------------------------------
+
+-- Alta de tenant aun no confirmada: existe solo cuando el correo no esta verificado.
+CREATE TABLE IF NOT EXISTS registros_condominio (
+  id_registro SERIAL PRIMARY KEY,
+  nombre_condominio VARCHAR(150) NOT NULL,
+  direccion_condominio TEXT,
+  cupo_unidades INT NOT NULL CHECK (cupo_unidades > 0 AND cupo_unidades <= 2000),
+  prefijo_unidad VARCHAR(30) NOT NULL DEFAULT '',
+  tipo_unidad VARCHAR(30) NOT NULL DEFAULT 'DEPARTAMENTO'
+    CHECK (tipo_unidad IN ('CASA', 'DEPARTAMENTO', 'LOCAL', 'OTRO')),
+  monto_cuota NUMERIC(12,2) NOT NULL CHECK (monto_cuota >= 0),
+  recargo_por_dia NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (recargo_por_dia >= 0),
+  dia_limite_pago INT NOT NULL DEFAULT 10 CHECK (dia_limite_pago BETWEEN 1 AND 28),
+  periodo_inicial VARCHAR(20) NOT NULL,
+  nombre_admin VARCHAR(100) NOT NULL,
+  apellido_paterno_admin VARCHAR(80) NOT NULL,
+  apellido_materno_admin VARCHAR(80),
+  correo_admin VARCHAR(150) NOT NULL,
+  telefono_admin VARCHAR(30),
+  password_hash TEXT NOT NULL,
+  token_hash VARCHAR(64) NOT NULL UNIQUE,
+  expiracion TIMESTAMPTZ NOT NULL,
+  estado VARCHAR(30) NOT NULL DEFAULT 'PENDIENTE_VERIFICACION'
+    CHECK (estado IN ('PENDIENTE_VERIFICACION', 'COMPLETADO', 'EXPIRADO', 'RECHAZADO')),
+  verificado_en TIMESTAMPTZ,
+  id_condominio INT,
+  ip VARCHAR(64),
+  user_agent VARCHAR(255),
+  creado_en TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_registros_condominio_condominio
+    FOREIGN KEY (id_condominio) REFERENCES condominios(id_condominio)
+    ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_registros_condominio_token
+  ON registros_condominio (token_hash);
+
+CREATE INDEX IF NOT EXISTS idx_registros_condominio_correo
+  ON registros_condominio (LOWER(correo_admin), estado);
+
+CREATE INDEX IF NOT EXISTS idx_registros_condominio_pendientes
+  ON registros_condominio (expiracion)
+  WHERE estado = 'PENDIENTE_VERIFICACION';
+
+-- Link general de invitacion: el cupo son las unidades libres del condominio.
+CREATE TABLE IF NOT EXISTS invitaciones_condominio (
+  id_invitacion SERIAL PRIMARY KEY,
+  id_condominio INT NOT NULL,
+  token_hash VARCHAR(64) NOT NULL UNIQUE,
+  estado VARCHAR(20) NOT NULL DEFAULT 'ACTIVA'
+    CHECK (estado IN ('ACTIVA', 'REVOCADA', 'EXPIRADA')),
+  motivo_cierre VARCHAR(40),
+  expiracion TIMESTAMPTZ NOT NULL,
+  creada_por INT,
+  creada_en TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  revocada_en TIMESTAMPTZ,
+  CONSTRAINT fk_invitaciones_condominio
+    FOREIGN KEY (id_condominio) REFERENCES condominios(id_condominio)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_invitaciones_creada_por
+    FOREIGN KEY (creada_por) REFERENCES usuarios_condominios(id_usuario_condominio)
+    ON DELETE SET NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_invitaciones_activa_por_condominio
+  ON invitaciones_condominio (id_condominio)
+  WHERE estado = 'ACTIVA';
+
+CREATE INDEX IF NOT EXISTS idx_invitaciones_condominio_token
+  ON invitaciones_condominio (token_hash);
+
+-- Solicitudes enviadas por los condominos: el administrador las aprueba una a una.
+CREATE TABLE IF NOT EXISTS solicitudes_alta_invitacion (
+  id_solicitud SERIAL PRIMARY KEY,
+  id_condominio INT NOT NULL,
+  id_invitacion INT NOT NULL,
+  nombre VARCHAR(100) NOT NULL,
+  apellido_paterno VARCHAR(80) NOT NULL,
+  apellido_materno VARCHAR(80),
+  correo VARCHAR(150) NOT NULL,
+  -- NULL cuando la cuenta ya existe: se resuelve con magic link y sin password.
+  password_hash TEXT,
+  es_cuenta_existente BOOLEAN NOT NULL DEFAULT FALSE,
+  telefono VARCHAR(30),
+  id_unidad_propuesta INT NOT NULL,
+  tipo_ocupacion VARCHAR(20) NOT NULL DEFAULT 'PROPIETARIO'
+    CHECK (tipo_ocupacion IN ('PROPIETARIO', 'INQUILINO', 'HABITANTE')),
+  token_hash VARCHAR(64) NOT NULL UNIQUE,
+  expiracion TIMESTAMPTZ NOT NULL,
+  estado VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE'
+    CHECK (estado IN ('PENDIENTE', 'VERIFICADA', 'APROBADA', 'RECHAZADA', 'EXPIRADA')),
+  verificado_en TIMESTAMPTZ,
+  motivo_rechazo TEXT,
+  revisado_por INT,
+  fecha_solicitud TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  fecha_resolucion TIMESTAMPTZ,
+  ip VARCHAR(64),
+  user_agent VARCHAR(255),
+  CONSTRAINT fk_solicitudes_alta_condominio
+    FOREIGN KEY (id_condominio) REFERENCES condominios(id_condominio)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_solicitudes_alta_invitacion
+    FOREIGN KEY (id_invitacion) REFERENCES invitaciones_condominio(id_invitacion)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_solicitudes_alta_unidad
+    FOREIGN KEY (id_unidad_propuesta) REFERENCES unidades(id_unidad)
+    ON DELETE RESTRICT,
+  CONSTRAINT fk_solicitudes_alta_revisor
+    FOREIGN KEY (revisado_por) REFERENCES usuarios_condominios(id_usuario_condominio)
+    ON DELETE SET NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_solicitud_alta_unidad_viva
+  ON solicitudes_alta_invitacion (id_unidad_propuesta)
+  WHERE estado IN ('PENDIENTE', 'VERIFICADA');
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_solicitud_alta_correo_viva
+  ON solicitudes_alta_invitacion (id_condominio, LOWER(correo))
+  WHERE estado IN ('PENDIENTE', 'VERIFICADA');
+
+CREATE INDEX IF NOT EXISTS idx_solicitudes_alta_condominio
+  ON solicitudes_alta_invitacion (id_condominio, estado, fecha_solicitud DESC);
+
+CREATE INDEX IF NOT EXISTS idx_solicitudes_alta_token
+  ON solicitudes_alta_invitacion (token_hash);
+
+-- ---------------------------------------------------------------------------
+-- Suscripcion a Elyx (solo activa con SUSCRIPCION_ENABLED=true)
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS suscripciones_condominio (
+  id_suscripcion SERIAL PRIMARY KEY,
+  id_condominio INT NOT NULL UNIQUE,
+  plan VARCHAR(40) NOT NULL DEFAULT 'ESTANDAR',
+  cupo_unidades INT,
+  periodo VARCHAR(20) NOT NULL DEFAULT 'MENSUAL'
+    CHECK (periodo IN ('MENSUAL', 'ANUAL')),
+  monto NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (monto >= 0),
+  moneda VARCHAR(3) NOT NULL DEFAULT 'MXN',
+  estado VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE'
+    CHECK (estado IN ('PENDIENTE', 'ACTIVA', 'VENCIDA', 'CANCELADA')),
+  proveedor VARCHAR(30) NOT NULL DEFAULT 'MANUAL',
+  id_externo VARCHAR(120),
+  referencia_pago VARCHAR(60),
+  -- Identificador del cliente en el proveedor (Stripe `cus_...`).
+  proveedor_cliente_id VARCHAR(120),
+  -- Item de la suscripcion: obligatorio para cambiar cantidad con prorrateo.
+  stripe_subscription_item_id VARCHAR(120),
+  -- Un id por concepto: base (cantidad fija), unidades (cantidad variable) y
+  -- ajuste al piso mensual (opcional). Cambiar la cantidad en el item base
+  -- multiplicaria la cuota base, por eso se separan.
+  stripe_item_base_id VARCHAR(120),
+  stripe_item_unidades_id VARCHAR(120),
+  stripe_item_ajuste_id VARCHAR(120),
+  cancelar_al_final BOOLEAN NOT NULL DEFAULT FALSE,
+  unidades_facturadas INT,
+  -- `monto` es NETO. El IVA se desglosa y no es ingreso de Elyx.
+  iva_porcentaje NUMERIC(5,2) NOT NULL DEFAULT 16,
+  precio_base NUMERIC(12,2),
+  precio_unidad NUMERIC(12,2),
+  -- Inicio de la gracia por impago; se limpia al confirmarse el pago.
+  vencida_desde TIMESTAMPTZ,
+  fecha_inicio TIMESTAMPTZ,
+  fecha_fin TIMESTAMPTZ,
+  renovacion_automatica BOOLEAN NOT NULL DEFAULT FALSE,
+  creado_en TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_suscripciones_condominio
+    FOREIGN KEY (id_condominio) REFERENCES condominios(id_condominio)
+    ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_suscripciones_estado
+  ON suscripciones_condominio (estado, fecha_fin);
+
+CREATE INDEX IF NOT EXISTS idx_suscripciones_vencidas
+  ON suscripciones_condominio (vencida_desde)
+  WHERE estado = 'VENCIDA';
+
+-- Idempotencia de webhooks de Stripe: un evento se procesa una sola vez.
+CREATE TABLE IF NOT EXISTS stripe_eventos (
+  id_evento VARCHAR(120) PRIMARY KEY,
+  tipo VARCHAR(80) NOT NULL,
+  procesado_en TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  payload JSONB
+);
+
+CREATE INDEX IF NOT EXISTS idx_stripe_eventos_tipo
+  ON stripe_eventos (tipo, procesado_en DESC);
+
+CREATE TABLE IF NOT EXISTS pagos_suscripcion (
+  id_pago_suscripcion SERIAL PRIMARY KEY,
+  id_suscripcion INT NOT NULL,
+  proveedor VARCHAR(30) NOT NULL DEFAULT 'MANUAL',
+  id_externo VARCHAR(120),
+  referencia VARCHAR(60),
+  monto NUMERIC(12,2) NOT NULL CHECK (monto >= 0),
+  moneda VARCHAR(3) NOT NULL DEFAULT 'MXN',
+  estado VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE'
+    CHECK (estado IN ('PENDIENTE', 'PAGADO', 'FALLIDO', 'REEMBOLSADO')),
+  metodo VARCHAR(20) NOT NULL DEFAULT 'MANUAL'
+    CHECK (metodo IN ('MANUAL', 'TRANSFERENCIA', 'CHECKOUT')),
+  periodo_inicio TIMESTAMPTZ,
+  periodo_fin TIMESTAMPTZ,
+  confirmado_por INT,
+  fecha TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  payload JSONB,
+  CONSTRAINT fk_pagos_suscripcion_suscripcion
+    FOREIGN KEY (id_suscripcion) REFERENCES suscripciones_condominio(id_suscripcion)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_pagos_suscripcion_confirmado_por
+    FOREIGN KEY (confirmado_por) REFERENCES usuarios(id_usuario)
+    ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_pagos_suscripcion_suscripcion
+  ON pagos_suscripcion (id_suscripcion, fecha DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_pagos_suscripcion_id_externo
+  ON pagos_suscripcion (proveedor, id_externo)
+  WHERE id_externo IS NOT NULL;

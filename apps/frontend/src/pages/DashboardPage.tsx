@@ -13,9 +13,12 @@ import type {
 import type { NavItem } from '../types/app';
 import { statusLabel } from '../constants/status';
 import { CondominioSwitcher } from '../components/CondominioSwitcher';
+import { CrearCondominioAdminPanel } from '../components/CrearCondominioAdminPanel';
 import { Icon } from '../components/Icon';
+import { InvitacionesPanel } from '../components/InvitacionesPanel';
 import { MfaSettings } from '../components/MfaSettings';
 import { PagosListaCondomino } from '../components/PagosListaCondomino';
+import { SuscripcionPanel } from '../components/SuscripcionPanel';
 import { ValidacionesLista } from '../components/ValidacionesLista';
 import { backendApi, getApiHostUrl } from '../services/backendApi.service';
 
@@ -68,6 +71,19 @@ type DashboardPageProps = {
     motivo: string;
   };
   votacionesCambioCuota: AppData['votacionesActivas'];
+  cambioRolForm: {
+    idUsuarioCondominioObjetivo: string;
+    rolPropuesto: 'ADMINISTRADOR' | 'CONDOMINO';
+    motivo: string;
+  };
+  electorado: Array<{
+    idUsuarioCondominio: number;
+    nombre: string;
+    correo: string;
+    rol: 'ADMINISTRADOR' | 'CONDOMINO';
+    unidades: string[];
+  }>;
+  electoradoInfo: { totalHabilitados: number; votosRequeridos: number } | null;
   gastoConcepto: string;
   gastoCategoria: string;
   gastoMonto: string;
@@ -160,6 +176,12 @@ type DashboardPageProps = {
     diaLimitePropuesto: string;
     motivo: string;
   }) => void;
+  onCambioRolFormChange: (value: {
+    idUsuarioCondominioObjetivo: string;
+    rolPropuesto: 'ADMINISTRADOR' | 'CONDOMINO';
+    motivo: string;
+  }) => void;
+  onCrearVotacionCambioRol: () => void;
   onEnviarReporteMantenimiento: (fotos?: File[]) => void;
   onFotosReporteChange: (files: File[]) => void;
   onCrearVotacionCambioCuota: () => void;
@@ -203,6 +225,8 @@ type DashboardPageProps = {
   }) => void;
   onCrearSolicitudCambio: () => void;
   onRefreshSolicitudesCambio: () => void;
+  /** Se invoca tras crear un condominio para refrescar el selector. */
+  onCondominioCreado?: () => void | Promise<void>;
   onResolverSolicitudCambio: (idSolicitud: number, accion: 'aprobar' | 'rechazar' | 'ejecutar') => void;
   onAltaCondominoFormChange: (value: {
     nombre: string;
@@ -253,6 +277,9 @@ export function DashboardPage({
   votacionPregunta,
   cuotaCambioForm,
   votacionesCambioCuota,
+  cambioRolForm,
+  electorado,
+  electoradoInfo,
   gastoConcepto,
   gastoCategoria,
   gastoMonto,
@@ -288,6 +315,8 @@ export function DashboardPage({
   onAvisoMensajeChange,
   onVotacionPreguntaChange,
   onCuotaCambioFormChange,
+  onCambioRolFormChange,
+  onCrearVotacionCambioRol,
   onEnviarReporteMantenimiento,
   onFotosReporteChange,
   onCrearVotacionCambioCuota,
@@ -310,6 +339,7 @@ export function DashboardPage({
   onSolicitudFormChange,
   onCrearSolicitudCambio,
   onRefreshSolicitudesCambio,
+  onCondominioCreado,
   onResolverSolicitudCambio,
   onAltaCondominoFormChange,
   onCrearAltaCondomino,
@@ -394,7 +424,13 @@ export function DashboardPage({
   };
 
   const votacionesEspecialesActivas = votacionesActivas.filter((item) => item.tipo === 'CAMBIO_CUOTA');
-  const votacionesGeneralesActivas = votacionesActivas.filter((item) => item.tipo !== 'CAMBIO_CUOTA');
+  // Las votaciones de rol se muestran en su propio bloque: si cayeran en
+  // "generales" se duplicarian y el condomino veria dos veces la misma.
+  const votacionesRolActivas = votacionesActivas.filter((item) => item.tipo === 'CAMBIO_ROL');
+  const votacionesGeneralesActivas = votacionesActivas.filter(
+    (item) => item.tipo !== 'CAMBIO_CUOTA' && item.tipo !== 'CAMBIO_ROL',
+  );
+  const votacionRolEnCurso = votacionesRolActivas[0] ?? null;
   const votacionCambioCuotaEnCurso =
     votacionesCambioCuota.find((item) => item.cambioCuota?.estadoPropuesta === 'PENDIENTE') ?? null;
 
@@ -434,6 +470,64 @@ export function DashboardPage({
     sessionUser?.membresias.find(
       (item) => item.idCondominio === activeCondominioId && item.estado === 'ACTIVO',
     )?.idUsuarioCondominio ?? null;
+
+  // El derecho a voto viene de ocupar una unidad, no del rol: el backend lo
+  // resuelve y aqui solo se refleja para no ofrecer un boton que fallara.
+  const puedeVotarEnRol = Boolean(
+    idUsuarioCondominioActivo &&
+      electorado.some((item) => item.idUsuarioCondominio === idUsuarioCondominioActivo),
+  );
+
+  const esObjetivoDeVotacionRol = (votacion: AppData['votacionesActivas'][number]) =>
+    Boolean(
+      idUsuarioCondominioActivo &&
+        votacion.cambioRol?.idUsuarioCondominioObjetivo === idUsuarioCondominioActivo,
+    );
+
+  /** En una degradacion el afectado no vota; en un ascenso si puede. */
+  const puedeVotarEnEstaVotacion = (votacion: AppData['votacionesActivas'][number]) => {
+    if (!puedeVotarEnRol) {
+      return false;
+    }
+    const degradacion = votacion.cambioRol?.rolPropuesto === 'CONDOMINO';
+    return !(degradacion && esObjetivoDeVotacionRol(votacion));
+  };
+
+  const textoQuorum = (votacion: AppData['votacionesActivas'][number]) => {
+    if (votacion.votosRequeridos === null || votacion.votosRequeridos === undefined) {
+      return null;
+    }
+    const requeridos = votacion.votosRequeridos;
+    const habilitados = votacion.totalHabilitados ?? requeridos;
+    const faltantes = Math.max(requeridos - votacion.aFavor, 0);
+    return faltantes === 0
+      ? `Quorum alcanzado: ${votacion.aFavor} de ${requeridos} votos requeridos (${habilitados} habilitados).`
+      : `Faltan ${faltantes} voto${faltantes === 1 ? '' : 's'} a favor: ${votacion.aFavor} de ${requeridos} requeridos (${habilitados} habilitados).`;
+  };
+
+  const progresoQuorum = (votacion: AppData['votacionesActivas'][number]) => {
+    const requeridos = votacion.votosRequeridos ?? 0;
+    if (requeridos <= 0) {
+      return 0;
+    }
+    return Math.min(Math.round((votacion.aFavor / requeridos) * 100), 100);
+  };
+
+  /**
+   * Candidatos segun la accion elegida. Ascender solo tiene sentido para quien
+   * NO es administrador y retirar solo para quien lo es; mostrar el resto
+   * invitaria a crear propuestas que el backend rechaza.
+   *
+   * Se excluye al propio convocante: no puede proponerse a si mismo.
+   */
+  const miembrosParaCambioRol = electorado.filter((item) => {
+    if (item.idUsuarioCondominio === idUsuarioCondominioActivo) {
+      return false;
+    }
+    return cambioRolForm.rolPropuesto === 'ADMINISTRADOR'
+      ? item.rol !== 'ADMINISTRADOR'
+      : item.rol === 'ADMINISTRADOR';
+  });
 
   const formatSolicitudDetalle = (detalle: Record<string, unknown> | null) => {
     if (!detalle) {
@@ -704,6 +798,21 @@ export function DashboardPage({
               onRechazarPago={onRechazarPago}
               onGenerarReciboPago={onGenerarReciboPago}
             />
+          )}
+
+          {role !== 'condomino' && activeView === 'invitaciones' && (
+            <InvitacionesPanel
+              idCondominio={activeCondominioId}
+              idUsuarioCondominio={idUsuarioCondominioActivo}
+            />
+          )}
+
+          {role !== 'condomino' && activeView === 'suscripcion' && (
+            <SuscripcionPanel idCondominio={activeCondominioId} />
+          )}
+
+          {role !== 'condomino' && activeView === 'nuevo-condominio' && (
+            <CrearCondominioAdminPanel onCreado={() => void onCondominioCreado?.()} />
           )}
 
           {activeView === 'avisos' && (
@@ -983,12 +1092,237 @@ export function DashboardPage({
                 </article>
               )}
 
+              {role !== 'condomino' && (
+                <article className="panel animate-in stagger-2">
+                  <h4>Votacion especial: cambio de rol</h4>
+                  <p className="helper-text" style={{ marginTop: 0 }}>
+                    Los administradores convocan; deciden los condominos con unidad asignada. Se
+                    requiere mayoria de todos los habilitados y el cambio se aplica al cerrar.
+                  </p>
+
+                  {electoradoInfo && (
+                    <div className="reminder-box">
+                      <strong className="reminder-title">
+                        {electoradoInfo.totalHabilitados} habilitados para votar
+                      </strong>
+                      <p className="muted-text" style={{ margin: '0.35rem 0 0' }}>
+                        Se requieren <strong>{electoradoInfo.votosRequeridos}</strong> votos a favor
+                        para aprobar la propuesta.
+                      </p>
+                    </div>
+                  )}
+
+                  {votacionRolEnCurso ? (
+                    <article className="payment-item" style={{ marginTop: '0.5rem' }}>
+                      <p className="item-title">Votacion #{votacionRolEnCurso.id} en curso</p>
+                      <p className="helper-text">{votacionRolEnCurso.pregunta}</p>
+
+                      <div className="progress-block" style={{ margin: '0.6rem 0' }}>
+                        <div className="progress-header">
+                          <span>Avance del quorum</span>
+                          <strong>{progresoQuorum(votacionRolEnCurso)}%</strong>
+                        </div>
+                        <div className="progress-track">
+                          <div
+                            className="progress-fill"
+                            style={{ width: `${progresoQuorum(votacionRolEnCurso)}%` }}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="stats-row">
+                        <span className="status-pill status-aprobado">
+                          A favor: {votacionRolEnCurso.aFavor}
+                        </span>
+                        <span className="status-pill status-rechazado">
+                          En contra: {votacionRolEnCurso.enContra}
+                        </span>
+                      </div>
+
+                      <p className="helper-text">{textoQuorum(votacionRolEnCurso)}</p>
+
+                      <div className="btn-row">
+                        <button className="soft-btn" onClick={() => onCerrarVotacion(votacionRolEnCurso.id)}>
+                          Cerrar votacion y aplicar resultado
+                        </button>
+                      </div>
+                    </article>
+                  ) : (
+                    <>
+                      <label className="field-label" htmlFor="cambio-rol-accion">
+                        Propuesta
+                      </label>
+                      <select
+                        id="cambio-rol-accion"
+                        className="condominio-switcher-select"
+                        value={cambioRolForm.rolPropuesto}
+                        onChange={(event) => {
+                          const rolPropuesto =
+                            event.target.value === 'CONDOMINO' ? 'CONDOMINO' : 'ADMINISTRADOR';
+                          // Al cambiar la accion el miembro elegido deja de ser
+                          // candidato: se limpia para no enviar una propuesta
+                          // incoherente (ascender a quien ya es admin, etc.).
+                          onCambioRolFormChange({
+                            ...cambioRolForm,
+                            rolPropuesto,
+                            idUsuarioCondominioObjetivo: '',
+                          });
+                        }}
+                      >
+                        <option value="ADMINISTRADOR">Ascender a administrador</option>
+                        <option value="CONDOMINO">Retirar el rol de administrador</option>
+                      </select>
+
+                      <label className="field-label" htmlFor="cambio-rol-miembro">
+                        {cambioRolForm.rolPropuesto === 'ADMINISTRADOR'
+                          ? 'Condomino a ascender'
+                          : 'Administrador a quien se retira el rol'}
+                      </label>
+                      <select
+                        id="cambio-rol-miembro"
+                        className="condominio-switcher-select"
+                        value={cambioRolForm.idUsuarioCondominioObjetivo}
+                        onChange={(event) =>
+                          onCambioRolFormChange({
+                            ...cambioRolForm,
+                            idUsuarioCondominioObjetivo: event.target.value,
+                          })
+                        }
+                      >
+                        <option value="">Selecciona un miembro</option>
+                        {miembrosParaCambioRol.map((item) => (
+                          <option key={item.idUsuarioCondominio} value={item.idUsuarioCondominio}>
+                            {item.nombre} — {item.rol === 'ADMINISTRADOR' ? 'Administrador' : 'Condomino'}
+                            {item.unidades.length > 0 ? ` (${item.unidades.join(', ')})` : ''}
+                          </option>
+                        ))}
+                      </select>
+                      {electorado.length === 0 ? (
+                        <p className="helper-text">
+                          No hay miembros con unidad asignada en este condominio.
+                        </p>
+                      ) : miembrosParaCambioRol.length === 0 ? (
+                        <p className="helper-text">
+                          {cambioRolForm.rolPropuesto === 'ADMINISTRADOR'
+                            ? 'Todos los miembros con unidad ya son administradores.'
+                            : 'No hay otros administradores con unidad a quienes retirar el rol.'}
+                        </p>
+                      ) : null}
+
+                      <label className="field-label" htmlFor="cambio-rol-motivo">
+                        Motivo de la propuesta
+                      </label>
+                      <textarea
+                        id="cambio-rol-motivo"
+                        rows={3}
+                        value={cambioRolForm.motivo}
+                        onChange={(event) =>
+                          onCambioRolFormChange({
+                            ...cambioRolForm,
+                            motivo: event.target.value,
+                          })
+                        }
+                        placeholder="Explica por que se propone el cambio de rol"
+                      />
+
+                      <div className="btn-row">
+                        <button
+                          className="primary-btn"
+                          onClick={onCrearVotacionCambioRol}
+                          disabled={!electoradoInfo || electoradoInfo.totalHabilitados === 0}
+                        >
+                          Publicar votacion de rol
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </article>
+              )}
+
+              {role === 'condomino' && votacionesRolActivas.length > 0 && (
+                <article className="panel animate-in stagger-2">
+                  <h4>Votaciones de rol</h4>
+                  <div className="payment-list">
+                    {votacionesRolActivas.map((votacion) => {
+                      const votoUsuario = sessionUser
+                        ? votacion.votosPorUsuario[sessionUser.correo]
+                        : undefined;
+                      // `yaVoto` viene del servidor: sin el, al recargar se
+                      // olvidaba que el usuario ya habia votado.
+                      const yaVoto = Boolean(votoUsuario) || votacion.yaVoto === true;
+                      const habilitado = puedeVotarEnEstaVotacion(votacion);
+
+                      return (
+                        <article key={votacion.id} className="payment-item">
+                          <p className="item-title">
+                            Votacion #{votacion.id} —{' '}
+                            {votacion.cambioRol?.rolPropuesto === 'ADMINISTRADOR'
+                              ? 'ascenso a administrador'
+                              : 'retiro de administrador'}
+                          </p>
+                          <p className="helper-text">{votacion.pregunta}</p>
+                          {votacion.cambioRol?.motivo && (
+                            <p className="helper-text" style={{ marginBottom: '0.4rem' }}>
+                              Motivo: {votacion.cambioRol.motivo}
+                            </p>
+                          )}
+
+                          <div className="progress-block" style={{ margin: '0.6rem 0' }}>
+                            <div className="progress-header">
+                              <span>Avance del quorum</span>
+                              <strong>{progresoQuorum(votacion)}%</strong>
+                            </div>
+                            <div className="progress-track">
+                              <div
+                                className="progress-fill"
+                                style={{ width: `${progresoQuorum(votacion)}%` }}
+                              />
+                            </div>
+                          </div>
+
+                          <div className="stats-row">
+                            <span className="status-pill status-aprobado">A favor: {votacion.aFavor}</span>
+                            <span className="status-pill status-rechazado">En contra: {votacion.enContra}</span>
+                          </div>
+
+                          <p className="helper-text">{textoQuorum(votacion)}</p>
+
+                          {!habilitado ? (
+                            <p className="helper-text">
+                              {puedeVotarEnRol
+                                ? 'Como miembro afectado no puedes votar en tu propia degradacion.'
+                                : 'Solo los condominos con unidad asignada pueden votar en esta votacion.'}
+                            </p>
+                          ) : yaVoto ? (
+                            <p className="helper-text">
+                              {votoUsuario
+                                ? `Tu voto ya fue registrado: ${votoUsuario}.`
+                                : 'Ya registraste tu voto en esta votacion.'}
+                            </p>
+                          ) : (
+                            <div className="btn-row">
+                              <button className="primary-btn" onClick={() => onVotar(votacion.id, 'favor')}>
+                                Votar a favor
+                              </button>
+                              <button className="soft-btn" onClick={() => onVotar(votacion.id, 'contra')}>
+                                Votar en contra
+                              </button>
+                            </div>
+                          )}
+                        </article>
+                      );
+                    })}
+                  </div>
+                </article>
+              )}
+
               <article className={`panel animate-in ${role !== 'condomino' ? 'stagger-1' : ''}`}>
                 <h4>{role === 'condomino' ? 'Votaciones activas' : 'Administrar votaciones activas'}</h4>
                 <div className="payment-list">
                   {votacionesGeneralesActivas.length === 0 && <p className="empty-state">No hay votaciones activas para este condominio.</p>}
                   {votacionesGeneralesActivas.map((votacion) => {
                     const votoUsuario = sessionUser ? votacion.votosPorUsuario[sessionUser.correo] : undefined;
+                    const yaVoto = Boolean(votoUsuario) || votacion.yaVoto === true;
 
                     return (
                       <article key={votacion.id} className="payment-item">
@@ -1003,13 +1337,19 @@ export function DashboardPage({
 
                         {role === 'condomino' ? (
                           <div className="btn-row">
-                            <button className="primary-btn" onClick={() => onVotar(votacion.id, 'favor')} disabled={Boolean(votoUsuario)}>
+                            <button className="primary-btn" onClick={() => onVotar(votacion.id, 'favor')} disabled={yaVoto}>
                               Votar a favor
                             </button>
-                            <button className="soft-btn" onClick={() => onVotar(votacion.id, 'contra')} disabled={Boolean(votoUsuario)}>
+                            <button className="soft-btn" onClick={() => onVotar(votacion.id, 'contra')} disabled={yaVoto}>
                               Votar en contra
                             </button>
-                            {votoUsuario && <p className="helper-text">Tu voto ya fue registrado: {votoUsuario}.</p>}
+                            {yaVoto && (
+                              <p className="helper-text">
+                                {votoUsuario
+                                  ? `Tu voto ya fue registrado: ${votoUsuario}.`
+                                  : 'Ya registraste tu voto en esta votacion.'}
+                              </p>
+                            )}
                           </div>
                         ) : (
                           <div className="btn-row">
@@ -1033,6 +1373,7 @@ export function DashboardPage({
                     )}
                     {votacionesEspecialesActivas.map((votacion) => {
                       const votoUsuario = sessionUser ? votacion.votosPorUsuario[sessionUser.correo] : undefined;
+                      const yaVoto = Boolean(votoUsuario) || votacion.yaVoto === true;
                       return (
                         <article key={votacion.id} className="payment-item">
                           <p className="item-title">Votacion especial #{votacion.id}</p>
@@ -1047,13 +1388,19 @@ export function DashboardPage({
                             <span className="status-pill status-rechazado">En contra: {votacion.enContra}</span>
                           </div>
                           <div className="btn-row">
-                            <button className="primary-btn" onClick={() => onVotar(votacion.id, 'favor')} disabled={Boolean(votoUsuario)}>
+                            <button className="primary-btn" onClick={() => onVotar(votacion.id, 'favor')} disabled={yaVoto}>
                               Votar a favor
                             </button>
-                            <button className="soft-btn" onClick={() => onVotar(votacion.id, 'contra')} disabled={Boolean(votoUsuario)}>
+                            <button className="soft-btn" onClick={() => onVotar(votacion.id, 'contra')} disabled={yaVoto}>
                               Votar en contra
                             </button>
-                            {votoUsuario && <p className="helper-text">Tu voto ya fue registrado: {votoUsuario}.</p>}
+                            {yaVoto && (
+                              <p className="helper-text">
+                                {votoUsuario
+                                  ? `Tu voto ya fue registrado: ${votoUsuario}.`
+                                  : 'Ya registraste tu voto en esta votacion.'}
+                              </p>
+                            )}
                           </div>
                         </article>
                       );
@@ -1613,10 +1960,11 @@ export function DashboardPage({
                 </div>
               </div>
 
-              <article className="payment-item" style={{ marginBottom: '0.8rem' }}>
-                <h5 style={{ marginTop: 0 }}>Alta de condomino con unidad vacia</h5>
-                <p className="helper-text" style={{ marginTop: '0.2rem' }}>
-                  El administrador crea el condomino y lo asigna a una unidad activa sin ocupante.
+              <details className="panel-plegable">
+                <summary>Alta manual de condomino (sin enlace de invitacion)</summary>
+                <p className="helper-text" style={{ margin: '0.2rem 0 0.6rem' }}>
+                  La via recomendada es el enlace de <strong>Invitaciones</strong>. Usa esta opcion
+                  solo cuando el condomino no pueda completar el registro por correo.
                 </p>
 
                 <div className="grid-cards super-grid" style={{ marginTop: '0.5rem' }}>
@@ -1726,7 +2074,7 @@ export function DashboardPage({
                     Crear condomino y asignar unidad
                   </button>
                 </div>
-              </article>
+              </details>
 
               <div className="payment-list">
                 {solicitudesCambio.length === 0 && <p className="empty-state">No hay solicitudes registradas.</p>}

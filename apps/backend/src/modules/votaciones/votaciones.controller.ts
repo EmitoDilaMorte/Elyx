@@ -8,6 +8,7 @@ import { RolesGuard } from '../../common/auth/roles.guard';
 import { VotacionEstado } from '../../common/enums/votacion-estado.enum';
 import { CerrarVotacionDto } from './dto/cerrar-votacion.dto';
 import { CreateCambioCuotaVotacionDto, EjecutarCambioCuotaDto } from './dto/create-cambio-cuota-votacion.dto';
+import { CreateCambioRolVotacionDto } from './dto/create-cambio-rol-votacion.dto';
 import { CreateVotacionDto } from './dto/create-votacion.dto';
 import { VotarVotacionDto } from './dto/votar-votacion.dto';
 import { VotacionesService } from './votaciones.service';
@@ -21,8 +22,15 @@ export class VotacionesController {
   list(
     @Query('idCondominio', ParseIntPipe) idCondominio: number,
     @Query('estado', new ParseEnumPipe(VotacionEstado, { optional: true })) estado?: VotacionEstado,
+    @Query('idUsuarioCondominio') idUsuarioCondominio?: string,
   ) {
-    return this.votacionesService.listByCondominio(idCondominio, estado);
+    // Opcional: marca `yaVoto` para esa membresia. Se valida aqui porque es
+    // un parametro de consulta informativo, no un identificador de ruta.
+    const membresia = Number(idUsuarioCondominio);
+    const membresiaValida =
+      Number.isInteger(membresia) && membresia > 0 ? membresia : null;
+
+    return this.votacionesService.listByCondominio(idCondominio, estado, membresiaValida);
   }
 
   @Post()
@@ -37,6 +45,21 @@ export class VotacionesController {
   @Roles(Role.ADMINISTRADOR)
   createCambioCuota(@Body() dto: CreateCambioCuotaVotacionDto) {
     return this.votacionesService.createCambioCuota(dto);
+  }
+
+  /** Quienes pueden votar y cuantos votos hacen falta. */
+  @Get('electorado')
+  @UseGuards(RolesGuard)
+  @Roles(Role.CONDOMINO, Role.ADMINISTRADOR)
+  electorado(@Query('idCondominio', ParseIntPipe) idCondominio: number) {
+    return this.votacionesService.electorado(idCondominio);
+  }
+
+  @Post('cambio-rol')
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMINISTRADOR)
+  createCambioRol(@Body() dto: CreateCambioRolVotacionDto) {
+    return this.votacionesService.createCambioRol(dto);
   }
 
   @Post('votar')

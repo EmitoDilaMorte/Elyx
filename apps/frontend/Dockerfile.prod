@@ -9,6 +9,7 @@
 #   docker build -f Dockerfile.prod \
 #     --build-arg VITE_API_URL=https://api.elyx-app.com \
 #     --build-arg VITE_TURNSTILE_SITE_KEY=0x... \
+#     --build-arg VITE_STRIPE_PUBLISHABLE_KEY=pk_live_... \
 #     -t elyx-frontend:prod .
 # ============================================================================
 
@@ -29,8 +30,10 @@ COPY . .
 # Si cambian, hay que reconstruir la imagen.
 ARG VITE_API_URL=""
 ARG VITE_TURNSTILE_SITE_KEY=""
+ARG VITE_STRIPE_PUBLISHABLE_KEY=""
 ENV VITE_API_URL=$VITE_API_URL \
-    VITE_TURNSTILE_SITE_KEY=$VITE_TURNSTILE_SITE_KEY
+    VITE_TURNSTILE_SITE_KEY=$VITE_TURNSTILE_SITE_KEY \
+    VITE_STRIPE_PUBLISHABLE_KEY=$VITE_STRIPE_PUBLISHABLE_KEY
 
 # `npm run build` = tsc -b && vite build
 RUN npm run build

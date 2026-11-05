@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import { navAdministrador, navCondomino } from './constants/navigation';
@@ -8,14 +8,17 @@ import { formatShortDate, seedData } from './lib/appData';
 import { DashboardPage } from './pages/DashboardPage';
 import { LoginPage } from './pages/LoginPage';
 import { SuperuserPage } from './pages/SuperuserPage';
-import { backendApi, esDesafioMfa, getApiHostUrl, type BackendLoginResponse, type LoginOutcome, type LoginPayload } from './services/backendApi.service';
+import { ConfirmarInvitacionPage } from './pages/public/ConfirmarInvitacionPage';
+import { CrearCondominioPage } from './pages/public/CrearCondominioPage';
+import { InvitacionPage } from './pages/public/InvitacionPage';
+import { VerificarCorreoPage } from './pages/public/VerificarCorreoPage';
+import { backendApi, esDesafioMfa, getApiHostUrl, type BackendLoginResponse, type ElectoradoMiembro, type LoginOutcome, type LoginPayload } from './services/backendApi.service';
 import { iniciarTelemetria } from './services/behavior.service';
 import {
   closeVotacionInCondominio,
   getCobranzaProgreso,
   getCondominioScope,
   getVotacionesPendientes,
-  voteInCondominio,
   type CondominioScope,
 } from './services/multiCondominio.service';
 import type {
@@ -54,7 +57,41 @@ const RUTA_POR_VISTA: Record<ViewKey, string> = {
   finanzas: '/finanzas',
   perfil: '/perfil',
   solicitudes: '/solicitudes',
+  invitaciones: '/invitaciones',
+  suscripcion: '/suscripcion',
+  'nuevo-condominio': '/nuevo-condominio',
 };
+
+/**
+ * Rutas sin sesion. Se resuelven ANTES de cualquier chequeo de autenticacion:
+ * el registro y las invitaciones son el primer punto de contacto del producto.
+ *
+ * Se comparan con expresiones regulares, no con prefijos: `/invitaciones` (el
+ * panel del administrador) empieza por `/invitacion`, y un `startsWith` hacia
+ * que el panel renderizara la pagina publica y llamara a la API con un token
+ * vacio.
+ */
+const RUTAS_PUBLICAS: Array<{ patron: RegExp; render: () => ReactNode }> = [
+  { patron: /^\/crear-condominio\/verificar\/?$/, render: () => <VerificarCorreoPage /> },
+  { patron: /^\/registro\/verificar\/?$/, render: () => <VerificarCorreoPage /> },
+  { patron: /^\/crear-condominio\/?$/, render: () => <CrearCondominioPage /> },
+  { patron: /^\/invitacion\/confirmar\/?$/, render: () => <ConfirmarInvitacionPage /> },
+  // Exactamente un segmento despues de /invitacion: el panel /invitaciones no coincide.
+  { patron: /^\/invitacion\/[^/]+\/?$/, render: () => <InvitacionPage /> },
+];
+
+function rutaPublica(pathname: string) {
+  const limpia = pathname.replace(/\/+$/, '') || '/';
+  return RUTAS_PUBLICAS.find((ruta) => ruta.patron.test(limpia)) ?? null;
+}
+
+function esRutaPublica(pathname: string): boolean {
+  return rutaPublica(pathname) !== null;
+}
+
+function renderRutaPublica(pathname: string) {
+  return rutaPublica(pathname)?.render() ?? null;
+}
 
 function vistaDesdeRuta(pathname: string): ViewKey {
   const limpia = pathname.replace(/\/+$/, '') || '/';
@@ -290,6 +327,12 @@ type CuotaCambioVotacionFormState = {
   motivo: string;
 };
 
+type CambioRolVotacionFormState = {
+  idUsuarioCondominioObjetivo: string;
+  rolPropuesto: 'ADMINISTRADOR' | 'CONDOMINO';
+  motivo: string;
+};
+
 const DEFAULT_CONFIG_NOTIFICACIONES: ConfigNotificacionesState = {
   diasAntes: 3,
   diasDespues: 2,
@@ -362,6 +405,12 @@ const DEFAULT_CUOTA_CAMBIO_FORM: CuotaCambioVotacionFormState = {
   motivo: '',
 };
 
+const DEFAULT_CAMBIO_ROL_FORM: CambioRolVotacionFormState = {
+  idUsuarioCondominioObjetivo: '',
+  rolPropuesto: 'ADMINISTRADOR',
+  motivo: '',
+};
+
 function AppContent() {
   const { activeCondominioId, setActiveCondominioId } = useActiveCondominio();
 
@@ -402,7 +451,7 @@ function AppContent() {
   const [onboardingForm, setOnboardingForm] = useState<OnboardingFormState>(DEFAULT_ONBOARDING_FORM);
   const [superOnboarding, setSuperOnboarding] = useState<SuperOnboardingState>(DEFAULT_SUPER_ONBOARDING);
   const [superOnboardingResult, setSuperOnboardingResult] = useState<SuperOnboardingResult | null>(null);
-  const [superSection, setSuperSection] = useState<'alta' | 'condominios'>('alta');
+  const [superSection, setSuperSection] = useState<'alta' | 'condominios' | 'suscripciones'>('alta');
   const [superCondominios, setSuperCondominios] = useState<SuperCondominioState[]>([]);
   const [perfil, setPerfil] = useState<PerfilState>(DEFAULT_PERFIL);
   const [solicitudForm, setSolicitudForm] = useState<SolicitudFormState>(DEFAULT_SOLICITUD_FORM);
@@ -412,6 +461,12 @@ function AppContent() {
   const [unidadesConOcupantes, setUnidadesConOcupantes] = useState<UnidadConOcupante[]>([]);
   const [solicitudesCambio, setSolicitudesCambio] = useState<SolicitudCambioState[]>([]);
   const [cuotaCambioForm, setCuotaCambioForm] = useState<CuotaCambioVotacionFormState>(DEFAULT_CUOTA_CAMBIO_FORM);
+  const [cambioRolForm, setCambioRolForm] = useState<CambioRolVotacionFormState>(DEFAULT_CAMBIO_ROL_FORM);
+  const [electorado, setElectorado] = useState<ElectoradoMiembro[]>([]);
+  const [electoradoInfo, setElectoradoInfo] = useState<{
+    totalHabilitados: number;
+    votosRequeridos: number;
+  } | null>(null);
   const [votacionesCambioCuota, setVotacionesCambioCuota] = useState<VotacionActiva[]>([]);
 
   // Telemetria de comportamiento (medida por el sitio desde el primer evento).
@@ -438,6 +493,11 @@ function AppContent() {
   // La URL no es un mecanismo de autorizacion, pero si de navegacion: una ruta
   // desconocida o una vista que no existe para el rol vuelve al inicio.
   useEffect(() => {
+    // Las paginas publicas (registro, invitacion) no dependen de la sesion.
+    if (esRutaPublica(location.pathname)) {
+      return;
+    }
+
     const rutasValidas = Object.values(RUTA_POR_VISTA);
     if (!rutasValidas.includes(location.pathname)) {
       navigate(RUTA_POR_VISTA.inicio, { replace: true });
@@ -661,6 +721,28 @@ function AppContent() {
     }
 
     let isCancelled = false;
+    // El sondeo dispara 9 peticiones por ciclo. Con 10 s eso son 54 req/min,
+    // casi el limite global de 60: el propio polling agotaba la cuota y la
+    // tormenta de 429 terminaba cerrando la sesion. Ahora el ciclo es mas
+    // largo y, si el backend responde 429, se suspende hasta que expire.
+    const INTERVALO_MS = 15_000;
+    const MAX_REINTENTOS = 3;
+
+    let backoffHasta = 0;
+    let temporizador: number | null = null;
+    let fallosConsecutivos = 0;
+
+    const programar = (ms: number) => {
+      if (isCancelled) {
+        return;
+      }
+      if (temporizador !== null) {
+        window.clearTimeout(temporizador);
+      }
+      temporizador = window.setTimeout(() => {
+        void ciclo();
+      }, ms);
+    };
 
     const syncScopeFromBackend = async () => {
       try {
@@ -670,7 +752,10 @@ function AppContent() {
             ? backendApi.listCuotasByCondomino(effectiveActiveCondominioId, activeMembership.idUsuarioCondominio)
             : backendApi.listCuotas(effectiveActiveCondominioId),
           backendApi.listAvisos(effectiveActiveCondominioId),
-          backendApi.listVotaciones(effectiveActiveCondominioId),
+          backendApi.listVotaciones(
+            effectiveActiveCondominioId,
+            activeMembership?.idUsuarioCondominio ?? null,
+          ),
           backendApi.listPagos(effectiveActiveCondominioId),
           backendApi.listReportesMantenimiento(effectiveActiveCondominioId),
           backendApi.listGastos(effectiveActiveCondominioId),
@@ -771,19 +856,63 @@ function AppContent() {
           return next;
         });
       } catch (error) {
-        console.error('No se pudo sincronizar con backend para el condominio activo:', error);
+        // El error se propaga a `ciclo()`, que decide entre backoff y reintento.
+        throw error;
       }
     };
 
-    void syncScopeFromBackend();
+    /**
+     * Un ciclo de sincronizacion. Si el backend limita, se respeta la ventana
+     * indicada (`Retry-After`) y se reintenta con espera exponencial en lugar
+     * de martillar el endpoint cada 10 s.
+     */
+    const ciclo = async (): Promise<void> => {
+      if (isCancelled) {
+        return;
+      }
 
-    const pollInterval = window.setInterval(() => {
-      void syncScopeFromBackend();
-    }, 10000);
+      const ahora = Date.now();
+      if (ahora < backoffHasta) {
+        programar(backoffHasta - ahora);
+        return;
+      }
+
+      try {
+        await syncScopeFromBackend();
+        fallosConsecutivos = 0;
+        programar(INTERVALO_MS);
+      } catch (error) {
+        const status = (error as { status?: number } | undefined)?.status;
+        const retryAfter = (error as { retryAfter?: number | null } | undefined)?.retryAfter;
+
+        if (status === 429 && fallosConsecutivos < MAX_REINTENTOS) {
+          fallosConsecutivos += 1;
+          const esperaSugerida = retryAfter && retryAfter > 0 ? retryAfter * 1000 : 0;
+          const esperaExponencial = Math.min(2 ** (fallosConsecutivos - 1) * 2000, 15_000);
+          const espera = Math.max(esperaSugerida, esperaExponencial);
+          backoffHasta = Date.now() + espera;
+          console.warn(
+            `Limite de peticiones alcanzado. Reintentando en ${Math.round(espera / 1000)} s.`,
+          );
+          // `programar` ya agenda el siguiente intento.
+          programar(espera);
+          return;
+        }
+
+        console.error('No se pudo sincronizar con backend para el condominio activo:', error);
+        fallosConsecutivos = 0;
+        // Un fallo puntual no debe detener el sondeo para siempre.
+        programar(INTERVALO_MS);
+      }
+    };
+
+    void ciclo();
 
     return () => {
       isCancelled = true;
-      window.clearInterval(pollInterval);
+      if (temporizador !== null) {
+        window.clearTimeout(temporizador);
+      }
     };
   }, [effectiveActiveCondominioId, isAuthenticated]);
 
@@ -992,7 +1121,10 @@ function AppContent() {
 
     socket.on('votacionChanged', async () => {
       try {
-        const votacionesApi = await backendApi.listVotaciones(effectiveActiveCondominioId);
+        const votacionesApi = await backendApi.listVotaciones(
+          effectiveActiveCondominioId,
+          activeMembership?.idUsuarioCondominio ?? null,
+        );
         setAppData((prev: AppData) => {
           const votosPrevios = new Map(
             prev.votacionesActivas
@@ -1291,6 +1423,12 @@ function AppContent() {
     setSolicitudesCambio([]);
     setCuotaCambioForm(DEFAULT_CUOTA_CAMBIO_FORM);
     setVotacionesCambioCuota([]);
+    setCambioRolForm(DEFAULT_CAMBIO_ROL_FORM);
+    setElectorado([]);
+    setElectoradoInfo(null);
+    setCambioRolForm(DEFAULT_CAMBIO_ROL_FORM);
+    setElectorado([]);
+    setElectoradoInfo(null);
     setCorreo('');
     setPassword('');
     setLoginError(null);
@@ -1606,42 +1744,49 @@ function AppContent() {
         choice,
       });
 
-      patchAppData((prev) =>
-        voteInCondominio(
-          {
-            ...prev,
-            votacionesActivas: prev.votacionesActivas.map((item) =>
-              item.id === votacionId
-                ? {
-                    ...item,
-                    aFavor: resumen.aFavor,
-                    enContra: resumen.enContra,
-                  }
-                : item,
-            ),
-          },
-          {
-            idCondominio: effectiveActiveCondominioId,
-            idVotacion: votacionId,
-            correoUsuario: sessionUser.correo,
-            choice,
-          },
+      // El backend ya devuelve los totales actualizados. Antes se aplicaba
+      // ademas `voteInCondominio`, que suma +1 localmente: el marcador salia
+      // con un voto de mas. Aqui solo se registra el voto del usuario actual.
+      patchAppData((prev) => ({
+        ...prev,
+        votacionesActivas: prev.votacionesActivas.map((item) =>
+          item.id === votacionId
+            ? {
+                ...item,
+                aFavor: resumen.aFavor,
+                enContra: resumen.enContra,
+                votosFaltantes: resumen.votosFaltantes,
+                votosPorUsuario: {
+                  ...item.votosPorUsuario,
+                  [sessionUser.correo]: choice,
+                },
+              }
+            : item,
         ),
-      );
+      }));
 
       runAction('Registrando voto...', 'Voto registrado con exito');
     } catch (error) {
       console.error(error);
       const errorMessage = extractApiErrorMessage(error);
       if (errorMessage.toLowerCase().includes('ya emitio su voto')) {
-        patchAppData((prev) =>
-          voteInCondominio(prev, {
-            idCondominio: effectiveActiveCondominioId,
-            idVotacion: votacionId,
-            correoUsuario: sessionUser.correo,
-            choice,
-          }),
-        );
+        // El voto ya estaba en el servidor: solo se marca localmente para no
+        // ofrecer el boton otra vez. NO se incrementan los contadores, que ya
+        // incluyen ese voto.
+        patchAppData((prev) => ({
+          ...prev,
+          votacionesActivas: prev.votacionesActivas.map((item) =>
+            item.id === votacionId
+              ? {
+                  ...item,
+                  votosPorUsuario: {
+                    ...item.votosPorUsuario,
+                    [sessionUser.correo]: choice,
+                  },
+                }
+              : item,
+          ),
+        }));
         setFeedback('Tu voto ya estaba registrado');
         window.setTimeout(() => setFeedback(null), 2200);
         return;
@@ -1757,6 +1902,29 @@ function AppContent() {
 
       if (cerrada.tipo === 'CAMBIO_CUOTA' && role === 'administrador') {
         await cargarVotacionesCambioCuota();
+      }
+
+      if (cerrada.tipo === 'CAMBIO_ROL') {
+        // Cerrar una votacion de rol puede cambiar el rol del propio usuario
+        // (o del que esta viendo la pantalla): se refresca la sesion para que
+        // el menu y los permisos reflejen el cambio sin recargar la pagina.
+        await cargarElectorado();
+        const renovada = await backendApi.refreshSession();
+        if (renovada) {
+          aplicarSesion(renovada);
+        }
+
+        const resultado = cerrada.cambioRol;
+        if (resultado) {
+          setFeedback(
+            resultado.estadoPropuesta === 'EJECUTADA'
+              ? `Se aplico el cambio de rol de ${resultado.nombreObjetivo}.`
+              : (resultado.comentarioResolucion ??
+                `No se aplico el cambio de rol de ${resultado.nombreObjetivo}.`),
+          );
+          window.setTimeout(() => setFeedback(null), 4000);
+          return;
+        }
       }
 
       runAction('Cerrando votacion...', 'Votacion cerrada y archivada');
@@ -2262,6 +2430,7 @@ function AppContent() {
       setMenuOpen(false);
       setCuotaCambioForm(DEFAULT_CUOTA_CAMBIO_FORM);
       setVotacionesCambioCuota([]);
+      setCambioRolForm(DEFAULT_CAMBIO_ROL_FORM);
       setFeedback('Contraseña actualizada. Bienvenido a Elyx');
       window.setTimeout(() => setFeedback(null), 2200);
     } catch (error) {
@@ -2370,6 +2539,74 @@ function AppContent() {
       console.error(error);
       setFeedback(extractApiErrorMessage(error));
       window.setTimeout(() => setFeedback(null), 2200);
+    }
+  };
+
+  /**
+   * Miembros con derecho a voto y quorum. Se necesita tanto para que el admin
+   * elija a quien proponer como para mostrar "N de M" en la votacion.
+   */
+  const cargarElectorado = async () => {
+    if (!effectiveActiveCondominioId) {
+      setElectorado([]);
+      setElectoradoInfo(null);
+      return;
+    }
+
+    try {
+      const data = await backendApi.listElectorado(effectiveActiveCondominioId);
+      setElectorado(data.habilitados);
+      setElectoradoInfo({
+        totalHabilitados: data.totalHabilitados,
+        votosRequeridos: data.votosRequeridos,
+      });
+    } catch (error) {
+      console.error(error);
+      setElectorado([]);
+      setElectoradoInfo(null);
+    }
+  };
+
+  const crearVotacionCambioRol = async () => {
+    if (!effectiveActiveCondominioId || !activeMembership) {
+      return;
+    }
+
+    const idObjetivo = Number(cambioRolForm.idUsuarioCondominioObjetivo);
+    const motivo = cambioRolForm.motivo.trim();
+
+    if (!Number.isInteger(idObjetivo) || idObjetivo <= 0) {
+      setFeedback('Selecciona al miembro sobre el que se votara el cambio de rol.');
+      window.setTimeout(() => setFeedback(null), 2400);
+      return;
+    }
+
+    if (motivo.length < 10) {
+      setFeedback('Explica el motivo de la propuesta (al menos 10 caracteres).');
+      window.setTimeout(() => setFeedback(null), 2400);
+      return;
+    }
+
+    try {
+      const votacion = await backendApi.createVotacionCambioRol({
+        idCondominio: effectiveActiveCondominioId,
+        idUsuarioCondominioAdmin: activeMembership.idUsuarioCondominio,
+        idUsuarioCondominioObjetivo: idObjetivo,
+        rolPropuesto: cambioRolForm.rolPropuesto,
+        motivo,
+      });
+
+      patchAppData((prev) => ({
+        ...prev,
+        votacionesActivas: [votacion, ...prev.votacionesActivas],
+      }));
+
+      setCambioRolForm(DEFAULT_CAMBIO_ROL_FORM);
+      runAction('Publicando votacion...', 'Votacion de cambio de rol publicada');
+    } catch (error) {
+      console.error(error);
+      setFeedback(extractApiErrorMessage(error));
+      window.setTimeout(() => setFeedback(null), 2600);
     }
   };
 
@@ -2521,6 +2758,22 @@ function AppContent() {
 
     void cargarVotacionesCambioCuota();
   }, [isAuthenticated, role, effectiveActiveCondominioId]);
+
+  // El electorado lo consultan ambos roles: el admin para proponer y el
+  // condomino para saber si tiene derecho a voto y cuanto falta para el quorum.
+  useEffect(() => {
+    if (!isAuthenticated || !effectiveActiveCondominioId) {
+      setElectorado([]);
+      setElectoradoInfo(null);
+      return;
+    }
+
+    if (activeView !== 'votaciones') {
+      return;
+    }
+
+    void cargarElectorado();
+  }, [isAuthenticated, effectiveActiveCondominioId, activeView]);
 
   useEffect(() => {
     if (!isAuthenticated || role !== 'administrador' || !effectiveActiveCondominioId) {
@@ -2758,6 +3011,10 @@ function AppContent() {
     }
   }, [isAuthenticated, role]);
 
+  if (esRutaPublica(location.pathname)) {
+    return renderRutaPublica(location.pathname);
+  }
+
   if (!isAuthenticated || requiereCambio) {
     return (
       <LoginPage
@@ -2905,6 +3162,14 @@ function AppContent() {
     <DashboardPage
       role={role}
       sessionUser={sessionUser}
+      onCondominioCreado={async () => {
+        // Al crear un condominio aparece una membresia nueva: se refresca la
+        // sesion para que el selector lo muestre sin recargar la pagina.
+        const renovada = await backendApi.refreshSession();
+        if (renovada) {
+          aplicarSesion(renovada);
+        }
+      }}
       navItems={navItems}
       activeView={activeView}
       menuOpen={menuOpen}
@@ -2936,6 +3201,9 @@ function AppContent() {
       avisoMensaje={avisoMensaje}
       votacionPregunta={votacionPregunta}
       cuotaCambioForm={cuotaCambioForm}
+      cambioRolForm={cambioRolForm}
+      electorado={electorado}
+      electoradoInfo={electoradoInfo}
       votacionesCambioCuota={votacionesCambioCuota}
       gastoConcepto={gastoConcepto}
       gastoCategoria={gastoCategoria}
@@ -2972,6 +3240,8 @@ function AppContent() {
       onAvisoMensajeChange={setAvisoMensaje}
       onVotacionPreguntaChange={setVotacionPregunta}
       onCuotaCambioFormChange={setCuotaCambioForm}
+      onCambioRolFormChange={setCambioRolForm}
+      onCrearVotacionCambioRol={crearVotacionCambioRol}
       onEnviarReporteMantenimiento={enviarReporteMantenimiento}
       onCrearVotacionCambioCuota={crearVotacionCambioCuota}
       onEjecutarCambioCuota={ejecutarCambioCuota}

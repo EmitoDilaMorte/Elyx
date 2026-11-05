@@ -3,14 +3,26 @@ import { VotacionEstado } from '../../common/enums/votacion-estado.enum';
 import { VotoOpcion } from '../../common/enums/voto-opcion.enum';
 import { CerrarVotacionDto } from './dto/cerrar-votacion.dto';
 import { CreateCambioCuotaVotacionDto, EjecutarCambioCuotaDto } from './dto/create-cambio-cuota-votacion.dto';
+import { CreateCambioRolVotacionDto } from './dto/create-cambio-rol-votacion.dto';
 import { CreateVotacionDto } from './dto/create-votacion.dto';
 import { VotarVotacionDto } from './dto/votar-votacion.dto';
 import { DataSource } from 'typeorm';
 import { VotacionesGateway } from './votaciones.gateway';
 import { AvisosGateway } from '../avisos/avisos.gateway';
+import { MembresiasService, UltimoAdministradorException } from '../membresias/membresias.service';
 
-type VotacionTipo = 'GENERAL' | 'CAMBIO_CUOTA';
+type VotacionTipo = 'GENERAL' | 'CAMBIO_CUOTA' | 'CAMBIO_ROL';
 type EstadoCambioCuota = 'PENDIENTE' | 'APROBADA' | 'RECHAZADA' | 'EJECUTADA';
+
+type CambioRolResumen = {
+  idUsuarioCondominioObjetivo: number;
+  nombreObjetivo: string;
+  rolPropuesto: 'ADMINISTRADOR' | 'CONDOMINO';
+  estadoPropuesta: EstadoCambioCuota;
+  motivo: string | null;
+  comentarioResolucion: string | null;
+  ejecutable: boolean;
+};
 
 type VotacionResumen = {
   idVotacion: number;
@@ -23,6 +35,16 @@ type VotacionResumen = {
   aFavor: number;
   enContra: number;
   totalVotos: number;
+  /** Quorum congelado al crear; null en votaciones historicas. */
+  totalHabilitados: number | null;
+  votosRequeridos: number | null;
+  /** Cuantos votos a favor faltan para alcanzar el quorum. */
+  votosFaltantes: number | null;
+  /**
+   * Si la membresia consultante ya emitio su voto. Es un booleano, no el
+   * sentido del voto: el sufragio de cada vecino no se expone.
+   */
+  yaVoto: boolean;
   cambioCuota: {
     montoPropuesto: number;
     recargoPropuesto: number;
@@ -32,6 +54,7 @@ type VotacionResumen = {
     motivo: string | null;
     ejecutable: boolean;
   } | null;
+  cambioRol: CambioRolResumen | null;
 };
 
 @Injectable()
@@ -40,13 +63,25 @@ export class VotacionesService implements OnModuleInit {
     private readonly dataSource: DataSource,
     private readonly votacionesGateway: VotacionesGateway,
     private readonly avisosGateway: AvisosGateway,
+    private readonly membresias: MembresiasService,
   ) {}
 
   async onModuleInit() {
     await this.ensureCambioCuotaTable();
   }
 
-  async listByCondominio(idCondominio: number, estado?: VotacionEstado): Promise<VotacionResumen[]> {
+  /**
+   * Listado de votaciones del condominio.
+   *
+   * `idUsuarioCondominio` es opcional y solo se usa para marcar `yaVoto`: el
+   * sentido del voto NO se expone (seria filtrar la intencion de cada vecino),
+   * solo si esa membresia ya participo.
+   */
+  async listByCondominio(
+    idCondominio: number,
+    estado?: VotacionEstado,
+    idUsuarioCondominio?: number | null,
+  ): Promise<VotacionResumen[]> {
     await this.ensureCambioCuotaTable();
     const params: Array<number | string> = [idCondominio];
     let estadoClause = '';
@@ -56,16 +91,29 @@ export class VotacionesService implements OnModuleInit {
       estadoClause = ` AND v.estado = $${params.length}`;
     }
 
+    // Parametro del votante: solo alimenta `yaVoto`, nunca el sentido del voto.
+    let yaVotoExpr = 'FALSE';
+    const usuarioValido =
+      typeof idUsuarioCondominio === 'number' &&
+      Number.isInteger(idUsuarioCondominio) &&
+      idUsuarioCondominio > 0;
+    if (usuarioValido) {
+      params.push(idUsuarioCondominio as number);
+      yaVotoExpr = `COALESCE(BOOL_OR(vo.id_usuario_condominio = $${params.length}), FALSE)`;
+    }
+
     const rows = await this.dataSource.query(
       `
       SELECT
         v.id_votacion,
         v.id_condominio,
         v.pregunta,
-        CASE WHEN cc.id_votacion IS NULL THEN 'GENERAL' ELSE 'CAMBIO_CUOTA' END AS tipo,
+        v.tipo,
         v.estado,
         v.fecha_inicio,
         v.fecha_fin,
+        v.total_habilitados,
+        v.votos_requeridos,
         COALESCE(SUM(CASE WHEN vo.opcion = 'FAVOR' THEN 1 ELSE 0 END), 0) AS a_favor,
         COALESCE(SUM(CASE WHEN vo.opcion = 'CONTRA' THEN 1 ELSE 0 END), 0) AS en_contra,
         COUNT(vo.id_voto) AS total_votos,
@@ -73,19 +121,173 @@ export class VotacionesService implements OnModuleInit {
         cc.recargo_propuesto,
         cc.dia_limite_propuesto,
         cc.periodo_aplicacion,
-        cc.estado_propuesta,
-        cc.motivo
+        COALESCE(cc.estado_propuesta, cr.estado_propuesta) AS estado_propuesta,
+        COALESCE(cc.motivo, cr.motivo) AS motivo,
+        cr.comentario_resolucion,
+        cr.id_usuario_condominio_objetivo,
+        cr.rol_propuesto,
+        TRIM(CONCAT_WS(' ', uo.nombre, uo.primer_apellido, uo.segundo_apellido)) AS objetivo_nombre,
+        ${yaVotoExpr} AS ya_voto
       FROM votaciones v
       LEFT JOIN votaciones_cambio_cuota cc ON cc.id_votacion = v.id_votacion
+      LEFT JOIN votaciones_cambio_rol cr ON cr.id_votacion = v.id_votacion
+      LEFT JOIN usuarios_condominios uco ON uco.id_usuario_condominio = cr.id_usuario_condominio_objetivo
+      LEFT JOIN usuarios uo ON uo.id_usuario = uco.id_usuario
       LEFT JOIN votos vo ON vo.id_votacion = v.id_votacion
       WHERE v.id_condominio = $1${estadoClause}
-      GROUP BY v.id_votacion, cc.id_votacion
+      GROUP BY v.id_votacion, cc.id_votacion, cr.id_votacion, uco.id_usuario_condominio, uo.id_usuario
       ORDER BY v.fecha_inicio DESC
       `,
       params,
     );
 
     return rows.map((row: Record<string, unknown>) => this.toResumen(row));
+  }
+
+  /**
+   * Electorado: miembros ACTIVOS que ocupan al menos una unidad activa.
+   *
+   * El derecho a voto viene de **ocupar una unidad**, no del rol. Un
+   * administrador que no vive en el condominio no vota; uno que sí, sí vota.
+   */
+  async electorado(idCondominio: number) {
+    const habilitados = await this.listarElectorado(this.dataSource, idCondominio);
+
+    return {
+      habilitados,
+      totalHabilitados: habilitados.length,
+      votosRequeridos: this.calcularQuorum(habilitados.length),
+    };
+  }
+
+  async createCambioRol(input: CreateCambioRolVotacionDto): Promise<VotacionResumen> {
+    const fechaInicio = new Date();
+    const fechaFin = input.fechaFin
+      ? new Date(input.fechaFin)
+      : new Date(fechaInicio.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+    if (Number.isNaN(fechaFin.getTime()) || fechaFin.getTime() <= fechaInicio.getTime()) {
+      throw new BadRequestException('La fecha de fin debe ser posterior a la de inicio.');
+    }
+
+    const idVotacion = await this.dataSource.transaction(async (manager) => {
+      const objetivoRows = await manager.query(
+        `
+        SELECT uc.id_usuario_condominio, uc.rol, uc.estado,
+               TRIM(CONCAT_WS(' ', u.nombre, u.primer_apellido, u.segundo_apellido)) AS nombre
+        FROM usuarios_condominios uc
+        JOIN usuarios u ON u.id_usuario = uc.id_usuario
+        WHERE uc.id_usuario_condominio = $1 AND uc.id_condominio = $2
+        LIMIT 1
+        `,
+        [input.idUsuarioCondominioObjetivo, input.idCondominio],
+      );
+
+      if (objetivoRows.length === 0) {
+        throw new NotFoundException('El miembro indicado no pertenece a este condominio.');
+      }
+
+      const objetivo = objetivoRows[0] as Record<string, unknown>;
+      const rolActual = String(objetivo.rol ?? '');
+
+      if (String(objetivo.estado ?? '') !== 'ACTIVO') {
+        throw new BadRequestException('El miembro indicado no esta activo en el condominio.');
+      }
+
+      if (rolActual === input.rolPropuesto) {
+        throw new BadRequestException(`El miembro ya tiene el rol ${input.rolPropuesto}.`);
+      }
+
+      // El convocante no puede proponerse a si mismo: seria autodemolicion sin
+      // contrapeso. Para ese caso existe el endpoint del superusuario.
+      if (Number(input.idUsuarioCondominioAdmin) === Number(input.idUsuarioCondominioObjetivo)) {
+        throw new BadRequestException(
+          'No puedes convocar una votacion sobre tu propio rol. Solicita el cambio al superusuario.',
+        );
+      }
+
+      const habilitados = await this.listarElectorado(manager, input.idCondominio);
+      const totalHabilitados = habilitados.length;
+
+      if (totalHabilitados === 0) {
+        throw new BadRequestException(
+          'No hay miembros con unidad asignada que puedan votar en este condominio.',
+        );
+      }
+
+      const votosRequeridos = this.calcularQuorum(totalHabilitados);
+
+      const pregunta =
+        input.rolPropuesto === 'ADMINISTRADOR'
+          ? `¿Apruebas que ${String(objetivo.nombre ?? 'el miembro')} sea administrador del condominio?`
+          : `¿Apruebas retirar el rol de administrador a ${String(objetivo.nombre ?? 'el miembro')}?`;
+
+      const votacionRows = await manager.query(
+        `
+        INSERT INTO votaciones (
+          pregunta, tipo, fecha_inicio, fecha_fin, estado,
+          total_habilitados, votos_requeridos,
+          id_condominio, id_usuario_condominio_admin
+        )
+        VALUES ($1, 'CAMBIO_ROL', $2, $3, 'ABIERTA', $4, $5, $6, $7)
+        RETURNING id_votacion
+        `,
+        [
+          pregunta,
+          fechaInicio.toISOString(),
+          fechaFin.toISOString(),
+          totalHabilitados,
+          votosRequeridos,
+          input.idCondominio,
+          input.idUsuarioCondominioAdmin,
+        ],
+      );
+
+      const idVotacion = Number((votacionRows[0] as Record<string, unknown>)?.id_votacion);
+      if (!Number.isInteger(idVotacion)) {
+        throw new BadRequestException('No fue posible crear la votacion.');
+      }
+
+      await manager.query(
+        `
+        INSERT INTO votaciones_cambio_rol (
+          id_votacion, id_usuario_condominio_objetivo, rol_propuesto, estado_propuesta, motivo
+        )
+        VALUES ($1, $2, $3, 'PENDIENTE', $4)
+        `,
+        [idVotacion, input.idUsuarioCondominioObjetivo, input.rolPropuesto, input.motivo.trim()],
+      );
+
+      for (const habilitado of habilitados) {
+        await manager.query(
+          `
+          INSERT INTO notificaciones (
+            tipo, canal, asunto, mensaje, fecha_programada, fecha_envio, estado,
+            id_usuario_condominio, id_config
+          )
+          VALUES ('VOTACION_ROL_CREADA', 'INTERNA', $1, $2, NOW(), NOW(), 'ENVIADA', $3, NULL)
+          `,
+          [
+            'Votacion de rol abierta',
+            `${pregunta} Se requieren ${votosRequeridos} de ${totalHabilitados} votos a favor.`,
+            habilitado.idUsuarioCondominio,
+          ],
+        );
+      }
+
+      // El resumen se arma FUERA de la transaccion: `getResumenByVotacion` usa
+      // otra conexion del pool y no veria la fila sin confirmar.
+      return idVotacion;
+    });
+
+    const resumen = await this.getResumenByVotacion(idVotacion);
+
+    this.votacionesGateway.emitVotacionChanged(input.idCondominio, {
+      tipo: 'CAMBIO_ROL_CREADA',
+      votacion: resumen,
+    });
+
+    return resumen;
   }
 
   async create(input: CreateVotacionDto): Promise<VotacionResumen> {
@@ -221,9 +423,13 @@ export class VotacionesService implements OnModuleInit {
     return this.dataSource.transaction(async (manager) => {
       const votacionRows = await manager.query(
         `
-        SELECT id_votacion, id_condominio, estado, pregunta, fecha_inicio, fecha_fin
-        FROM votaciones
-        WHERE id_votacion = $1 AND id_condominio = $2
+        SELECT
+          v.id_votacion, v.id_condominio, v.estado, v.pregunta,
+          v.fecha_inicio, v.fecha_fin, v.tipo,
+          cr.id_usuario_condominio_objetivo, cr.rol_propuesto
+        FROM votaciones v
+        LEFT JOIN votaciones_cambio_rol cr ON cr.id_votacion = v.id_votacion
+        WHERE v.id_votacion = $1 AND v.id_condominio = $2
         LIMIT 1
         `,
         [input.idVotacion, input.idCondominio],
@@ -236,6 +442,10 @@ export class VotacionesService implements OnModuleInit {
       const votacion = votacionRows[0] as Record<string, unknown>;
       if (String(votacion.estado) !== VotacionEstado.ABIERTA) {
         throw new BadRequestException('La votacion ya no esta abierta.');
+      }
+
+      if (String(votacion.tipo ?? 'GENERAL') === 'CAMBIO_ROL') {
+        await this.validarVotoCambioRol(manager, votacion, input);
       }
 
       const votoRows = await manager.query(
@@ -265,10 +475,12 @@ export class VotacionesService implements OnModuleInit {
           v.id_votacion,
           v.id_condominio,
           v.pregunta,
-          CASE WHEN cc.id_votacion IS NULL THEN 'GENERAL' ELSE 'CAMBIO_CUOTA' END AS tipo,
+          v.tipo,
           v.estado,
           v.fecha_inicio,
           v.fecha_fin,
+          v.total_habilitados,
+          v.votos_requeridos,
           COALESCE(SUM(CASE WHEN vo.opcion = 'FAVOR' THEN 1 ELSE 0 END), 0) AS a_favor,
           COALESCE(SUM(CASE WHEN vo.opcion = 'CONTRA' THEN 1 ELSE 0 END), 0) AS en_contra,
           COUNT(vo.id_voto) AS total_votos,
@@ -276,13 +488,20 @@ export class VotacionesService implements OnModuleInit {
           cc.recargo_propuesto,
           cc.dia_limite_propuesto,
           cc.periodo_aplicacion,
-          cc.estado_propuesta,
-          cc.motivo
+          COALESCE(cc.estado_propuesta, cr.estado_propuesta) AS estado_propuesta,
+          COALESCE(cc.motivo, cr.motivo) AS motivo,
+          cr.comentario_resolucion,
+          cr.id_usuario_condominio_objetivo,
+          cr.rol_propuesto,
+          TRIM(CONCAT_WS(' ', uo.nombre, uo.primer_apellido, uo.segundo_apellido)) AS objetivo_nombre
         FROM votaciones v
         LEFT JOIN votaciones_cambio_cuota cc ON cc.id_votacion = v.id_votacion
+        LEFT JOIN votaciones_cambio_rol cr ON cr.id_votacion = v.id_votacion
+        LEFT JOIN usuarios_condominios uco ON uco.id_usuario_condominio = cr.id_usuario_condominio_objetivo
+        LEFT JOIN usuarios uo ON uo.id_usuario = uco.id_usuario
         LEFT JOIN votos vo ON vo.id_votacion = v.id_votacion
         WHERE v.id_votacion = $1
-        GROUP BY v.id_votacion, cc.id_votacion
+        GROUP BY v.id_votacion, cc.id_votacion, cr.id_votacion, uco.id_usuario_condominio, uo.id_usuario
         `,
         [input.idVotacion],
       );
@@ -357,6 +576,80 @@ export class VotacionesService implements OnModuleInit {
         );
         }
       }
+    }
+
+    if (
+      resumen.tipo === 'CAMBIO_ROL' &&
+      resumen.cambioRol &&
+      resumen.cambioRol.estadoPropuesta === 'PENDIENTE'
+    ) {
+      const requeridos = resumen.votosRequeridos ?? 1;
+      const aprobado = resumen.aFavor >= requeridos;
+      const cambioRol = resumen.cambioRol;
+
+      let estadoFinal: EstadoCambioCuota = aprobado ? 'EJECUTADA' : 'RECHAZADA';
+      let comentario: string | null = aprobado
+        ? null
+        : `No se alcanzo el quorum: ${resumen.aFavor} de ${requeridos} votos a favor (${resumen.totalHabilitados ?? 0} habilitados).`;
+
+      if (aprobado) {
+        try {
+          await this.membresias.cambiarRol(
+            input.idCondominio,
+            cambioRol.idUsuarioCondominioObjetivo,
+            cambioRol.rolPropuesto,
+          );
+        } catch (error) {
+          if (error instanceof UltimoAdministradorException) {
+            // La votacion si se gano, pero el cambio es invalido: se rechaza con
+            // el motivo en lugar de devolver un error al que cerro la votacion.
+            estadoFinal = 'RECHAZADA';
+            comentario = 'La comunidad aprobo el cambio, pero dejaria al condominio sin administradores.';
+          } else {
+            throw error;
+          }
+        }
+      }
+
+      await this.dataSource.query(
+        `
+        UPDATE votaciones_cambio_rol
+        SET estado_propuesta = $1,
+            comentario_resolucion = $2,
+            fecha_ejecucion = $3
+        WHERE id_votacion = $4
+        `,
+        [
+          estadoFinal,
+          comentario,
+          estadoFinal === 'EJECUTADA' ? new Date().toISOString() : null,
+          input.idVotacion,
+        ],
+      );
+
+      await this.notificarResultadoRol(input.idCondominio, cambioRol, estadoFinal, comentario);
+
+      // El aviso necesita una membresia valida como autor. Si la votacion no la
+      // trae (datos historicos), se omite el aviso pero no se pierde el cambio.
+      const adminRows = await this.dataSource.query(
+        `SELECT id_usuario_condominio_admin FROM votaciones WHERE id_votacion = $1 LIMIT 1`,
+        [input.idVotacion],
+      );
+      const idAdmin = Number(
+        (adminRows?.[0] as Record<string, unknown> | undefined)?.id_usuario_condominio_admin ?? 0,
+      );
+
+      if (Number.isInteger(idAdmin) && idAdmin > 0) {
+        await this.publishAvisoCambioCuota(
+          input.idCondominio,
+          idAdmin,
+          estadoFinal === 'EJECUTADA'
+            ? `Resultado: se aprobo el cambio de rol de ${cambioRol.nombreObjetivo} a ${cambioRol.rolPropuesto}.`
+            : `Resultado: no se aplico el cambio de rol de ${cambioRol.nombreObjetivo}. ${comentario ?? ''}`,
+        );
+      }
+
+      resumen = await this.getResumenByVotacion(input.idVotacion);
     }
 
     this.votacionesGateway.emitVotacionChanged(input.idCondominio, {
@@ -515,10 +808,12 @@ export class VotacionesService implements OnModuleInit {
         v.id_votacion,
         v.id_condominio,
         v.pregunta,
-        CASE WHEN cc.id_votacion IS NULL THEN 'GENERAL' ELSE 'CAMBIO_CUOTA' END AS tipo,
+        v.tipo,
         v.estado,
         v.fecha_inicio,
         v.fecha_fin,
+        v.total_habilitados,
+        v.votos_requeridos,
         COALESCE(SUM(CASE WHEN vo.opcion = 'FAVOR' THEN 1 ELSE 0 END), 0) AS a_favor,
         COALESCE(SUM(CASE WHEN vo.opcion = 'CONTRA' THEN 1 ELSE 0 END), 0) AS en_contra,
         COUNT(vo.id_voto) AS total_votos,
@@ -526,13 +821,20 @@ export class VotacionesService implements OnModuleInit {
         cc.recargo_propuesto,
         cc.dia_limite_propuesto,
         cc.periodo_aplicacion,
-        cc.estado_propuesta,
-        cc.motivo
+        COALESCE(cc.estado_propuesta, cr.estado_propuesta) AS estado_propuesta,
+        COALESCE(cc.motivo, cr.motivo) AS motivo,
+        cr.comentario_resolucion,
+        cr.id_usuario_condominio_objetivo,
+        cr.rol_propuesto,
+        TRIM(CONCAT_WS(' ', uo.nombre, uo.primer_apellido, uo.segundo_apellido)) AS objetivo_nombre
       FROM votaciones v
       LEFT JOIN votaciones_cambio_cuota cc ON cc.id_votacion = v.id_votacion
+      LEFT JOIN votaciones_cambio_rol cr ON cr.id_votacion = v.id_votacion
+      LEFT JOIN usuarios_condominios uco ON uco.id_usuario_condominio = cr.id_usuario_condominio_objetivo
+      LEFT JOIN usuarios uo ON uo.id_usuario = uco.id_usuario
       LEFT JOIN votos vo ON vo.id_votacion = v.id_votacion
       WHERE v.id_votacion = $1
-      GROUP BY v.id_votacion, cc.id_votacion
+      GROUP BY v.id_votacion, cc.id_votacion, cr.id_votacion, uco.id_usuario_condominio, uo.id_usuario
       `,
       [idVotacion],
     );
@@ -631,6 +933,129 @@ export class VotacionesService implements OnModuleInit {
     });
   }
 
+  /**
+   * Miembros con derecho a voto: ACTIVOS y con ocupacion vigente en una unidad
+   * activa **del mismo condominio**. Un admin sin unidad no aparece.
+   */
+  private async listarElectorado(
+    manager: { query: (q: string, p?: unknown[]) => Promise<unknown[]> },
+    idCondominio: number,
+  ): Promise<
+    Array<{
+      idUsuarioCondominio: number;
+      nombre: string;
+      correo: string;
+      rol: string;
+      unidades: string[];
+    }>
+  > {
+    const rows = await manager.query(
+      `
+      SELECT
+        uc.id_usuario_condominio,
+        uc.rol,
+        u.correo,
+        TRIM(CONCAT_WS(' ', u.nombre, u.primer_apellido, u.segundo_apellido)) AS nombre,
+        ARRAY_AGG(un.clave_unidad ORDER BY un.clave_unidad) AS unidades
+      FROM usuarios_condominios uc
+      JOIN usuarios u ON u.id_usuario = uc.id_usuario
+      JOIN unidades_ocupantes uo ON uo.id_usuario_condominio = uc.id_usuario_condominio
+      JOIN unidades un ON un.id_unidad = uo.id_unidad
+      WHERE uc.id_condominio = $1
+        AND uc.estado = 'ACTIVO'
+        AND un.id_condominio = uc.id_condominio
+        AND un.estado = 'ACTIVA'
+        AND (uo.fecha_fin IS NULL OR uo.fecha_fin >= CURRENT_DATE)
+      GROUP BY uc.id_usuario_condominio, uc.rol, u.correo, u.nombre, u.primer_apellido, u.segundo_apellido
+      ORDER BY nombre ASC
+      `,
+      [idCondominio],
+    );
+
+    return (rows as Array<Record<string, unknown>>).map((row) => ({
+      idUsuarioCondominio: Number(row.id_usuario_condominio),
+      nombre: String(row.nombre ?? '').trim(),
+      correo: String(row.correo ?? ''),
+      rol: String(row.rol ?? 'CONDOMINO'),
+      unidades: Array.isArray(row.unidades) ? (row.unidades as string[]) : [],
+    }));
+  }
+
+  /** Mayoría absoluta de TODOS los habilitados, no de los votos emitidos. */
+  private calcularQuorum(totalHabilitados: number): number {
+    return Math.floor(totalHabilitados / 2) + 1;
+  }
+
+  /**
+   * Reglas de voto exclusivas de CAMBIO_ROL:
+   *  1. Solo vota el electorado (con unidad).
+   *  2. Nadie puede votar fuera de la ventana de la votacion.
+   *  3. En una degradacion el afectado no vota; en un ascenso si puede.
+   */
+  private async validarVotoCambioRol(
+    manager: { query: (q: string, p?: unknown[]) => Promise<unknown[]> },
+    votacion: Record<string, unknown>,
+    input: VotarVotacionDto,
+  ): Promise<void> {
+    const ahora = Date.now();
+    const inicio = new Date(String(votacion.fecha_inicio)).getTime();
+    const fin = new Date(String(votacion.fecha_fin)).getTime();
+
+    if (Number.isFinite(inicio) && ahora < inicio) {
+      throw new BadRequestException('La votacion aun no ha comenzado.');
+    }
+    if (Number.isFinite(fin) && ahora > fin) {
+      throw new BadRequestException('La votacion ya vencio.');
+    }
+
+    const habilitados = await this.listarElectorado(manager, input.idCondominio);
+    const esHabilitado = habilitados.some(
+      (item) => item.idUsuarioCondominio === Number(input.idUsuarioCondominio),
+    );
+
+    if (!esHabilitado) {
+      throw new BadRequestException(
+        'Solo los condominos con unidad asignada pueden votar en esta votacion.',
+      );
+    }
+
+    const esDegradacion = String(votacion.rol_propuesto ?? '') === 'CONDOMINO';
+    const esObjetivo =
+      Number(votacion.id_usuario_condominio_objetivo) === Number(input.idUsuarioCondominio);
+
+    if (esDegradacion && esObjetivo) {
+      throw new BadRequestException('El miembro afectado no puede votar en su propia degradacion.');
+    }
+  }
+
+  /** Avisa a los administradores del resultado de una votacion de rol. */
+  private async notificarResultadoRol(
+    idCondominio: number,
+    cambioRol: CambioRolResumen,
+    estado: EstadoCambioCuota,
+    comentario: string | null,
+  ): Promise<void> {
+    const mensaje =
+      estado === 'EJECUTADA'
+        ? `El rol de ${cambioRol.nombreObjetivo} cambio a ${cambioRol.rolPropuesto}.`
+        : `La propuesta de cambio de rol para ${cambioRol.nombreObjetivo} no se aplico. ${
+            comentario ?? ''
+          }`;
+
+    await this.dataSource.query(
+      `
+      INSERT INTO notificaciones (
+        tipo, canal, asunto, mensaje, fecha_programada, fecha_envio, estado,
+        id_usuario_condominio, id_config
+      )
+      SELECT $1, 'INTERNA', $2, $3, NOW(), NOW(), 'ENVIADA', uc.id_usuario_condominio, NULL
+      FROM usuarios_condominios uc
+      WHERE uc.id_condominio = $4 AND uc.estado = 'ACTIVO' AND uc.rol = 'ADMINISTRADOR'
+      `,
+      ['VOTACION_ROL_RESUELTA', 'Resultado de la votacion de rol', mensaje.trim(), idCondominio],
+    );
+  }
+
   private async ensureCambioCuotaTable() {
     await this.dataSource.query(`
       CREATE TABLE IF NOT EXISTS votaciones_cambio_cuota (
@@ -651,7 +1076,8 @@ export class VotacionesService implements OnModuleInit {
 
   private toResumen(votacion: Record<string, unknown>): VotacionResumen {
     const tipoRaw = String(votacion.tipo ?? 'GENERAL');
-    const tipo = tipoRaw === 'CAMBIO_CUOTA' ? 'CAMBIO_CUOTA' : 'GENERAL';
+    const tipo: VotacionTipo =
+      tipoRaw === 'CAMBIO_CUOTA' ? 'CAMBIO_CUOTA' : tipoRaw === 'CAMBIO_ROL' ? 'CAMBIO_ROL' : 'GENERAL';
     const estadoPropuestaRaw = String(votacion.estado_propuesta ?? 'PENDIENTE');
     const estadoPropuesta: EstadoCambioCuota =
       estadoPropuestaRaw === 'APROBADA'
@@ -664,6 +1090,21 @@ export class VotacionesService implements OnModuleInit {
 
     const aFavor = Number(votacion.a_favor ?? 0);
     const enContra = Number(votacion.en_contra ?? 0);
+    const votosRequeridos =
+      votacion.votos_requeridos === null || votacion.votos_requeridos === undefined
+        ? null
+        : Number(votacion.votos_requeridos);
+    const totalHabilitados =
+      votacion.total_habilitados === null || votacion.total_habilitados === undefined
+        ? null
+        : Number(votacion.total_habilitados);
+
+    const rolPropuestoRaw = votacion.rol_propuesto ? String(votacion.rol_propuesto) : null;
+    const rolPropuesto =
+      rolPropuestoRaw === 'ADMINISTRADOR' || rolPropuestoRaw === 'CONDOMINO' ? rolPropuestoRaw : null;
+    const idObjetivo = votacion.id_usuario_condominio_objetivo
+      ? Number(votacion.id_usuario_condominio_objetivo)
+      : null;
 
     return {
       idVotacion: Number(votacion.id_votacion),
@@ -676,6 +1117,11 @@ export class VotacionesService implements OnModuleInit {
       aFavor,
       enContra,
       totalVotos: Number(votacion.total_votos ?? 0),
+      totalHabilitados,
+      votosRequeridos,
+      votosFaltantes:
+        votosRequeridos === null ? null : Math.max(votosRequeridos - aFavor, 0),
+      yaVoto: votacion.ya_voto === true,
       cambioCuota:
         tipo === 'CAMBIO_CUOTA'
           ? {
@@ -686,6 +1132,20 @@ export class VotacionesService implements OnModuleInit {
               estadoPropuesta,
               motivo: votacion.motivo ? String(votacion.motivo) : null,
               ejecutable: String(votacion.estado) === VotacionEstado.CERRADA && estadoPropuesta === 'APROBADA',
+            }
+          : null,
+      cambioRol:
+        tipo === 'CAMBIO_ROL' && idObjetivo && rolPropuesto
+          ? {
+              idUsuarioCondominioObjetivo: idObjetivo,
+              nombreObjetivo: String(votacion.objetivo_nombre ?? ''),
+              rolPropuesto,
+              estadoPropuesta,
+              motivo: votacion.motivo ? String(votacion.motivo) : null,
+              comentarioResolucion: votacion.comentario_resolucion
+                ? String(votacion.comentario_resolucion)
+                : null,
+              ejecutable: estadoPropuesta === 'APROBADA',
             }
           : null,
     };

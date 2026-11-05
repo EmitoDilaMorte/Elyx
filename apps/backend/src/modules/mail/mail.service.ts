@@ -1,16 +1,31 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+
+/** Dominios que Resend rechaza como remitente salvo que se verifiquen. */
+const DOMINIOS_NO_VERIFICABLES = new Set([
+  'gmail.com',
+  'googlemail.com',
+  'hotmail.com',
+  'outlook.com',
+  'live.com',
+  'yahoo.com',
+  'icloud.com',
+  'proton.me',
+  'protonmail.com',
+]);
 
 @Injectable()
 export class MailService {
-  async sendEmail(to: string, subject: string, html: string): Promise<boolean> {
-    const resendKey = process.env.RESEND_API_KEY?.trim();
+  private readonly logger = new Logger(MailService.name);
 
-    if (resendKey) {
-      return this.sendViaResend(to, subject, html, resendKey);
+  async sendEmail(to: string, subject: string, html: string): Promise<boolean> {
+    const proveedor = this.proveedor();
+
+    if (proveedor === 'resend') {
+      const key = (process.env.RESEND_API_KEY ?? '').trim();
+      return this.sendViaResend(to, subject, html, key);
     }
 
-    const smtpHost = process.env.SMTP_HOST?.trim();
-    if (smtpHost) {
+    if (proveedor === 'smtp') {
       return this.sendViaSmtp(to, subject, html);
     }
 
@@ -18,21 +33,103 @@ export class MailService {
     return true;
   }
 
-  private buildFrom(): string {
-    const fromEnv = process.env.SMTP_FROM?.trim();
-    if (fromEnv) {
-      if (fromEnv.includes('<') && fromEnv.includes('>')) return fromEnv;
-      if (fromEnv.includes('@')) return `Elyx <${fromEnv}>`;
-      return fromEnv;
+  /**
+   * Resuelve el transporte. `MAIL_PROVIDER` permite forzarlo; en `auto` se
+   * prefiere SMTP porque cualquier buzon real sirve, mientras que Resend exige
+   * un dominio propio verificado en su panel.
+   */
+  private proveedor(): 'smtp' | 'resend' | 'console' {
+    const forzado = (process.env.MAIL_PROVIDER ?? 'auto').trim().toLowerCase();
+    const tieneSmtp = Boolean((process.env.SMTP_HOST ?? '').trim());
+    const tieneResend = Boolean((process.env.RESEND_API_KEY ?? '').trim());
+
+    if (forzado === 'smtp') {
+      return tieneSmtp ? 'smtp' : 'console';
     }
-    const userEnv = process.env.SMTP_USER?.trim();
-    if (userEnv && userEnv.includes('@')) return `Elyx <${userEnv}>`;
+    if (forzado === 'resend') {
+      return tieneResend ? 'resend' : 'console';
+    }
+
+    if (tieneSmtp) {
+      return 'smtp';
+    }
+    if (tieneResend) {
+      return 'resend';
+    }
+    return 'console';
+  }
+
+  /**
+   * Construye un remitente valido: `Nombre <correo@dominio>`.
+   *
+   * Tolera las formas que la gente escribe en `.env`:
+   *  - `correo@dominio`
+   *  - `Nombre correo@dominio`   (sin corchetes: invalido para Resend y SMTP)
+   *  - `"Nombre <correo@dominio>"` (con comillas literales del archivo)
+   *  - `Nombre <correo@dominio>`
+   */
+  private buildFrom(): string {
+    const bruto = process.env.SMTP_FROM;
+    const limpio = this.limpiarComillas(bruto);
+
+    if (limpio) {
+      const conCorchetes = /^(.*?)\s*<([^<>@\s]+@[^<>\s]+)>\s*$/.exec(limpio);
+      if (conCorchetes) {
+        const nombre = conCorchetes[1].trim() || 'Elyx';
+        return `${nombre} <${conCorchetes[2]}>`;
+      }
+
+      // "Nombre correo@dominio" -> "Nombre <correo@dominio>"
+      const nombreYCorreo = /^(.*\S)\s+([^<>\s@]+@[^<>\s]+)$/.exec(limpio);
+      if (nombreYCorreo) {
+        return `${nombreYCorreo[1].trim()} <${nombreYCorreo[2]}>`;
+      }
+
+      if (/^[^<>\s@]+@[^<>\s]+$/.test(limpio)) {
+        return `Elyx <${limpio}>`;
+      }
+    }
+
+    const usuario = this.limpiarComillas(process.env.SMTP_USER);
+    if (usuario && /^[^<>\s@]+@[^<>\s]+$/.test(usuario)) {
+      return `Elyx <${usuario}>`;
+    }
+
     return 'Elyx <no-reply@elyx.mx>';
+  }
+
+  /** Quita comillas simples/dobles que docker deja literales desde el .env. */
+  private limpiarComillas(valor: string | undefined): string {
+    if (!valor) {
+      return '';
+    }
+    return valor
+      .trim()
+      .replace(/^["']+/, '')
+      .replace(/["']+$/, '')
+      .trim();
+  }
+
+  private esDominioNoVerificable(correo: string): boolean {
+    const dominio = correo.split('@')[1]?.toLowerCase() ?? '';
+    return DOMINIOS_NO_VERIFICABLES.has(dominio);
   }
 
   private async sendViaResend(to: string, subject: string, html: string, apiKey: string): Promise<boolean> {
     try {
       const from = this.buildFrom();
+      const correoRemitente = /<([^<>]+)>/.exec(from)?.[1] ?? from;
+
+      // Resend solo admite remitentes de un dominio verificado en su panel.
+      // Con Gmail/Hotmail el error del API es opaco (422): se avisa aqui.
+      if (this.esDominioNoVerificable(correoRemitente)) {
+        console.error(
+          `[MAIL] Resend no puede enviar desde "${correoRemitente}": su dominio no es verificable. ` +
+            'Configura un dominio propio en Resend o usa SMTP (MAIL_PROVIDER=smtp).',
+        );
+        return false;
+      }
+
       const response = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: {

@@ -1,12 +1,8 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
-import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
+import { CondominioAltaService, QueryManager } from '../condominio-alta/condominio-alta.service';
+import { MembresiasService } from '../membresias/membresias.service';
 import { CreateOnboardingDto } from './dto/create-onboarding.dto';
-
-type QueryManager = {
-  query: (query: string, parameters?: unknown[]) => Promise<unknown[]>;
-};
 
 type OnboardingResponse = {
   idCondominio: number;
@@ -72,11 +68,22 @@ type SuperCondominioRecord = {
   totalUsuarios: number;
 };
 
+type MembresiaRecord = {
+  idUsuarioCondominio: number;
+  idUsuario: number;
+  correo: string;
+  nombre: string;
+  rol: 'ADMINISTRADOR' | 'CONDOMINO';
+  estado: string;
+  unidades: string[];
+};
+
 @Injectable()
 export class UsuariosService {
   constructor(
     private readonly dataSource: DataSource,
-    private readonly notificacionesGateway: NotificacionesGateway,
+    private readonly alta: CondominioAltaService,
+    private readonly membresias: MembresiasService,
   ) {}
 
   async createOnboardingInicial(input: CreateOnboardingDto): Promise<OnboardingResponse> {
@@ -113,32 +120,29 @@ export class UsuariosService {
     }
 
     const fechaInicioCobro = this.parseFechaInicioCobro(input.fechaInicioCobro);
-    const fechaLimiteCuota = this.buildFechaLimite(input.periodoAplicacionInicial, input.diaLimitePago);
+    const fechaLimiteCuota = this.alta.buildFechaLimite(
+      input.periodoAplicacionInicial,
+      input.diaLimitePago,
+    );
     if (fechaLimiteCuota < fechaInicioCobro) {
       throw new BadRequestException('La fecha limite de pago no puede ser anterior a la fecha de inicio de cobro.');
     }
 
     return this.dataSource.transaction(async (manager) => {
-      const condominioRows = await manager.query(
-        `
-        INSERT INTO condominios (nombre, direccion, estado)
-        VALUES ($1, $2, 'ACTIVO')
-        RETURNING id_condominio
-        `,
-        [input.nombreCondominio.trim(), input.direccionCondominio?.trim() ?? null],
-      );
-
-      const idCondominio = Number(condominioRows[0]?.id_condominio);
-      if (!Number.isInteger(idCondominio)) {
-        throw new BadRequestException('No fue posible crear el condominio.');
-      }
+      // El superusuario no queda limitado por licencia: cupo_unidades = NULL.
+      const idCondominio = await this.alta.crearCondominio(manager, {
+        nombre: input.nombreCondominio,
+        direccion: input.direccionCondominio,
+        estado: 'ACTIVO',
+        cupoUnidades: null,
+      });
 
       const adminsCreados: OnboardingResponse['adminsCreados'] = [];
       const condominosCreados: OnboardingResponse['condominosCreados'] = [];
 
       for (const admin of adminUnique) {
-        const usuario = await this.findOrCreateUsuario(manager, admin, 'ADMINISTRADOR');
-        const idUsuarioCondominio = await this.ensureMembresia(
+        const usuario = await this.alta.findOrCreateUsuario(manager, admin);
+        const idUsuarioCondominio = await this.alta.ensureMembresia(
           manager,
           usuario.idUsuario,
           idCondominio,
@@ -155,8 +159,8 @@ export class UsuariosService {
       }
 
       for (const condomino of condominoUnique) {
-        const usuario = await this.findOrCreateUsuario(manager, condomino, 'CONDOMINO');
-        const idUsuarioCondominio = await this.ensureMembresia(
+        const usuario = await this.alta.findOrCreateUsuario(manager, condomino);
+        const idUsuarioCondominio = await this.alta.ensureMembresia(
           manager,
           usuario.idUsuario,
           idCondominio,
@@ -191,72 +195,32 @@ export class UsuariosService {
         condominoMap,
       );
 
-      const cuotasInicialesCreadas = await this.createCuotasIniciales(
-        manager,
-        idCondominio,
-        input.periodoAplicacionInicial,
-        input.montoCuotaInicial,
-        input.recargoFijoPorDia,
-        input.diaLimitePago,
-      );
+      const cuotasInicialesCreadas = await this.alta.crearCuotasIniciales(manager, idCondominio, {
+        periodo: input.periodoAplicacionInicial,
+        monto: input.montoCuotaInicial,
+        recargoPorDia: input.recargoFijoPorDia,
+        diaLimite: input.diaLimitePago,
+      });
 
       for (const admin of adminsCreados) {
-        await manager.query(
-          `
-          INSERT INTO notificaciones (
-            tipo,
-            canal,
-            asunto,
-            mensaje,
-            fecha_programada,
-            fecha_envio,
-            estado,
-            id_usuario_condominio,
-            id_config
-          )
-          VALUES ('ALTA_INICIAL_USUARIO', 'INTERNA', $1, $2, NOW(), NOW(), 'ENVIADA', $3, NULL)
-          `,
-          [
-            'Acceso inicial creado',
-            admin.reutilizado
-              ? 'Ya tenias cuenta en Elyx. Se agrego tu acceso como administrador en este condominio.'
-              : 'Tu cuenta de administrador fue creada con password temporal. Debes cambiarla en tu primer acceso.',
-            admin.idUsuarioCondominio,
-          ],
-        );
-
-        this.notificacionesGateway.emitNotificacionChanged(idCondominio, admin.idUsuarioCondominio, {
-          tipo: 'ALTA_INICIAL_USUARIO',
+        await this.alta.notificarAlta(manager, {
+          idCondominio,
+          idUsuarioCondominio: admin.idUsuarioCondominio,
+          asunto: 'Acceso inicial creado',
+          mensaje: admin.reutilizado
+            ? 'Ya tenias cuenta en Elyx. Se agrego tu acceso como administrador en este condominio.'
+            : 'Tu cuenta de administrador fue creada con password temporal. Debes cambiarla en tu primer acceso.',
         });
       }
 
       for (const condomino of condominosCreados) {
-        await manager.query(
-          `
-          INSERT INTO notificaciones (
-            tipo,
-            canal,
-            asunto,
-            mensaje,
-            fecha_programada,
-            fecha_envio,
-            estado,
-            id_usuario_condominio,
-            id_config
-          )
-          VALUES ('ALTA_INICIAL_USUARIO', 'INTERNA', $1, $2, NOW(), NOW(), 'ENVIADA', $3, NULL)
-          `,
-          [
-            'Acceso inicial creado',
-            condomino.reutilizado
-              ? 'Ya tenias cuenta en Elyx. Se agrego tu acceso como condomino en este condominio.'
-              : 'Tu cuenta de condomino fue creada con password temporal. Debes cambiarla en tu primer acceso.',
-            condomino.idUsuarioCondominio,
-          ],
-        );
-
-        this.notificacionesGateway.emitNotificacionChanged(idCondominio, condomino.idUsuarioCondominio, {
-          tipo: 'ALTA_INICIAL_USUARIO',
+        await this.alta.notificarAlta(manager, {
+          idCondominio,
+          idUsuarioCondominio: condomino.idUsuarioCondominio,
+          asunto: 'Acceso inicial creado',
+          mensaje: condomino.reutilizado
+            ? 'Ya tenias cuenta en Elyx. Se agrego tu acceso como condomino en este condominio.'
+            : 'Tu cuenta de condomino fue creada con password temporal. Debes cambiarla en tu primer acceso.',
         });
       }
 
@@ -380,7 +344,7 @@ export class UsuariosService {
       idCondominio: Number(row.idCondominio),
       nombre: String(row.nombre),
       direccion: row.direccion ? String(row.direccion) : null,
-      estado: String(row.estado) === 'INACTIVO' ? 'INACTIVO' : 'ACTIVO',
+      estado: this.normalizarEstadoCondominio(row.estado),
       fechaAlta: this.safeIsoDate(row.fechaAlta),
       totalAdmins: Number(row.totalAdmins),
       totalCondominos: Number(row.totalCondominos),
@@ -427,12 +391,72 @@ export class UsuariosService {
       idCondominio: Number(row.idCondominio),
       nombre: String(row.nombre),
       direccion: row.direccion ? String(row.direccion) : null,
-      estado: String(row.estado) === 'INACTIVO' ? 'INACTIVO' : 'ACTIVO',
+      estado: this.normalizarEstadoCondominio(row.estado),
       fechaAlta: this.safeIsoDate(row.fechaAlta),
       totalAdmins: Number(row.totalAdmins ?? 0),
       totalCondominos: Number(row.totalCondominos ?? 0),
       totalUsuarios: Number(row.totalUsuarios ?? 0),
     };
+  }
+
+  /**
+   * El listado del superusuario sigue exponiendo solo ACTIVO/INACTIVO: los
+   * estados del ciclo de registro se presentan como INACTIVO hasta que el
+   * condominio queda operativo.
+   */
+  private normalizarEstadoCondominio(value: unknown): 'ACTIVO' | 'INACTIVO' {
+    return String(value ?? '') === 'ACTIVO' ? 'ACTIVO' : 'INACTIVO';
+  }
+
+  async listMembresias(idCondominio: number): Promise<MembresiaRecord[]> {
+    const rows = await this.dataSource.query(
+      `
+      SELECT
+        uc.id_usuario_condominio,
+        uc.rol,
+        uc.estado,
+        u.id_usuario,
+        u.correo,
+        TRIM(CONCAT_WS(' ', u.nombre, u.primer_apellido, u.segundo_apellido)) AS nombre,
+        (
+          SELECT STRING_AGG(un.clave_unidad, ', ' ORDER BY un.clave_unidad)
+          FROM unidades_ocupantes uo
+          JOIN unidades un ON un.id_unidad = uo.id_unidad
+          WHERE uo.id_usuario_condominio = uc.id_usuario_condominio
+            AND (uo.fecha_fin IS NULL OR uo.fecha_fin >= CURRENT_DATE)
+        ) AS unidades
+      FROM usuarios_condominios uc
+      JOIN usuarios u ON u.id_usuario = uc.id_usuario
+      WHERE uc.id_condominio = $1
+      ORDER BY uc.rol ASC, u.nombre ASC
+      `,
+      [idCondominio],
+    );
+
+    return rows.map((row: Record<string, unknown>) => ({
+      idUsuarioCondominio: Number(row.id_usuario_condominio),
+      idUsuario: Number(row.id_usuario),
+      correo: String(row.correo ?? ''),
+      nombre: String(row.nombre ?? '').trim(),
+      rol: String(row.rol ?? 'CONDOMINO') as 'ADMINISTRADOR' | 'CONDOMINO',
+      estado: String(row.estado ?? 'ACTIVO'),
+      unidades: row.unidades ? String(row.unidades).split(', ') : [],
+    }));
+  }
+
+  /**
+   * Cambia el rol de una membresia.
+   *
+   * Delega en `MembresiasService` para que la regla "nunca dejar el condominio
+   * sin administradores" viva en un solo lugar y la comparta la votacion.
+   */
+  async updateMembresiaRol(
+    idCondominio: number,
+    idUsuarioCondominio: number,
+    rol: 'ADMINISTRADOR' | 'CONDOMINO',
+  ): Promise<MembresiaRecord[]> {
+    await this.membresias.cambiarRol(idCondominio, idUsuarioCondominio, rol);
+    return this.listMembresias(idCondominio);
   }
 
   private safeIsoDate(value: unknown): string {
@@ -460,115 +484,6 @@ export class UsuariosService {
     }
 
     return result;
-  }
-
-  private async findOrCreateUsuario(
-    manager: QueryManager,
-    persona: OnboardingPersonaInput,
-    rolObjetivo: 'ADMINISTRADOR' | 'CONDOMINO',
-  ): Promise<{ idUsuario: number; passwordTemporal: string | null; reutilizado: boolean }> {
-    const correo = persona.correo.trim().toLowerCase();
-    const existingRows = await manager.query(
-      `
-      SELECT id_usuario
-      FROM usuarios
-      WHERE LOWER(correo) = $1
-      LIMIT 1
-      `,
-      [correo],
-    );
-
-    if (existingRows.length > 0) {
-      const idUsuario = Number((existingRows[0] as Record<string, unknown>).id_usuario);
-      if (!Number.isInteger(idUsuario)) {
-        throw new BadRequestException('No fue posible reutilizar el usuario existente.');
-      }
-
-      if (rolObjetivo === 'CONDOMINO') {
-        const adminRows = await manager.query(
-          `
-          SELECT 1
-          FROM usuarios_condominios
-          WHERE id_usuario = $1 AND rol = 'ADMINISTRADOR'
-          LIMIT 1
-          `,
-          [idUsuario],
-        );
-
-        if (adminRows.length > 0) {
-          throw new BadRequestException(
-            'Este correo ya esta registrado como administrador. Las cuentas de administrador solo pueden usarse como administrador.',
-          );
-        }
-      }
-
-      return {
-        idUsuario,
-        passwordTemporal: null,
-        reutilizado: true,
-      };
-    }
-
-    const passwordTemporal = this.generateTemporalPassword();
-    const hash = await bcrypt.hash(passwordTemporal, 10);
-
-    const createdRows = await manager.query(
-      `
-      INSERT INTO usuarios (
-        nombre,
-        primer_apellido,
-        segundo_apellido,
-        correo,
-        password_hash,
-        es_superusuario,
-        requiere_cambio_password
-      )
-      VALUES ($1, $2, $3, $4, $5, FALSE, TRUE)
-      RETURNING id_usuario
-      `,
-      [
-        persona.nombre.trim(),
-        persona.apellidoPaterno.trim(),
-        persona.apellidoMaterno?.trim() ?? null,
-        correo,
-        hash,
-      ],
-    );
-
-    const idUsuario = Number((createdRows[0] as Record<string, unknown>)?.id_usuario);
-    if (!Number.isInteger(idUsuario)) {
-      throw new BadRequestException('No fue posible crear los usuarios iniciales.');
-    }
-
-    return {
-      idUsuario,
-      passwordTemporal,
-      reutilizado: false,
-    };
-  }
-
-  private async ensureMembresia(
-    manager: QueryManager,
-    idUsuario: number,
-    idCondominio: number,
-    rol: 'ADMINISTRADOR' | 'CONDOMINO',
-  ): Promise<number> {
-    const rows = await manager.query(
-      `
-      INSERT INTO usuarios_condominios (rol, estado, id_usuario, id_condominio)
-      VALUES ($1, 'ACTIVO', $2, $3)
-      ON CONFLICT (id_usuario, id_condominio)
-      DO UPDATE SET rol = EXCLUDED.rol, estado = 'ACTIVO'
-      RETURNING id_usuario_condominio
-      `,
-      [rol, idUsuario, idCondominio],
-    );
-
-    const idUsuarioCondominio = Number((rows[0] as Record<string, unknown>)?.id_usuario_condominio);
-    if (!Number.isInteger(idUsuarioCondominio)) {
-      throw new BadRequestException('No fue posible crear o actualizar la membresia del usuario.');
-    }
-    return idUsuarioCondominio;
   }
 
   private parseFechaInicioCobro(rawDate: string): Date {
@@ -599,75 +514,6 @@ export class UsuariosService {
     return fechaInicio;
   }
 
-  private buildFechaLimite(periodoAplicacionInicial: string, diaLimitePago: number): Date {
-    const match = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(periodoAplicacionInicial);
-    if (!match) {
-      throw new BadRequestException('El periodo de aplicacion inicial debe tener formato YYYY-MM.');
-    }
-
-    const year = Number(match[1]);
-    const month = Number(match[2]);
-    return new Date(year, month - 1, diaLimitePago);
-  }
-
-  private async createCuotasIniciales(
-    manager: QueryManager,
-    idCondominio: number,
-    periodoAplicacionInicial: string,
-    montoCuotaInicial: number,
-    recargoFijoPorDia: number,
-    diaLimitePago: number,
-  ): Promise<number> {
-    const fechaLimite = this.buildFechaLimite(periodoAplicacionInicial, diaLimitePago)
-      .toISOString()
-      .slice(0, 10);
-
-    const unidadesRows = await manager.query(
-      `
-      SELECT id_unidad
-      FROM unidades
-      WHERE id_condominio = $1 AND estado = 'ACTIVA'
-      `,
-      [idCondominio],
-    );
-
-    if (unidadesRows.length === 0) {
-      return 0;
-    }
-
-    let createdCount = 0;
-    for (const row of unidadesRows as Array<Record<string, unknown>>) {
-      const idUnidad = Number(row.id_unidad);
-      if (!Number.isInteger(idUnidad)) {
-        continue;
-      }
-
-      const insertRows = await manager.query(
-        `
-        INSERT INTO cuotas (periodo, monto_base, fecha_limite, recargo_por_dia, estado, id_condominio, id_unidad)
-        VALUES ($1, $2, $3, $4, 'PENDIENTE', $5, $6)
-        ON CONFLICT (id_unidad, periodo)
-        DO NOTHING
-        RETURNING id_cuota
-        `,
-        [
-          periodoAplicacionInicial,
-          montoCuotaInicial,
-          fechaLimite,
-          recargoFijoPorDia,
-          idCondominio,
-          idUnidad,
-        ],
-      );
-
-      if (insertRows.length > 0) {
-        createdCount += 1;
-      }
-    }
-
-    return createdCount;
-  }
-
   private async createUnidadesYAsignaciones(
     manager: QueryManager,
     idCondominio: number,
@@ -675,27 +521,20 @@ export class UsuariosService {
     unidades: OnboardingUnidadInput[],
     condominoMap: Map<string, number>,
   ): Promise<{ unidadesCreadas: number; ocupacionesCreadas: number }> {
-    let unidadesCreadas = 0;
-    let ocupacionesCreadas = 0;
+    const creadas = await this.alta.crearUnidades(
+      manager,
+      idCondominio,
+      unidades.map((unidad) => ({
+        claveUnidad: unidad.claveUnidad,
+        tipoUnidad: unidad.tipoUnidad,
+      })),
+    );
+
     const fechaInicio = fechaInicioCobro.toISOString().slice(0, 10);
+    let ocupacionesCreadas = 0;
 
-    for (const unidad of unidades) {
-      const createdRows = await manager.query(
-        `
-        INSERT INTO unidades (clave_unidad, tipo_unidad, estado, id_condominio)
-        VALUES ($1, $2, 'ACTIVA', $3)
-        RETURNING id_unidad
-        `,
-        [unidad.claveUnidad, unidad.tipoUnidad, idCondominio],
-      );
-
-      const idUnidad = Number((createdRows[0] as Record<string, unknown>)?.id_unidad);
-      if (!Number.isInteger(idUnidad)) {
-        throw new BadRequestException(`No fue posible crear la unidad ${unidad.claveUnidad}.`);
-      }
-
-      unidadesCreadas += 1;
-
+    for (let index = 0; index < unidades.length; index += 1) {
+      const unidad = unidades[index];
       if (!unidad.correoOcupante) {
         continue;
       }
@@ -707,26 +546,17 @@ export class UsuariosService {
         );
       }
 
-      await manager.query(
-        `
-        INSERT INTO unidades_ocupantes (tipo_ocupacion, fecha_inicio, fecha_fin, id_usuario_condominio, id_unidad)
-        VALUES ('PROPIETARIO', $1, NULL, $2, $3)
-        `,
-        [fechaInicio, idUsuarioCondominio, idUnidad],
+      await this.alta.asignarOcupante(
+        manager,
+        creadas[index].idUnidad,
+        idUsuarioCondominio,
+        'PROPIETARIO',
+        fechaInicio,
       );
 
       ocupacionesCreadas += 1;
     }
 
-    return { unidadesCreadas, ocupacionesCreadas };
-  }
-
-  private generateTemporalPassword() {
-    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789@#*';
-    let out = 'Elyx!';
-    for (let i = 0; i < 8; i += 1) {
-      out += alphabet[Math.floor(Math.random() * alphabet.length)];
-    }
-    return out;
+    return { unidadesCreadas: creadas.length, ocupacionesCreadas };
   }
 }

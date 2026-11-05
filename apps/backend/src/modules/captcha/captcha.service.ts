@@ -41,7 +41,16 @@ export class CaptchaService implements OnModuleDestroy {
     }
   }
 
-  async crear(scope = 'general'): Promise<{ challengeId: string; question: string; expiresIn: number }> {
+  async crear(
+    scope = 'general',
+  ): Promise<{ habilitado: boolean; challengeId: string; question: string; expiresIn: number }> {
+    // Si el CAPTCHA esta apagado no se genera desafio: el frontend usa
+    // `habilitado` para no renderizar el campo. Antes se generaba igual y el
+    // usuario veia una verificacion que el backend nunca iba a exigir.
+    if (process.env.CAPTCHA_MATH_ENABLED === 'false') {
+      return { habilitado: false, challengeId: '', question: '', expiresIn: 0 };
+    }
+
     const izquierdo = crypto.randomInt(2, 20);
     const derecho = crypto.randomInt(2, 20);
     const suma = crypto.randomInt(0, 2) === 1;
@@ -63,7 +72,7 @@ export class CaptchaService implements OnModuleDestroy {
       TTL_SEGUNDOS,
     );
 
-    return { challengeId, question, expiresIn: TTL_SEGUNDOS };
+    return { habilitado: true, challengeId, question, expiresIn: TTL_SEGUNDOS };
   }
 
   async verificar(challengeId: string, respuesta: string): Promise<void> {

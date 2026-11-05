@@ -19,6 +19,8 @@ export function Icon({ name }: IconProps) {
     close: 'M5 5l14 14M19 5L5 19',
     download: 'M12 3v11m0 0l-4-4m4 4l4-4M5 20h14',
     check: 'M4 12l5 5L20 6',
+    link: 'M10 14a4 4 0 0 1 0-6l2-2a4 4 0 0 1 6 6l-1 1M14 10a4 4 0 0 1 0 6l-2 2a4 4 0 0 1-6-6l1-1',
+    card: 'M3 6h18v12H3zM3 10h18M7 15h3',
   };
 
   return (

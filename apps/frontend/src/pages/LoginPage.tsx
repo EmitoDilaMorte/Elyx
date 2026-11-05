@@ -1,4 +1,5 @@
 import { type ChangeEvent, useCallback, useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Icon } from '../components/Icon';
 import { MathCaptcha } from '../components/MathCaptcha';
 import { MfaStep } from '../components/MfaStep';
@@ -127,7 +128,10 @@ export function LoginPage({
   const cargarMath = useCallback(async (scope: 'login' | 'forgot' | 'reset') => {
     try {
       const data = await backendApi.captchaMatematico(scope);
-      const desafio = { challengeId: data.challengeId, question: data.question };
+      // El backend desactiva el desafio con CAPTCHA_MATH_ENABLED=false.
+      const desafio = data.habilitado
+        ? { challengeId: data.challengeId, question: data.question }
+        : null;
       if (scope === 'login') {
         setMath(desafio);
         setMathAnswer('');
@@ -429,14 +433,16 @@ export function LoginPage({
                     <p className="helper-text">Ingresa tu correo para recibir un enlace de recuperacion.</p>
                     <label className="field-label" htmlFor="forgot-correo">Correo</label>
                     <input id="forgot-correo" type="email" value={forgotCorreo} onChange={(e) => setForgotCorreo(e.target.value)} placeholder="usuario@elyx.mx" />
-                    <MathCaptcha
-                      challengeId={forgotMath?.challengeId ?? ''}
-                      question={forgotMath?.question ?? ''}
-                      value={forgotMathAnswer}
-                      onChange={setForgotMathAnswer}
-                      onRefresh={() => void cargarMath('forgot')}
-                      disabled={forgotLoading}
-                    />
+                    {forgotMath && (
+                      <MathCaptcha
+                        challengeId={forgotMath.challengeId}
+                        question={forgotMath.question}
+                        value={forgotMathAnswer}
+                        onChange={setForgotMathAnswer}
+                        onRefresh={() => void cargarMath('forgot')}
+                        disabled={forgotLoading}
+                      />
+                    )}
                     <TurnstileWidget ref={forgotCaptchaRef} action="forgot-password" onTokenChange={handleForgotCaptchaToken} />
                     {forgotError && <p className="login-error">{forgotError}</p>}
                     <div className="btn-row" style={{ marginTop: '0.75rem' }}>
@@ -451,14 +457,16 @@ export function LoginPage({
                   <p className="helper-text">{forgotMsg || 'Define una nueva contraseña.'}</p>
                   <label className="field-label" htmlFor="reset-password">Nueva contraseña</label>
                   <input id="reset-password" type="password" value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} placeholder="Minimo 8 caracteres" />
-                  <MathCaptcha
-                    challengeId={resetMath?.challengeId ?? ''}
-                    question={resetMath?.question ?? ''}
-                    value={resetMathAnswer}
-                    onChange={setResetMathAnswer}
-                    onRefresh={() => void cargarMath('reset')}
-                    disabled={forgotLoading}
-                  />
+                  {resetMath && (
+                    <MathCaptcha
+                      challengeId={resetMath.challengeId}
+                      question={resetMath.question}
+                      value={resetMathAnswer}
+                      onChange={setResetMathAnswer}
+                      onRefresh={() => void cargarMath('reset')}
+                      disabled={forgotLoading}
+                    />
+                  )}
                   <TurnstileWidget ref={resetCaptchaRef} action="reset-password" onTokenChange={handleResetCaptchaToken} />
                   {forgotMsg && <p className="helper-text" style={{ color: 'var(--green)' }}>{forgotMsg}</p>}
                   {forgotError && <p className="login-error">{forgotError}</p>}
@@ -513,14 +521,16 @@ export function LoginPage({
             </p>
           )}
 
-          <MathCaptcha
-            challengeId={math?.challengeId ?? ''}
-            question={math?.question ?? ''}
-            value={mathAnswer}
-            onChange={setMathAnswer}
-            onRefresh={() => void cargarMath('login')}
-            disabled={Boolean(loadingLabel)}
-          />
+          {math && (
+            <MathCaptcha
+              challengeId={math.challengeId}
+              question={math.question}
+              value={mathAnswer}
+              onChange={setMathAnswer}
+              onRefresh={() => void cargarMath('login')}
+              disabled={Boolean(loadingLabel)}
+            />
+          )}
 
           <TurnstileWidget ref={loginCaptchaRef} action="login" onTokenChange={handleLoginCaptchaToken} />
 
@@ -543,6 +553,11 @@ export function LoginPage({
               Ver politica de privacidad
             </button>
           </div>
+
+          <p className="registro-link">
+            <Link to="/crear-condominio">Crea tu condominio</Link>
+            <span className="muted-text"> — registra tu edificio y comparte el enlace con tus condominos.</span>
+          </p>
 
         </article>
       </section>

@@ -11,7 +11,10 @@ export type ViewKey =
   | 'validaciones'
   | 'finanzas'
   | 'perfil'
-  | 'solicitudes';
+  | 'solicitudes'
+  | 'invitaciones'
+  | 'suscripcion'
+  | 'nuevo-condominio';
 
 export type CuotaStatus = 'PENDIENTE' | 'EN_VALIDACION' | 'PAGADA';
 export type PagoStatus = 'PENDIENTE' | 'APROBADO' | 'RECHAZADO';
@@ -31,7 +34,9 @@ export type IconName =
   | 'menu'
   | 'close'
   | 'download'
-  | 'check';
+  | 'check'
+  | 'link'
+  | 'card';
 
 export type NavItem = {
   key: ViewKey;
@@ -93,11 +98,23 @@ export type Aviso = {
   idUsuarioCondominioAdmin: number;
 };
 
+export type VotacionTipo = 'GENERAL' | 'CAMBIO_CUOTA' | 'CAMBIO_ROL';
+
+export type CambioRolVotacion = {
+  idUsuarioCondominioObjetivo: number;
+  nombreObjetivo: string;
+  rolPropuesto: 'ADMINISTRADOR' | 'CONDOMINO';
+  estadoPropuesta: 'PENDIENTE' | 'APROBADA' | 'RECHAZADA' | 'EJECUTADA';
+  motivo: string | null;
+  comentarioResolucion: string | null;
+  ejecutable: boolean;
+};
+
 export type VotacionActiva = {
   id: number;
   idCondominio: number;
   pregunta: string;
-  tipo?: 'GENERAL' | 'CAMBIO_CUOTA';
+  tipo?: VotacionTipo;
   cambioCuota?: {
     montoPropuesto: number;
     recargoPropuesto: number;
@@ -107,6 +124,16 @@ export type VotacionActiva = {
     motivo: string | null;
     ejecutable: boolean;
   } | null;
+  cambioRol?: CambioRolVotacion | null;
+  /**
+   * Quorum congelado al crear la votacion. `null` en votaciones historicas,
+   * que se resuelven por mayoria simple de los votos emitidos.
+   */
+  totalHabilitados?: number | null;
+  votosRequeridos?: number | null;
+  votosFaltantes?: number | null;
+  /** Si la membresia actual ya voto. No revela el sentido del voto. */
+  yaVoto?: boolean;
   aFavor: number;
   enContra: number;
   votosPorUsuario: Record<string, VoteChoice>;

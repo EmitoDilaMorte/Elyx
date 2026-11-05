@@ -1,3 +1,5 @@
+import { SuscripcionesSuperPanel } from '../components/SuscripcionesSuperPanel';
+
 type SuperuserUserForm = {
   nombre: string;
   apellidoPaterno: string;
@@ -52,9 +54,9 @@ type SuperuserPageProps = {
     };
     advertenciaCuotas?: string;
   } | null;
-  superSection: 'alta' | 'condominios';
+  superSection: 'alta' | 'condominios' | 'suscripciones';
   condominios: SuperCondominioItem[];
-  onSectionChange: (section: 'alta' | 'condominios') => void;
+  onSectionChange: (section: 'alta' | 'condominios' | 'suscripciones') => void;
   onRefreshCondominios: () => void;
   onToggleCondominioEstado: (idCondominio: number, nextEstado: 'ACTIVO' | 'INACTIVO') => void;
   onNombreCondominioChange: (value: string) => void;
@@ -140,6 +142,12 @@ export function SuperuserPage({
             >
               Gestion de condominios
             </button>
+            <button
+              className={superSection === 'suscripciones' ? 'primary-btn' : 'soft-btn'}
+              onClick={() => onSectionChange('suscripciones')}
+            >
+              Suscripciones
+            </button>
           </div>
           <div className="btn-row" style={{ marginTop: '0.8rem' }}>
             <button className="soft-btn" onClick={onLogout}>
@@ -147,6 +155,8 @@ export function SuperuserPage({
             </button>
           </div>
         </section>
+
+        {superSection === 'suscripciones' && <SuscripcionesSuperPanel />}
 
         {superSection === 'alta' && (
           <section className="panel animate-in">
