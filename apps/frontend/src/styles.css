@@ -1826,19 +1826,58 @@ th {
   font-size: 1.25rem;
 }
 
-/* El contenedor del iframe de Stripe necesita ancho completo y un minimo. */
+/*
+ * Contenedor del checkout embebido de Stripe.
+ *
+ * El iframe no se puede estilizar (Stripe Embedded Checkout no acepta
+ * `appearance`; los colores y el logo se configuran en el Dashboard), pero el
+ * marco que lo rodea si. Se reutilizan los tokens del sistema de diseno para
+ * que el formulario no se sienta como una caja pegada dentro de la app.
+ */
 .checkout-embebido {
   margin-top: 1rem;
+  padding: 1rem;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(180, 160, 130, 0.35);
 }
 
-.checkout-embebido #checkout-embebido {
+.checkout-embebido-titulo {
+  margin: 0 0 0.75rem;
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.checkout-embebido-montaje {
   width: 100%;
-  min-height: 320px;
+  /* Reserva el alto del formulario mientras Stripe carga: sin esto el bloque
+     crece de golpe al recibir el iframe y se percibe como un salto de pagina. */
+  min-height: 420px;
 }
 
-.checkout-embebido #checkout-embebido iframe {
+.checkout-embebido-montaje iframe {
   width: 100% !important;
-  min-height: 320px;
+  min-height: 420px;
+  border: 0;
+}
+
+.checkout-embebido-nota {
+  margin: 0.75rem 0 0;
+  font-size: 0.82rem;
+}
+
+@media (max-width: 640px) {
+  .checkout-embebido {
+    padding: 0.75rem;
+  }
+
+  .checkout-embebido-montaje,
+  .checkout-embebido-montaje iframe {
+    min-height: 520px;
+  }
 }
 
 .datos-fiscales h4 {

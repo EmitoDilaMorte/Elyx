@@ -29,10 +29,9 @@ import { NotificacionesModule } from './modules/notificaciones/notificaciones.mo
 import { PagosModule } from './modules/pagos/pagos.module';
 import { RecibosModule } from './modules/recibos/recibos.module';
 import { RegistroModule } from './modules/registro/registro.module';
-import { ReportesFinancierosModule } from './modules/reportes-financieros/reportes-financieros.module';
-import { ReportesMantenimientoModule } from './modules/reportes-mantenimiento/reportes-mantenimiento.module';
-import { SuscripcionesModule } from './modules/suscripciones/suscripciones.module';
-import { UnidadesModule } from './modules/unidades/unidades.module';
+import { ReportesFinancierosModule } from './modules/reportes-financieros/reportes-financieros.module';import { ReportesMantenimientoModule } from './modules/reportes-mantenimiento/reportes-mantenimiento.module';
+import { RetencionModule } from './modules/retencion/retencion.module';
+import { SuscripcionesModule } from './modules/suscripciones/suscripciones.module';import { UnidadesModule } from './modules/unidades/unidades.module';
 import { UsuariosModule } from './modules/usuarios/usuarios.module';
 import { VotacionesModule } from './modules/votaciones/votaciones.module';
 
@@ -84,6 +83,8 @@ import { VotacionesModule } from './modules/votaciones/votaciones.module';
     InvitacionesModule,
     SuscripcionesModule,
     MembresiasModule,
+    // Plazos de conservacion de datos (politica de privacidad). Solo cron.
+    RetencionModule,
     BehaviorModule,
     CaptchaModule,
     CsrfModule,

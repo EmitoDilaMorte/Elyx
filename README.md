@@ -158,6 +158,9 @@ proteger. Estas son las medidas implementadas, no intenciones:
 | **Secretos** | El secreto TOTP se guarda cifrado con AES-256-GCM (`MFA_ENCRYPTION_KEY`) |
 | **Auditoría** | Cada intento de login (exitoso o no) y cada evento de comportamiento se registran en base de datos |
 | **Telemetría de comportamiento** | Eventos agregados (sin valores de formulario) que puntúan la sesión; en modo `strict` se rechazan sesiones automatizadas |
+| **Cabeceras del API** | `helmet` en el backend: `nosniff`, `X-Frame-Options: DENY`, CSP `default-src 'none'`, `Referrer-Policy: no-referrer` y HSTS en producción. El API se sirve en otro origen, así que no hereda las de nginx |
+| **Sin caché de datos** | Las respuestas del API llevan `Cache-Control: no-store`: un proxy o el disco del navegador no pueden servir datos de otro usuario. `/uploads` queda fuera para no reenviar las imágenes en cada apertura |
+| **Retención automática** | Un cron diario aplica los plazos de la política de privacidad: telemetría a 30 días, auditoría de login a 12 meses, tokens a 30 días tras expirar (`RETENCION_ENABLED`) |
 | **Robots** | `robots.txt` declara privadas `/api/`, `/uploads/` y `/perfil`, con `Crawl-delay: 2` |
 
 ---
@@ -363,10 +366,18 @@ mounts del frontend y con el puerto del host apuntando al `80` del contenedor).
    PUBLIC_FILES_BASE_URL=https://api.tu-dominio.com
    CORS_ALLOWED_ORIGINS=https://tu-dominio.com,https://www.tu-dominio.com
    VITE_TURNSTILE_SITE_KEY=<sitekey pública de Turnstile>
+   TURNSTILE_SECRET_KEY=<secret de Turnstile>
+   TURNSTILE_ENABLED=true
    JWT_SECRET=<cadena aleatoria larga>
    CSRF_SECRET=<cadena aleatoria larga>
    MFA_ENCRYPTION_KEY=<cadena aleatoria larga>
    ```
+
+   > **`NODE_ENV=production` y Turnstile van juntos.** Con `NODE_ENV=production` la
+   > verificación de Turnstile pasa a *fail-closed*: si `TURNSTILE_ENABLED` no está en `true`
+   > o falta `TURNSTILE_SECRET_KEY`, **el inicio de sesión se rechaza**. Es intencional —sin
+   > CAPTCHA en producción el login queda abierto a fuerza bruta— pero significa que no puedes
+   > activar `NODE_ENV=production` sin haber configurado Turnstile antes.
 
 2. Levanta el stack con el archivo de producción:
 
@@ -483,6 +494,22 @@ después y se muestra desglosado.
 
 > La prueba del producto es la **demo con datos de ejemplo** (`02_seed.sql`), no un periodo
 > de prueba.
+
+### Retención de datos
+
+Un cron diario (4:30 AM) aplica los plazos de `docs/politica-privacidad.md`. Borra en lotes
+de 5 000 filas para no bloquear las tablas.
+
+| Variable | Por defecto | Qué purga |
+|---|---|---|
+| `RETENCION_ENABLED` | `true` | `false` desactiva toda la purga automática |
+| `RETENCION_TELEMETRIA_DIAS` | `30` | Eventos de comportamiento más antiguos |
+| `RETENCION_AUDITORIA_DIAS` | `365` | Intentos de inicio de sesión |
+| `RETENCION_TOKENS_DIAS` | `30` | Tokens de refresco, contados desde que expiran o se revocan |
+
+> Los **datos financieros no se purgan**: cuotas, pagos, recibos y reportes tienen un plazo
+> **mínimo** de 7 años por obligaciones fiscales. Un mínimo no autoriza a borrar, obliga a
+> conservar.
 
 #### Cobro con Stripe (opcional)
 
@@ -710,7 +737,8 @@ Elyx/
 │   │   │       ├── registro/          # "Crea tu condominio" + verificación de correo
 │   │   │       ├── invitaciones/      # enlace, solicitudes y aprobación
 │   │   │       ├── suscripciones/     # cobro de la plataforma (MANUAL | STRIPE)
-│   │   │       └── membresias/        # cambio de rol con guard de último administrador
+│   │   │       ├── membresias/        # cambio de rol con guard de último administrador
+│   │   │       └── retencion/         # plazos de conservación de datos (cron)
 │   │   └── uploads/        # comprobantes y evidencias (volumen persistente)
 │   └── frontend/           # SPA React + Vite
 │       ├── public/         # robots.txt, imágenes

@@ -5,6 +5,7 @@ import { join } from 'path';
 import * as cookieParser from 'cookie-parser';
 import { CorsOptions } from '@nestjs/common/interfaces/external/cors-options.interface';
 import { NestExpressApplication } from '@nestjs/platform-express';
+import { aplicarCabecerasSeguridad } from './common/security/cabeceras-seguridad';
 import { AppModule } from './app.module';
 
 /**
@@ -87,6 +88,12 @@ async function bootstrap() {
   // Necesario para leer la cookie HttpOnly del refresh token y la cookie
   // legible del token CSRF (doble envio).
   app.use(cookieParser());
+
+  // Cabeceras de seguridad (nosniff, frameguard, CSP, HSTS en produccion).
+  // Va antes de CORS y de los archivos estaticos para que ninguna respuesta
+  // salga sin ellas, incluidas las de `/uploads`.
+  aplicarCabecerasSeguridad(app);
+
   app.enableCors(buildCorsOptions());
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
 

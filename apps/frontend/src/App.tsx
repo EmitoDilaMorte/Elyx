@@ -1744,9 +1744,9 @@ function AppContent() {
         choice,
       });
 
-      // El backend ya devuelve los totales actualizados. Antes se aplicaba
-      // ademas `voteInCondominio`, que suma +1 localmente: el marcador salia
-      // con un voto de mas. Aqui solo se registra el voto del usuario actual.
+      // El backend ya devuelve los totales actualizados. Sumar +1 localmente
+      // duplicaba el conteo (el marcador salia con un voto de mas). Aqui solo
+      // se registra el voto del usuario actual.
       patchAppData((prev) => ({
         ...prev,
         votacionesActivas: prev.votacionesActivas.map((item) =>

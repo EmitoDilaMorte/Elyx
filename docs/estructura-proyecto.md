@@ -31,6 +31,53 @@
 - `suscripciones` (cobro de la plataforma con proveedor intercambiable: MANUAL | STRIPE | NULL)
 - `membresias` (cambio de rol con el guard de "ultimo administrador", compartido por el
   superusuario y la votacion de roles)
+- `retencion` (aplica los plazos de conservacion de la politica de privacidad; solo cron)
+
+## Tareas programadas
+
+Todas viven en el backend y comparten `ScheduleModule`. Se reparten por hora para no competir
+por conexiones a la base:
+
+| Hora | Tarea | Que hace |
+|---|---|---|
+| cada hora | `RegistroService.purgarRegistrosVencidos` | Marca `EXPIRADO` los registros sin verificar |
+| 2:00 AM | `SuscripcionesService.reconciliarConStripe` | Red de seguridad de los webhooks |
+| 3:00 AM | `SuscripcionesService.suspenderVencidas` | Condominios con suscripcion vencida |
+| 4:00 AM | `SuscripcionesService.purgarSinPago` | Borra condominios que nunca pagaron |
+| 4:30 AM | `RetencionService.purgar` | Plazos de conservacion de datos |
+| 5:00 AM | `SuscripcionesService.suspenderPorImpago` | Fin del periodo de gracia |
+
+## Retencion de datos
+
+`RetencionService` es la contraparte en codigo de la seccion 7 de
+`docs/politica-privacidad.md`. Antes de existir, la politica prometia plazos que ningun
+proceso cumplia.
+
+- **Lo que purga**: `behavior_events` (30 dias), `intentos_login` (365 dias),
+  `refresh_tokens` (30 dias despues de expirar o revocarse), `password_resets` usados o
+  vencidos (7 dias) y `mfa_recovery_codes` consumidos (90 dias).
+- **Lo que NO purga**: datos financieros. El plazo de 7 anios de cuotas, pagos, recibos y
+  reportes es un **minimo** fiscal: no autoriza a borrar.
+- Borra en lotes de 5000 filas con `DELETE ... WHERE ctid IN (SELECT ctid ... LIMIT n)`.
+  `ctid` se usa porque el nombre de la clave primaria cambia por tabla. El tope de
+  iteraciones evita un bucle infinito si una fila no se puede borrar.
+- Cada tarea falla de forma aislada: una tabla ausente en una instalacion vieja no tumba
+  las demas.
+
+## Cabeceras de seguridad del API
+
+`common/security/cabeceras-seguridad.ts` aplica `helmet` en `main.ts`, antes de CORS y de
+los archivos estaticos.
+
+- El API vive en **otro origen** que el frontend (`api.elyx-app.com` vs `elyx-app.com`), asi
+  que no hereda las cabeceras de `nginx.conf`.
+- `crossOriginResourcePolicy: 'cross-origin'` es obligatorio: el valor por defecto de helmet
+  (`same-origin`) bloquearia las imagenes de `/uploads` servidas al frontend.
+- CSP `default-src 'none'` sin `upgrade-insecure-requests`: un API devuelve JSON, y esa
+  directiva romperia el desarrollo local sobre HTTP.
+- `Cache-Control: no-store` en todo el API; `/uploads` queda excluido para no reenviar las
+  imagenes en cada apertura.
+- HSTS solo con `NODE_ENV=production`.
 
 ## Migraciones
 

@@ -6,7 +6,6 @@ import type {
   MantenimientoReporte,
   Pago,
   ReporteFinanciero,
-  VoteChoice,
   VotacionActiva,
 } from '../types/app';
 
@@ -31,13 +30,6 @@ export type CrearAvisoInput = {
 export type CrearVotacionInput = {
   idCondominio: number;
   pregunta: string;
-};
-
-export type VotarInput = {
-  idCondominio: number;
-  idVotacion: number;
-  correoUsuario: string;
-  choice: VoteChoice;
 };
 
 export type CerrarVotacionInput = {
@@ -102,33 +94,6 @@ export function createVotacionInCondominio(data: AppData, input: CrearVotacionIn
       ...data.nextIds,
       votacion: data.nextIds.votacion + 1,
     },
-  };
-}
-
-export function voteInCondominio(data: AppData, input: VotarInput): AppData {
-  const votacion = data.votacionesActivas.find(
-    (item) => item.idCondominio === input.idCondominio && item.id === input.idVotacion,
-  );
-
-  if (!votacion || votacion.votosPorUsuario[input.correoUsuario]) {
-    return data;
-  }
-
-  return {
-    ...data,
-    votacionesActivas: data.votacionesActivas.map((item) =>
-      item.id === votacion.id
-        ? {
-            ...item,
-            aFavor: item.aFavor + (input.choice === 'favor' ? 1 : 0),
-            enContra: item.enContra + (input.choice === 'contra' ? 1 : 0),
-            votosPorUsuario: {
-              ...item.votosPorUsuario,
-              [input.correoUsuario]: input.choice,
-            },
-          }
-        : item,
-    ),
   };
 }
 

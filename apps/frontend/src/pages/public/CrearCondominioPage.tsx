@@ -47,11 +47,18 @@ export function CrearCondominioPage() {
   const [enviando, setEnviando] = useState(false);
   const [enviado, setEnviado] = useState(false);
   const [disponible, setDisponible] = useState<boolean | null>(null);
+  // `true` solo si la consulta fallo por red o por un 5xx. Distinto de
+  // `disponible === false`, que significa que el servidor respondio bien y
+  // dijo que las altas estan desactivadas. Mezclarlos hacia que cualquier
+  // caida del backend se leyera como "el registro no esta disponible".
+  const [sinConexion, setSinConexion] = useState(false);
+  const [reintento, setReintento] = useState(0);
   const [suscripcionRequerida, setSuscripcionRequerida] = useState(false);
   const turnstileRef = useRef<TurnstileWidgetHandle>(null);
 
   useEffect(() => {
     let cancelado = false;
+    setSinConexion(false);
     void registroApi.disponibilidad()
       .then((data) => {
         if (!cancelado) {
@@ -61,13 +68,15 @@ export function CrearCondominioPage() {
       })
       .catch(() => {
         if (!cancelado) {
-          setDisponible(false);
+          // No se sabe si el registro esta activo: se dice la verdad (no hay
+          // conexion) en lugar de afirmar algo que no se comprobo.
+          setSinConexion(true);
         }
       });
     return () => {
       cancelado = true;
     };
-  }, []);
+  }, [reintento]);
 
   const unidadesPrevistas = useMemo(() => {
     const total = Number(form.numeroUnidades);
@@ -157,6 +166,32 @@ export function CrearCondominioPage() {
       setEnviando(false);
     }
   };
+
+  if (sinConexion) {
+    return (
+      <PublicLayout
+        title="No pudimos conectar con el servidor"
+        subtitle="El registro no pudo verificar su disponibilidad."
+      >
+        <p className="muted-text">
+          Esto no significa que el registro este cerrado: puede ser una caida temporal, tu conexion
+          a internet o un mantenimiento. Vuelve a intentarlo en unos segundos.
+        </p>
+        <div className="btn-row">
+          <button
+            type="button"
+            className="primary-btn"
+            onClick={() => setReintento((previo) => previo + 1)}
+          >
+            Reintentar
+          </button>
+          <Link className="soft-btn" to="/login">
+            Volver al inicio de sesion
+          </Link>
+        </div>
+      </PublicLayout>
+    );
+  }
 
   if (disponible === false) {
     return (

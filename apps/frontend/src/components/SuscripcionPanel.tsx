@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { CheckoutEmbebido } from './CheckoutEmbebido';
 import { DatosFiscalesForm } from './DatosFiscalesForm';
 import { registroApi } from '../services/registro.service';
@@ -26,6 +27,12 @@ function dinero(monto: number, moneda: string): string {
   return `$${monto.toFixed(2)} ${moneda}`;
 }
 
+function esperar(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
 /**
  * Panel del administrador con el estado de su suscripcion a la plataforma.
  *
@@ -46,6 +53,10 @@ export function SuscripcionPanel({ idCondominio }: SuscripcionPanelProps) {
   const [cobroHabilitado, setCobroHabilitado] = useState(false);
   const [fiscal, setFiscal] = useState<DatosFiscales | null>(null);
   const [mostrarFiscal, setMostrarFiscal] = useState(false);
+  // `true` cuando la pagina se abrio viniendo del checkout de Stripe.
+  const [volviendoDeStripe, setVolviendoDeStripe] = useState(false);
+  const [verificandoPago, setVerificandoPago] = useState(false);
+  const [params, setParams] = useSearchParams();
 
   const cargar = useCallback(async () => {
     setCargando(true);
@@ -69,6 +80,62 @@ export function SuscripcionPanel({ idCondominio }: SuscripcionPanelProps) {
   useEffect(() => {
     void cargar();
   }, [cargar]);
+
+  /**
+   * Tras pagar, Stripe navega a `/suscripcion?checkout=ok&session_id=...`.
+   *
+   * El webhook puede tardar unos segundos, asi que se reintenta la consulta
+   * hasta que la suscripcion quede ACTIVA. Sin esto el administrador que acaba
+   * de pagar veria "Pendiente de pago" y el boton de regenerar cobro, y podria
+   * pagar dos veces. La URL se limpia para que recargar no repita el aviso.
+   */
+  useEffect(() => {
+    if (params.get('checkout') !== 'ok') {
+      return;
+    }
+
+    setVolviendoDeStripe(true);
+
+    const limpio = new URLSearchParams(params);
+    limpio.delete('checkout');
+    limpio.delete('session_id');
+    setParams(limpio, { replace: true });
+  }, [params, setParams]);
+
+  useEffect(() => {
+    if (!volviendoDeStripe) {
+      return;
+    }
+
+    let cancelado = false;
+
+    void (async () => {
+      setVerificandoPago(true);
+      try {
+        for (let intento = 0; intento < 6; intento += 1) {
+          const datos = await suscripcionesApi.mia(idCondominio).catch(() => null);
+          if (cancelado) {
+            return;
+          }
+          if (datos) {
+            setSuscripcion(datos);
+            if (datos.estado === 'ACTIVA') {
+              return;
+            }
+          }
+          await esperar(2000);
+        }
+      } finally {
+        if (!cancelado) {
+          setVerificandoPago(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelado = true;
+    };
+  }, [volviendoDeStripe, idCondominio]);
 
   /**
    * Antes del primer pago se piden los datos fiscales: despues, con clientes
@@ -123,6 +190,27 @@ export function SuscripcionPanel({ idCondominio }: SuscripcionPanelProps) {
         <h4>Suscripcion a Elyx</h4>
 
         {error && <div className="login-error">{error}</div>}
+
+        {/* Aviso al volver del checkout. El webhook puede tardar unos segundos,
+            asi que el mensaje distingue "confirmando" de "confirmado". */}
+        {volviendoDeStripe && (
+          <div className="reminder-box">
+            <strong className="reminder-title">
+              {suscripcion?.estado === 'ACTIVA'
+                ? 'Pago confirmado'
+                : verificandoPago
+                  ? 'Estamos confirmando tu pago'
+                  : 'Pago recibido, pendiente de confirmar'}
+            </strong>
+            <p className="muted-text" style={{ margin: '0.35rem 0 0' }}>
+              {suscripcion?.estado === 'ACTIVA'
+                ? 'Tu suscripcion esta activa. Ya puedes generar el enlace de invitacion para tus condominos.'
+                : verificandoPago
+                  ? 'Stripe esta procesando el cargo. Esto toma unos segundos.'
+                  : 'Stripe recibio tu pago pero aun no lo reporta como completado. Se activara automaticamente en cuanto llegue la confirmacion; no necesitas pagar de nuevo.'}
+            </p>
+          </div>
+        )}
 
         {!cobroHabilitado && (
           <div className="reminder-box">
@@ -319,7 +407,7 @@ export function SuscripcionPanel({ idCondominio }: SuscripcionPanelProps) {
         {/* Checkout embebido de Stripe: Link aparece dentro del formulario. */}
         {cobro?.modo === 'EMBEDDED' && cobro.clientSecret && (
           <div style={{ marginTop: '1rem' }}>
-            <CheckoutEmbebido clientSecret={cobro.clientSecret} onCompletado={() => void cargar()} />
+            <CheckoutEmbebido clientSecret={cobro.clientSecret} />
           </div>
         )}
 
