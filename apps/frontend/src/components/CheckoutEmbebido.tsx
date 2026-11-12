@@ -4,6 +4,14 @@ import { loadStripe, type Stripe, type StripeEmbeddedCheckout } from '@stripe/st
 type CheckoutEmbebidoProps = {
   /** `client_secret` que devuelve el backend al crear el cobro. */
   clientSecret: string;
+  /**
+   * Se invoca cuando Stripe confirma el pago DENTRO del iframe.
+   *
+   * Solo se dispara cuando no hubo redireccion: con 3D Secure el banco obliga a
+   * salir al `return_url` y este callback nunca corre. Por eso el padre debe
+   * manejar tambien el regreso por URL; los dos caminos se complementan.
+   */
+  onCompletado?: () => void;
 };
 
 let stripePromise: Promise<Stripe | null> | null = null;
@@ -32,23 +40,38 @@ function obtenerStripe(): Promise<Stripe | null> {
  * dentro del contenedor.
  *
  * Stripe Link aparece aqui automaticamente como metodo de pago: es una cartera
- * que Stripe habilita desde el Dashboard, no algo que se integre por codigo.
+ * que Stripe habilita desde el Dashboard del condominio, no algo que se integre
+ * por codigo.
  *
  * El componente se destruye al desmontar (`checkout.destroy()`): sin eso el
  * iframe queda vivo y el siguiente montaje falla con "already initialized".
  *
- * No se pasa `onComplete` a proposito: el backend crea la sesion con
- * `redirect_on_completion: always` (necesario para que Link y 3DS funcionen),
- * asi que al pagar la pagina navega al `return_url` y ese callback nunca se
- * invocaria. Stripe.js lo advierte en consola si se le pasa. El regreso se
- * maneja en `SuscripcionPanel` leyendo `?checkout=ok`.
+ * **Como se entera Elyx de que el pago termino.** La sesion se crea con el
+ * comportamiento por defecto de Stripe (`redirect_on_completion: if_required`),
+ * asi que hay dos caminos:
+ *  - Sin 3D Secure: el iframe muestra la confirmacion y se invoca `onComplete`.
+ *  - Con 3D Secure: el banco exige salir, Stripe navega al `return_url` y el
+ *    padre detecta el regreso por la URL. `onComplete` no se invoca.
+ *
+ * Se cubren los dos: `onCompletado` aqui y el sondeo de `?checkout=ok` en el
+ * padre. Antes se decia en este comentario que el backend mandaba
+ * `redirect_on_completion: always`, pero nunca fue cierto: el pago normal con
+ * tarjeta no redirigia y la pantalla no se enteraba de nada.
  */
-export function CheckoutEmbebido({ clientSecret }: CheckoutEmbebidoProps) {
+export function CheckoutEmbebido({ clientSecret, onCompletado }: CheckoutEmbebidoProps) {
   const contenedorRef = useRef<HTMLDivElement | null>(null);
   const checkoutRef = useRef<StripeEmbeddedCheckout | null>(null);
 
   const [error, setError] = useState<string | null>(null);
   const [cargando, setCargando] = useState(true);
+
+  // El callback vive en un ref: si estuviera en las dependencias del efecto,
+  // una flecha inline del padre lo recrearia en cada render y el iframe se
+  // remontaria, borrando lo que el usuario estaba escribiendo.
+  const alCompletarRef = useRef<CheckoutEmbebidoProps['onCompletado']>(onCompletado);
+  useEffect(() => {
+    alCompletarRef.current = onCompletado;
+  }, [onCompletado]);
 
   useEffect(() => {
     let cancelado = false;
@@ -68,7 +91,10 @@ export function CheckoutEmbebido({ clientSecret }: CheckoutEmbebidoProps) {
       }
 
       try {
-        const checkout = await stripe.createEmbeddedCheckoutPage({ clientSecret });
+        const checkout = await stripe.createEmbeddedCheckoutPage({
+          clientSecret,
+          onComplete: () => alCompletarRef.current?.(),
+        });
 
         if (cancelado) {
           // El componente se desmonto mientras Stripe inicializaba: se libera

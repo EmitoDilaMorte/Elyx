@@ -592,6 +592,33 @@ y validan la pertenencia al condominio solicitado.
 | `GET` | `/api/recibos` | Recibos emitidos |
 | `POST` | `/api/recibos/generar` | Genera el recibo de un pago validado |
 
+### Cobro en línea de cuotas
+
+El condominio cobra sus cuotas por **transferencia SPEI** o **tarjeta con Stripe Connect**.
+Con SPEI el dinero llega a la CLABE del condominio y el administrador concilia el cargo.
+Con tarjeta se usa un **direct charge** sobre la cuenta conectada: el dinero nunca pasa por
+el balance de Elyx y la comisión de Stripe la absorbe el condominio. La cuota no se
+incrementa y el condómino ve solo el monto que le corresponde.
+
+En la interfaz, la configuración de cobro vive en **Suscripción y cobro**, y las
+transferencias SPEI por conciliar aparecen dentro de **Validar pagos**, junto a los
+comprobantes que suben los condóminos.
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| `GET` | `/api/estado-cuenta?idCondominio=&idUsuarioCondominio=` | Saldo, adeudo y recargos devengados calculados en el servidor |
+| `GET` | `/api/cobros/configuracion` | Método configurado y si el condominio puede usar cada uno |
+| `PATCH` | `/api/cobros/configuracion` | Configura SPEI o tarjeta (`STRIPE_CONNECT` exige RFC del condominio) |
+| `GET` | `/api/cobros/cuota/:idCuota` | Datos para pagar: CLABE y referencia, o `clientSecret` del checkout |
+| `POST` | `/api/cobros/cargo/tarjeta` | Crea la Checkout Session de una cuota (direct charge) |
+| `GET` | `/api/cobros/cargo/estado` | Estado de la cuota frente a su cargo |
+| `GET` | `/api/cobros/cargos/pendientes` | Cargos SPEI pendientes de conciliar |
+| `PATCH` | `/api/cobros/cargo/spei/confirmar` | Confirma un cargo SPEI (solo administrador) |
+| `GET` | `/api/cobros/connect/estado` | Estado real de la cuenta Connect del condominio |
+| `POST` | `/api/cobros/connect/cuenta` | Crea o reutiliza la cuenta Connect (Accounts v2) |
+| `POST` | `/api/cobros/connect/enlace` | Devuelve la URL de onboarding hospedada por Stripe |
+| `POST` | `/api/webhooks/stripe/connect` | Webhook de Connect (firma y secreto propios) |
+
 ### Comunicación y comunidad
 
 | Método | Ruta | Descripción |
@@ -617,7 +644,7 @@ y validan la pertenencia al condominio solicitado.
 | `PATCH` | `/api/reportes-mantenimiento/estado` | Cambia el estatus de un reporte |
 | `GET` | `/api/fotos-mantenimiento` | Fotografías adjuntas a los reportes |
 | `GET` | `/api/gastos` | Gastos del condominio por periodo y categoría |
-| `GET` | `/api/reportes-financieros` | Reportes financieros (ingresos, egresos y adeudos) |
+| `GET` | `/api/reportes-financieros` | Reportes por periodo: ingresos, gastos, comisiones de Stripe y adeudos |
 
 ### Unidades, condóminos y plataforma
 

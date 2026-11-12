@@ -57,6 +57,18 @@ export class StripeClientService {
     return (process.env.STRIPE_WEBHOOK_SECRET ?? '').trim();
   }
 
+  /**
+   * Secreto del webhook de Connect (cobro de cuotas).
+   *
+   * Es distinto del de la suscripcion a proposito: Stripe separa los eventos
+   * por scope y cada destino del Dashboard tiene su propio secreto. Los
+   * direct charges llegan al scope "Connected accounts", no al de la cuenta
+   * plataforma, y su firma se calcula con este secreto.
+   */
+  get webhookSecretConnect(): string {
+    return (process.env.STRIPE_WEBHOOK_SECRET_CONNECT ?? '').trim();
+  }
+
   /** `false` cuando faltan credenciales: no se puede cobrar con Stripe. */
   get disponible(): boolean {
     return this.secretKey.length > 0;

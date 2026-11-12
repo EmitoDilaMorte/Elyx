@@ -21,5 +21,5 @@ export const navAdministrador: NavItem[] = [
   { key: 'votaciones', label: 'Votaciones', icon: 'vote' },
   { key: 'mantenimiento', label: 'Reportes mantenimiento', icon: 'tools' },
   { key: 'finanzas', label: 'Gastos y reportes', icon: 'money' },
-  { key: 'suscripcion', label: 'Suscripcion', icon: 'card' },
+  { key: 'suscripcion', label: 'Suscripción y cobro', icon: 'card' },
 ];

@@ -193,6 +193,11 @@ export type ReporteFinanciero = {
   periodo: string;
   ingresos: number;
   gastos: number;
+  /**
+   * Comision de Stripe descontada del deposito del condominio. Se calcula
+   * desde `cargos_cuota`, no se suma a `gastos` (evita doble conteo).
+   */
+  comisiones?: number;
   adeudos: number;
 };
 

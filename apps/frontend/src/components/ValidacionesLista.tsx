@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
+import { extraerMensaje } from '../lib/errores';
 import { backendApi, type MetaPaginacion, type PagoPaginado } from '../services/backendApi.service';
+import { cobrosApi, type CargoPendiente } from '../services/cobros.service';
 import { BarraFiltrosLista, type OpcionLista } from './BarraFiltrosLista';
 import { PaginacionLista } from './PaginacionLista';
 import { useListaParametros } from './useListaParametros';
@@ -52,6 +54,12 @@ const ETIQUETA_ESTADO: Record<PagoPaginado['estadoBackend'], string> = {
 /**
  * Vista de "Validacion de pagos" del administrador: pagos del condominio con
  * busqueda, filtro, orden y paginacion en servidor.
+ *
+ * Incluye arriba las **transferencias SPEI por conciliar**. Viven aqui y no en
+ * una vista aparte porque es la misma tarea: el condomino transfiere a la CLABE
+ * del condominio (o registra su pago y sube el comprobante) y el administrador
+ * confirma que el dinero entro. Tenerlo en dos pantallas obligaba a revisar dos
+ * lugares para saber que pagos faltan por validar.
  */
 export function ValidacionesLista({
   idCondominio,
@@ -79,6 +87,16 @@ export function ValidacionesLista({
   const [meta, setMeta] = useState<MetaPaginacion | null>(null);
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // --- Transferencias SPEI pendientes de conciliar ---
+  const [cargos, setCargos] = useState<CargoPendiente[]>([]);
+  const [errorCargos, setErrorCargos] = useState<string | null>(null);
+  const [avisoSpei, setAvisoSpei] = useState<string | null>(null);
+  const [cargoPorConfirmar, setCargoPorConfirmar] = useState<number | null>(null);
+  const [confirmandoCargo, setConfirmandoCargo] = useState(false);
+  // Confirmar una transferencia crea un pago VALIDADO que debe aparecer en la
+  // lista de abajo sin esperar a que el administrador cambie de pagina.
+  const [recargaPagos, setRecargaPagos] = useState(0);
 
   useEffect(() => {
     if (!idCondominio) {
@@ -120,7 +138,80 @@ export function ValidacionesLista({
       cancelado = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [idCondominio, page, q, claveEstados, orden]);
+  }, [idCondominio, page, q, claveEstados, orden, recargaPagos]);
+
+  /**
+   * Carga las transferencias SPEI pendientes.
+   *
+   * Se refresca cada 20 s porque un condomino puede generar su referencia
+   * mientras el administrador tiene la vista abierta. Es una peticion ligera y
+   * el ciclo de sondeo del panel (10 peticiones cada 15 s) deja margen dentro
+   * del limite global de 60/min.
+   */
+  useEffect(() => {
+    if (!idCondominio) {
+      return;
+    }
+
+    let cancelado = false;
+
+    const cargarCargos = async () => {
+      try {
+        const datos = await cobrosApi.cargosPendientes(idCondominio);
+        if (!cancelado) {
+          setCargos(datos);
+          setErrorCargos(null);
+        }
+      } catch (err) {
+        if (!cancelado) {
+          // Un fallo aqui no debe impedir validar comprobantes: la lista de
+          // pagos de abajo sigue siendo utilizable.
+          setErrorCargos(
+            extraerMensaje(err, 'No se pudieron cargar las transferencias SPEI pendientes.'),
+          );
+        }
+      }
+    };
+
+    void cargarCargos();
+    const temporizador = window.setInterval(() => void cargarCargos(), 20_000);
+
+    return () => {
+      cancelado = true;
+      window.clearInterval(temporizador);
+    };
+  }, [idCondominio]);
+
+  const confirmarSpei = async (cargo: CargoPendiente) => {
+    setConfirmandoCargo(true);
+    setErrorCargos(null);
+    setAvisoSpei(null);
+    try {
+      await cobrosApi.confirmarCargoSpei(idCondominio, cargo.idCargo);
+      setCargos((prev) => prev.filter((item) => item.idCargo !== cargo.idCargo));
+      setAvisoSpei(
+        `Transferencia confirmada: ${cargo.periodo} · unidad ${cargo.claveUnidad} por ${MONEDA.format(
+          cargo.montoTotal,
+        )}.`,
+      );
+      setCargoPorConfirmar(null);
+      setRecargaPagos((valor) => valor + 1);
+    } catch (err) {
+      setErrorCargos(extraerMensaje(err, 'No se pudo confirmar la transferencia.'));
+    } finally {
+      setConfirmandoCargo(false);
+    }
+  };
+
+  // El aviso de conciliacion se retira solo: dejarlo fijo confunde cuando el
+  // administrador vuelve mas tarde y ya no hay nada pendiente.
+  useEffect(() => {
+    if (!avisoSpei) {
+      return;
+    }
+    const temporizador = window.setTimeout(() => setAvisoSpei(null), 6000);
+    return () => window.clearTimeout(temporizador);
+  }, [avisoSpei]);
 
   const alternarEstado = (valor: string, activo: boolean) => {
     const nuevos = activo
@@ -132,7 +223,86 @@ export function ValidacionesLista({
   return (
     <section className="panel animate-in">
       <h4>Validacion de pagos</h4>
-      <p className="helper-text">Busca por periodo, unidad o referencia y ordena los pagos del condominio.</p>
+      <p className="helper-text">
+        Confirma las transferencias SPEI cuando el dinero aparezca en tu cuenta y valida los
+        comprobantes que subieron los condominos. Busca por periodo, unidad o referencia.
+      </p>
+
+      {/* Transferencias SPEI: el condomino transfiere a la CLABE del condominio
+          con la referencia que le da Elyx. El dinero llega al condominio, no a
+          Elyx, asi que solo el administrador puede confirmarlo. */}
+      {avisoSpei && (
+        <div className="reminder-box">
+          <strong className="reminder-title">{avisoSpei}</strong>
+        </div>
+      )}
+      {errorCargos && <p className="login-error">{errorCargos}</p>}
+
+      {cargos.length > 0 && (
+        <div className="spei-pendientes">
+          <div className="super-block-header">
+            <div>
+              <h5>Transferencias SPEI por conciliar</h5>
+              <p className="helper-text" style={{ margin: '0.2rem 0 0' }}>
+                Confirma una transferencia solo cuando el deposito aparezca en el estado de cuenta
+                del condominio. La cuota queda pagada y el condomino recibe el aviso.
+              </p>
+            </div>
+            <span className="status-pill status-pendiente">
+              {cargos.length} pendiente{cargos.length === 1 ? '' : 's'}
+            </span>
+          </div>
+
+          <div className="payment-list" style={{ marginTop: '0.7rem' }}>
+            {cargos.map((cargo) => (
+              <article className="payment-item cuota-card" key={cargo.idCargo}>
+                <div>
+                  <h3 className="item-title" style={{ margin: 0 }}>
+                    {cargo.periodo} — Unidad {cargo.claveUnidad}
+                  </h3>
+                  <p className="helper-text" style={{ margin: '0.2rem 0' }}>
+                    Referencia:{' '}
+                    <code className="mono">{cargo.referenciaSpei ?? 'sin referencia'}</code>
+                  </p>
+                  <small>{textoVigencia(cargo.expiraEn)}</small>
+                </div>
+                <p className="item-amount">{MONEDA.format(cargo.montoTotal)}</p>
+                <span className="status-pill status-pendiente">Esperando deposito</span>
+                <div className="btn-row">
+                  {cargoPorConfirmar === cargo.idCargo ? (
+                    <>
+                      <button
+                        className="primary-btn"
+                        disabled={confirmandoCargo}
+                        onClick={() => void confirmarSpei(cargo)}
+                      >
+                        {confirmandoCargo ? 'Confirmando...' : 'Si, ya lo recibi'}
+                      </button>
+                      <button
+                        className="soft-btn"
+                        disabled={confirmandoCargo}
+                        onClick={() => setCargoPorConfirmar(null)}
+                      >
+                        Cancelar
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      className="soft-btn"
+                      onClick={() => {
+                        setCargoPorConfirmar(cargo.idCargo);
+                        setAvisoSpei(null);
+                      }}
+                    >
+                      Confirmar transferencia
+                    </button>
+                  )}
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
+      )}
 
       <BarraFiltrosLista
         idPrefijo="pagos"
@@ -247,4 +417,20 @@ export function ValidacionesLista({
       />
     </section>
   );
+}
+
+/** "Vence en 12 dias" / "Vencido": la urgencia se lee sin calcular fechas. */
+function textoVigencia(expiraEn: string | null): string {
+  if (!expiraEn) {
+    return 'Sin vigencia';
+  }
+
+  const dias = Math.ceil((new Date(expiraEn).getTime() - Date.now()) / 86_400_000);
+  if (dias < 0) {
+    return 'Referencia vencida';
+  }
+  if (dias === 0) {
+    return 'Vence hoy';
+  }
+  return `Referencia vigente ${dias} ${dias === 1 ? 'dia' : 'dias'} mas`;
 }

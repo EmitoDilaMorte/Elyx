@@ -5,6 +5,7 @@ import { navAdministrador, navCondomino } from './constants/navigation';
 import { statusLabel } from './constants/status';
 import { ActiveCondominioProvider, useActiveCondominio } from './contexts/ActiveCondominioContext';
 import { formatShortDate, seedData } from './lib/appData';
+import { PagoCuotaModal } from './components/PagoCuotaModal';
 import { DashboardPage } from './pages/DashboardPage';
 import { LoginPage } from './pages/LoginPage';
 import { SuperuserPage } from './pages/SuperuserPage';
@@ -13,6 +14,7 @@ import { CrearCondominioPage } from './pages/public/CrearCondominioPage';
 import { InvitacionPage } from './pages/public/InvitacionPage';
 import { VerificarCorreoPage } from './pages/public/VerificarCorreoPage';
 import { backendApi, esDesafioMfa, getApiHostUrl, type BackendLoginResponse, type ElectoradoMiembro, type LoginOutcome, type LoginPayload } from './services/backendApi.service';
+import { cobrosApi } from './services/cobros.service';
 import { iniciarTelemetria } from './services/behavior.service';
 import {
   closeVotacionInCondominio,
@@ -469,6 +471,38 @@ function AppContent() {
   } | null>(null);
   const [votacionesCambioCuota, setVotacionesCambioCuota] = useState<VotacionActiva[]>([]);
 
+  /** Cuota que se esta pagando en linea (abre `PagoCuotaModal`). */
+  const [pagoCuota, setPagoCuota] = useState<{
+    idCuota: number;
+    periodo: string;
+    monto: number;
+  } | null>(null);
+
+  /**
+   * Contador que fuerza la recarga del listado paginado de cuotas.
+   *
+   * `PagosListaCondomino` consulta al servidor con su propia paginacion, asi
+   * que actualizar `appData` no lo refresca. Se incrementa al confirmarse un
+   * pago (webhook de Stripe, conciliacion SPEI o WebSocket) para que el
+   * condomino vea la cuota pagada sin recargar la pagina.
+   */
+  const [refrescoPagos, setRefrescoPagos] = useState(0);
+
+  /**
+   * Estado de cuenta calculado en el servidor (solo condomino).
+   *
+   * Se pide al backend porque el recargo es una tasa DIARIA: sumarla una vez
+   * en el cliente subestimaba el adeudo. Si la llamada falla, la vista cae al
+   * calculo local (que ahora tambien multiplica por los dias de atraso).
+   */
+  const [estadoCuenta, setEstadoCuenta] = useState<{
+    saldoActual: number;
+    totalAdeudo: number;
+    recargosEstimados: number;
+    cuotasVencidas: number;
+    fechaCorte: string;
+  } | null>(null);
+
   // Telemetria de comportamiento (medida por el sitio desde el primer evento).
   useEffect(() => iniciarTelemetria(), []);
 
@@ -585,6 +619,94 @@ function AppContent() {
     [pagosScoped],
   );
 
+  /**
+   * Regreso del checkout de Stripe de una cuota.
+   *
+   * Stripe navega a `/pagos?checkout=ok&idCuota=...` porque el checkout
+   * embebido usa `redirect_on_completion: always`. El pago NO esta confirmado
+   * en ese momento: lo confirma el webhook de Connect. Se consulta el estado
+   * unas cuantas veces antes de decirle al condomino que revise mas tarde, en
+   * vez de mostrar un "pago exitoso" que podria ser falso si el cargo fallo.
+   */
+  useEffect(() => {
+    if (esRutaPublica(location.pathname)) {
+      return;
+    }
+
+    const params = new URLSearchParams(location.search);
+    if (params.get('checkout') !== 'ok') {
+      return;
+    }
+
+    const idCuota = Number(params.get('idCuota'));
+    if (!effectiveActiveCondominioId) {
+      return;
+    }
+
+    // Limpia el query string sin pasar por el router: `navigate` cambiaria
+    // `location.search`, el efecto se reiniciaria y su cleanup cancelaria el
+    // sondeo que acaba de empezar. `replaceState` deja la URL limpia sin
+    // provocar un render.
+    window.history.replaceState({}, '', location.pathname);
+
+    if (!Number.isFinite(idCuota) || idCuota <= 0) {
+      setFeedback('Pago recibido. Actualiza la lista en unos segundos para ver el estado.');
+      window.setTimeout(() => setFeedback(null), 5000);
+      return;
+    }
+
+    let cancelado = false;
+    let intentos = 0;
+    let temporizador: number | null = null;
+
+    const consultar = async () => {
+      intentos += 1;
+      try {
+        const estado = await cobrosApi.estadoCargoCuota(
+          effectiveActiveCondominioId,
+          idCuota,
+        );
+        if (cancelado) {
+          return;
+        }
+
+        if (estado.estadoCuota === 'PAGADA' || estado.estadoCargo === 'PAGADO') {
+          setFeedback('Pago confirmado: tu cuota ya esta pagada.');
+          window.setTimeout(() => setFeedback(null), 5000);
+          // El listado se pagina en el servidor: sin esto seguiria mostrando la
+          // cuota como pendiente hasta el siguiente montaje de la vista.
+          setRefrescoPagos((valor) => valor + 1);
+          return;
+        }
+      } catch {
+        // Si falla la consulta se reintenta; el condomino ya pago y el webhook
+        // del backend es la fuente de verdad, no esta pantalla.
+      }
+
+      if (cancelado) {
+        return;
+      }
+      if (intentos < 6) {
+        temporizador = window.setTimeout(() => void consultar(), 2000);
+        return;
+      }
+
+      setFeedback(
+        'Stripe aun esta confirmando el pago. La cuota se marcara pagada sola en unos segundos.',
+      );
+      window.setTimeout(() => setFeedback(null), 6000);
+    };
+
+    void consultar();
+
+    return () => {
+      cancelado = true;
+      if (temporizador !== null) {
+        window.clearTimeout(temporizador);
+      }
+    };
+  }, [location.pathname, location.search, effectiveActiveCondominioId, navigate]);
+
   const cobranzaResumen = useMemo(() => getCobranzaProgreso(cuotasScoped), [cuotasScoped]);
   const cuotasPagadas = cobranzaResumen.pagadas;
   const cobranzaProgreso = cobranzaResumen.porcentaje;
@@ -604,9 +726,30 @@ function AppContent() {
     [mantenimientosScoped],
   );
 
+  /**
+   * Calculo local de respaldo (solo si el endpoint fallo).
+   *
+   * `recargo` es la TASA por dia, no el acumulado: hay que multiplicarla por
+   * los dias transcurridos desde el vencimiento. Sumarla una sola vez, como se
+   * hacia antes, subestimaba el adeudo (con 236 dias de atraso: $7,340 en vez
+   * de $21,655).
+   */
   const saldoActual = useMemo(() => {
-    return cuotasPendientes.reduce((acc: number, cuota: Cuota) => acc + cuota.monto + cuota.recargo, 0);
-  }, [cuotasPendientes]);
+    if (estadoCuenta) {
+      return estadoCuenta.saldoActual;
+    }
+
+    const hoy = new Date();
+    hoy.setHours(0, 0, 0, 0);
+
+    return cuotasPendientes.reduce((acc: number, cuota: Cuota) => {
+      const limite = new Date(`${cuota.fechaLimite}T00:00:00`);
+      const diasAtraso = Number.isNaN(limite.getTime())
+        ? 0
+        : Math.max(0, Math.floor((hoy.getTime() - limite.getTime()) / 86_400_000));
+      return acc + cuota.monto + cuota.recargo * diasAtraso;
+    }, 0);
+  }, [estadoCuenta, cuotasPendientes]);
 
   const balanceMensual = useMemo(() => {
     if (reportesScoped.length > 0) {
@@ -746,7 +889,7 @@ function AppContent() {
 
     const syncScopeFromBackend = async () => {
       try {
-        const [cuotasApi, avisosApi, votacionesApi, pagosApi, mantenimientosApi, gastosApi, reportesApi, evidenciasApi, fotosMantenimientoApi] =
+        const [cuotasApi, avisosApi, votacionesApi, pagosApi, mantenimientosApi, gastosApi, reportesApi, evidenciasApi, fotosMantenimientoApi, estadoCuentaApi] =
           await Promise.all([
           role === 'condomino' && activeMembership
             ? backendApi.listCuotasByCondomino(effectiveActiveCondominioId, activeMembership.idUsuarioCondominio)
@@ -762,11 +905,25 @@ function AppContent() {
           backendApi.listReportesFinancieros(effectiveActiveCondominioId),
           backendApi.listEvidenciasPago({ idCondominio: effectiveActiveCondominioId }),
           backendApi.listFotosMantenimiento({ idCondominio: effectiveActiveCondominioId }),
+          // El saldo solo lo consume el condomino; pedirlo para el administrador
+          // seria una peticion extra en cada ciclo sin uso.
+          role === 'condomino' && activeMembership
+            ? backendApi
+                .getEstadoCuenta(
+                  effectiveActiveCondominioId,
+                  activeMembership.idUsuarioCondominio,
+                )
+                .catch(() => null)
+            : Promise.resolve(null),
         ]);
 
         if (isCancelled) {
           return;
         }
+
+        setEstadoCuenta(estadoCuentaApi);
+
+        setEstadoCuenta(estadoCuentaApi);
 
         const evidenciasAgrupadas = evidenciasApi.reduce<Record<number, EvidenciaPagoItem[]>>((acc, item) => {
           if (!acc[item.idPago]) {
@@ -1033,6 +1190,9 @@ function AppContent() {
           pagos: [...prev.pagos.filter((item: Pago) => item.idCondominio !== effectiveActiveCondominioId), ...pagosApi],
           cuotas: [...prev.cuotas.filter((item: Cuota) => item.idCondominio !== effectiveActiveCondominioId), ...cuotasApi],
         }));
+
+        // El listado paginado no lee `appData`: hay que pedirle otra consulta.
+        setRefrescoPagos((valor) => valor + 1);
       } catch (error) {
         console.error('No se pudo refrescar pagos por websocket:', error);
       }
@@ -1466,6 +1626,25 @@ function AppContent() {
       setFeedback('No se pudo registrar el pago en backend');
       window.setTimeout(() => setFeedback(null), 2200);
     }
+  };
+
+  /**
+   * Abre el modal de pago en linea de una cuota.
+   *
+   * El modal consulta al backend que metodo esta configurado (SPEI o tarjeta)
+   * y muestra lo que corresponda. No se crea el cargo aqui: se crea al abrir,
+   * para que el monto y la referencia sean los vigentes.
+   */
+  const pagarEnLinea = (cuotaId: number) => {
+    const cuota = appData.cuotas.find(
+      (item: Cuota) => item.id === cuotaId && item.idCondominio === effectiveActiveCondominioId,
+    );
+
+    if (!cuota) {
+      return;
+    }
+
+    setPagoCuota({ idCuota: cuotaId, periodo: cuota.periodo, monto: cuota.monto });
   };
 
   const subirComprobante = async (cuotaId: number, file: File) => {
@@ -2118,6 +2297,9 @@ function AppContent() {
         periodo,
         ingresos,
         gastos,
+        // Las comisiones reales se calculan en el backend desde `cargos_cuota`;
+        // este reporte local no las conoce y no debe inventarlas.
+        comisiones: 0,
         adeudos,
       };
 
@@ -2145,6 +2327,7 @@ function AppContent() {
         Periodo: item.periodo,
         Ingresos: item.ingresos,
         Gastos: item.gastos,
+        Comisiones: item.comisiones ?? 0,
         Adeudos: item.adeudos,
       }));
       const worksheet = XLSX.utils.json_to_sheet(rows);
@@ -3159,10 +3342,11 @@ function AppContent() {
   }
 
   return (
-    <DashboardPage
-      role={role}
-      sessionUser={sessionUser}
-      onCondominioCreado={async () => {
+    <>
+      <DashboardPage
+        role={role}
+        sessionUser={sessionUser}
+        onCondominioCreado={async () => {
         // Al crear un condominio aparece una membresia nueva: se refresca la
         // sesion para que el selector lo muestre sin recargar la pagina.
         const renovada = await backendApi.refreshSession();
@@ -3225,6 +3409,8 @@ function AppContent() {
       onSetView={setActiveView}
       onLogout={cerrarSesion}
       onRegistrarPago={registrarPagoCondomino}
+      onPagarEnLinea={pagarEnLinea}
+      refrescoPagos={refrescoPagos}
       onSubirComprobante={subirComprobante}
       onEliminarEvidenciaPago={eliminarEvidenciaPago}
       onDescargarReciboCuota={descargarReciboCuota}
@@ -3282,6 +3468,28 @@ function AppContent() {
       onRunAction={runAction}
       formatShortDate={formatShortDate}
     />
+    {/* Modal de pago en linea: se monta fuera del arbol de la vista para que
+        no lo desmonte un re-render del panel. */}
+    {pagoCuota && effectiveActiveCondominioId && (
+      <PagoCuotaModal
+        idCondominio={effectiveActiveCondominioId}
+        idCuota={pagoCuota.idCuota}
+        periodo={pagoCuota.periodo}
+        monto={pagoCuota.monto}
+        onPagado={() => {
+          setPagoCuota(null);
+          // El pago ya esta confirmado en el backend. Se refresca el listado
+          // en el lugar en vez de recargar la pagina: `window.location.reload()`
+          // funcionaba, pero perdia el scroll y el estado de la aplicacion (en
+          // movil parece que la app se reinicio).
+          setRefrescoPagos((valor) => valor + 1);
+          setFeedback('Pago confirmado: tu cuota ya esta pagada.');
+          window.setTimeout(() => setFeedback(null), 4000);
+        }}
+        onCerrar={() => setPagoCuota(null)}
+      />
+    )}
+    </>
   );
 }
 

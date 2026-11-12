@@ -77,6 +77,9 @@ CREATE TABLE IF NOT EXISTS unidades_ocupantes (
   CONSTRAINT ck_unidades_ocupantes_fechas CHECK (fecha_fin IS NULL OR fecha_fin >= fecha_inicio)
 );
 
+-- OBSOLETA: se conserva por compatibilidad con instalaciones viejas. El saldo
+-- del condomino se calcula desde `cuotas` en GET /estado-cuenta; esta tabla no
+-- se lee ni se actualiza.
 CREATE TABLE IF NOT EXISTS estado_cuenta (
   id_estado_cuenta SERIAL PRIMARY KEY,
   saldo_actual NUMERIC(12,2) NOT NULL DEFAULT 0,
@@ -124,7 +127,11 @@ CREATE TABLE IF NOT EXISTS notificaciones (
     'ROL_CAMBIADO',
     'SUSCRIPCION_PAGO_FALLIDO',
     'SUSCRIPCION_SUSPENDIDA',
-    'DATOS_FISCALES_PENDIENTES'
+    'DATOS_FISCALES_PENDIENTES',
+    'CARGO_CUOTA_CREADO',
+    'PAGO_EN_LINEA_CONFIRMADO',
+    'CARGO_CUOTA_EXPIRADO',
+    'CUENTA_COBRO_CONFIGURADA'
   )),
   canal VARCHAR(20) NOT NULL CHECK (canal IN ('EMAIL', 'INTERNA')),
   asunto VARCHAR(150) NOT NULL,
@@ -161,6 +168,82 @@ CREATE TABLE IF NOT EXISTS cuotas (
     ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS cuentas_cobro_condominio (
+  id_cuenta_cobro SERIAL PRIMARY KEY,
+  id_condominio INT NOT NULL UNIQUE,
+  -- NINGUNO = aun no configurado (solo comprobante).
+  metodo VARCHAR(20) NOT NULL DEFAULT 'NINGUNO'
+    CHECK (metodo IN ('NINGUNO', 'SPEI', 'STRIPE_CONNECT')),
+  -- SPEI: transferencia directa a la CLABE del condominio.
+  clabe VARCHAR(18),
+  banco VARCHAR(80),
+  beneficiario VARCHAR(150),
+  referencia_prefijo VARCHAR(12),
+  -- Stripe Connect v2 (tarjeta).
+  stripe_account_id VARCHAR(120),
+  stripe_charges_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  stripe_conectado_en TIMESTAMPTZ,
+  -- Meses sin intereses: apagado por defecto (cuesta 5%+ extra y lo absorbe
+  -- el condominio).
+  permitir_msi BOOLEAN NOT NULL DEFAULT FALSE,
+  -- Comision estimada de Stripe, solo para MOSTRAR el costo en el panel.
+  comision_tasa NUMERIC(5,2) NOT NULL DEFAULT 3.60,
+  comision_fijo NUMERIC(12,2) NOT NULL DEFAULT 3.00,
+  activo BOOLEAN NOT NULL DEFAULT TRUE,
+  creado_en TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_cuentas_cobro_condominio
+    FOREIGN KEY (id_condominio) REFERENCES condominios(id_condominio)
+    ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS cargos_cuota (
+  id_cargo SERIAL PRIMARY KEY,
+  id_cuota INT NOT NULL,
+  id_condominio INT NOT NULL,
+  metodo VARCHAR(20) NOT NULL CHECK (metodo IN ('SPEI', 'STRIPE')),
+  estado VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE'
+    CHECK (estado IN ('PENDIENTE', 'PAGADO', 'EXPIRADO', 'CANCELADO')),
+  -- `monto_total` es lo que paga el condomino: SIEMPRE igual a `monto_cuota`
+  -- (la cuota no se incrementa). `monto_comision` es informativo y se llena
+  -- con el dato real de Stripe al confirmar.
+  monto_cuota NUMERIC(12,2) NOT NULL CHECK (monto_cuota >= 0),
+  monto_comision NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (monto_comision >= 0),
+  monto_total NUMERIC(12,2) NOT NULL CHECK (monto_total >= 0),
+  moneda VARCHAR(3) NOT NULL DEFAULT 'MXN',
+  stripe_checkout_session_id VARCHAR(120),
+  stripe_payment_intent_id VARCHAR(120),
+  stripe_account_id VARCHAR(120),
+  stripe_balance_transaction_id VARCHAR(120),
+  referencia_spei VARCHAR(60),
+  expira_en TIMESTAMPTZ,
+  pagado_en TIMESTAMPTZ,
+  creado_en TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_cargos_cuota_cuota
+    FOREIGN KEY (id_cuota) REFERENCES cuotas(id_cuota)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_cargos_cuota_condominio
+    FOREIGN KEY (id_condominio) REFERENCES condominios(id_condominio)
+    ON DELETE CASCADE
+);
+
+-- Un solo cargo VIGENTE por cuota; los cancelados quedan como historial.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_cargos_cuota_pendiente
+  ON cargos_cuota (id_cuota)
+  WHERE estado = 'PENDIENTE';
+
+CREATE INDEX IF NOT EXISTS idx_cargos_cuota_condominio
+  ON cargos_cuota (id_condominio, estado);
+
+CREATE INDEX IF NOT EXISTS idx_cargos_cuota_spei
+  ON cargos_cuota (referencia_spei)
+  WHERE referencia_spei IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_cargos_cuota_session_stripe
+  ON cargos_cuota (stripe_checkout_session_id)
+  WHERE stripe_checkout_session_id IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS pagos (
   id_pago SERIAL PRIMARY KEY,
   monto NUMERIC(12,2) NOT NULL CHECK (monto >= 0),
@@ -168,12 +251,19 @@ CREATE TABLE IF NOT EXISTS pagos (
   estado VARCHAR(20) NOT NULL CHECK (estado IN ('CAPTURADO', 'VALIDADO', 'RECHAZADO')),
   referencia VARCHAR(120),
   motivo_rechazo TEXT,
+  -- De donde vino el pago: comprobante subido o pasarela.
+  origen VARCHAR(20) NOT NULL DEFAULT 'COMPROBANTE'
+    CHECK (origen IN ('COMPROBANTE', 'STRIPE', 'SPEI')),
   id_cuota INT NOT NULL UNIQUE,
   id_usuario_condominio_paga INT,
   id_usuario_condominio_admin INT,
+  id_cargo INT,
   CONSTRAINT fk_pago_cuota
     FOREIGN KEY (id_cuota) REFERENCES cuotas(id_cuota)
     ON DELETE RESTRICT,
+  CONSTRAINT fk_pagos_cargo
+    FOREIGN KEY (id_cargo) REFERENCES cargos_cuota(id_cargo)
+    ON DELETE SET NULL,
   CONSTRAINT fk_pago_usuario_condominio_paga
     FOREIGN KEY (id_usuario_condominio_paga) REFERENCES usuarios_condominios(id_usuario_condominio)
     ON DELETE SET NULL,
@@ -181,6 +271,10 @@ CREATE TABLE IF NOT EXISTS pagos (
     FOREIGN KEY (id_usuario_condominio_admin) REFERENCES usuarios_condominios(id_usuario_condominio)
     ON DELETE SET NULL
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_pagos_cargo
+  ON pagos (id_cargo)
+  WHERE id_cargo IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS evidencias_pago (
   id_evidencia SERIAL PRIMARY KEY,
@@ -683,11 +777,17 @@ CREATE TABLE IF NOT EXISTS stripe_eventos (
   id_evento VARCHAR(120) PRIMARY KEY,
   tipo VARCHAR(80) NOT NULL,
   procesado_en TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  -- Cuenta conectada que origino el evento (NULL = cuenta plataforma).
+  cuenta_conectada VARCHAR(120),
   payload JSONB
 );
 
 CREATE INDEX IF NOT EXISTS idx_stripe_eventos_tipo
   ON stripe_eventos (tipo, procesado_en DESC);
+
+CREATE INDEX IF NOT EXISTS idx_stripe_eventos_cuenta
+  ON stripe_eventos (cuenta_conectada)
+  WHERE cuenta_conectada IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS pagos_suscripcion (
   id_pago_suscripcion SERIAL PRIMARY KEY,

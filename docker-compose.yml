@@ -83,6 +83,9 @@ services:
       # Stripe (solo con SUSCRIPCION_PROVIDER=STRIPE)
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      # Secreto del endpoint de webhooks de Connect (cobro de cuotas). Es distinto
+      # del anterior porque Stripe separa los eventos por scope.
+      STRIPE_WEBHOOK_SECRET_CONNECT: ${STRIPE_WEBHOOK_SECRET_CONNECT:-}
       STRIPE_PRICE_BASE: ${STRIPE_PRICE_BASE:-}
       STRIPE_PRICE_UNIDAD: ${STRIPE_PRICE_UNIDAD:-}
       STRIPE_TAX_RATE_ID: ${STRIPE_TAX_RATE_ID:-}

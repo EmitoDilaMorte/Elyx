@@ -15,6 +15,7 @@ import { AvisosModule } from './modules/avisos/avisos.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { BehaviorModule } from './modules/behavior/behavior.module';
 import { CaptchaModule } from './modules/captcha/captcha.module';
+import { CobrosModule } from './modules/cobros/cobros.module';
 import { CondominosModule } from './modules/condominos/condominos.module';
 import { ConfigNotificacionesModule } from './modules/config-notificaciones/config-notificaciones.module';
 import { CuotasModule } from './modules/cuotas/cuotas.module';
@@ -66,6 +67,7 @@ import { VotacionesModule } from './modules/votaciones/votaciones.module';
     AdministradoresModule,
     CuotasModule,
     CupoModule,
+    CobrosModule,
     RegistroModule,
     PagosModule,
     RecibosModule,

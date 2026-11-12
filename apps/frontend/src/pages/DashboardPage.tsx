@@ -13,6 +13,7 @@ import type {
 import type { NavItem } from '../types/app';
 import { statusLabel } from '../constants/status';
 import { CondominioSwitcher } from '../components/CondominioSwitcher';
+import { ConfiguracionCobroPanel } from '../components/ConfiguracionCobroPanel';
 import { CrearCondominioAdminPanel } from '../components/CrearCondominioAdminPanel';
 import { Icon } from '../components/Icon';
 import { InvitacionesPanel } from '../components/InvitacionesPanel';
@@ -156,6 +157,9 @@ type DashboardPageProps = {
   onSetView: (view: ViewKey) => void;
   onLogout: () => void;
   onRegistrarPago: (cuotaId: number) => void;
+  onPagarEnLinea: (cuotaId: number) => void;
+  /** Fuerza la recarga del listado paginado cuando se confirma un pago. */
+  refrescoPagos: number;
   onSubirComprobante: (cuotaId: number, file: File) => void;
   onEliminarEvidenciaPago: (idEvidencia: number) => void;
   onDescargarReciboCuota: (cuotaId: number) => void;
@@ -300,6 +304,8 @@ export function DashboardPage({
   onSetView,
   onLogout,
   onRegistrarPago,
+  onPagarEnLinea,
+  refrescoPagos,
   onSubirComprobante,
   onEliminarEvidenciaPago,
   onDescargarReciboCuota,
@@ -780,7 +786,9 @@ export function DashboardPage({
               idUsuarioCondominio={idUsuarioCondominioActivo}
               pagoPorCuota={pagoPorCuota}
               evidenciasPorPago={evidenciasPorPago}
+              refrescoPagos={refrescoPagos}
               formatShortDate={formatShortDate}
+              onPagarEnLinea={onPagarEnLinea}
               onRegistrarPago={onRegistrarPago}
               onSubirComprobante={onSubirComprobante}
               onDescargarReciboCuota={onDescargarReciboCuota}
@@ -808,7 +816,13 @@ export function DashboardPage({
           )}
 
           {role !== 'condomino' && activeView === 'suscripcion' && (
-            <SuscripcionPanel idCondominio={activeCondominioId} />
+            <>
+              <SuscripcionPanel idCondominio={activeCondominioId} />
+              {/* Como le cobra el condominio a sus condominos. Va en esta misma
+                  vista porque es la contraparte del cobro de Elyx: una es lo
+                  que la plataforma cobra y la otra lo que el condominio cobra. */}
+              <ConfiguracionCobroPanel idCondominio={activeCondominioId} />
+            </>
           )}
 
           {role !== 'condomino' && activeView === 'nuevo-condominio' && (
@@ -2175,6 +2189,47 @@ export function DashboardPage({
                     Exportar Excel
                   </button>
                 </div>
+              </article>
+
+              {/* Desglose por periodo. Las comisiones se muestran aparte de los
+                  gastos porque las descuenta Stripe del deposito: sumarlas a
+                  `gastos` contaria dos veces si el administrador tambien sube
+                  el movimiento de Stripe a mano. */}
+              <article className="panel animate-in" style={{ gridColumn: '1 / -1' }}>
+                <h4>Reportes por periodo</h4>
+                <p className="helper-text">
+                  Las comisiones son lo que Stripe desconto del deposito del condominio por los
+                  pagos con tarjeta. No se registran como gasto manual y solo el administrador las
+                  ve.
+                </p>
+                {appData.reportes.length === 0 ? (
+                  <p className="empty-state">Aun no hay periodos con movimientos.</p>
+                ) : (
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Periodo</th>
+                          <th>Ingresos</th>
+                          <th>Gastos</th>
+                          <th>Comisiones</th>
+                          <th>Adeudos</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {appData.reportes.map((row) => (
+                          <tr key={row.periodo}>
+                            <td>{row.periodo}</td>
+                            <td>${row.ingresos.toLocaleString('es-MX')}</td>
+                            <td>${row.gastos.toLocaleString('es-MX')}</td>
+                            <td>${(row.comisiones ?? 0).toLocaleString('es-MX')}</td>
+                            <td>${row.adeudos.toLocaleString('es-MX')}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </article>
             </section>
           )}

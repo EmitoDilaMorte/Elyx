@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PagoEstado } from '../../common/enums/pago-estado.enum';
+import { CuotasService } from '../cuotas/cuotas.service';
 import { AprobarPagoDto, RechazarPagoDto } from './dto/actualizar-pago.dto';
 import { CapturarPagoDto } from './dto/capturar-pago.dto';
 import { DataSource } from 'typeorm';
@@ -59,6 +60,7 @@ export class PagosService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly pagosGateway: PagosGateway,
+    private readonly cuotasService: CuotasService,
   ) {}
 
   async listByCondominio(idCondominio: number, estado?: PagoEstado): Promise<PagoRecord[]> {
@@ -296,7 +298,7 @@ export class PagosService {
         LEFT JOIN unidades u ON u.id_unidad = uo.id_unidad
         WHERE p.id_pago = $1 AND c.id_condominio = $2
         LIMIT 1
-        FOR UPDATE
+        FOR UPDATE OF p
         `,
         [input.idPago, input.idCondominio],
       );
@@ -335,11 +337,17 @@ export class PagosService {
         throw new BadRequestException(ERR_PAGO_NO_CAPTURADO);
       }
 
+      await this.cuotasService.marcarPagadaEnTransaccion(manager, Number(pago.id_cuota));
+
+      // La cuota pudo tener un cargo en linea PENDIENTE (una referencia SPEI
+      // entregada al condomino o una sesion de checkout abierta). Al validar el
+      // comprobante hay que cancelarlo: si siguiera vivo, la referencia seguiria
+      // aceptando una segunda transferencia por una cuota ya pagada.
       await manager.query(
         `
-        UPDATE cuotas
-        SET estado = 'PAGADA', recargo_por_dia = 0
-        WHERE id_cuota = $1
+        UPDATE cargos_cuota
+        SET estado = 'CANCELADO', actualizado_en = NOW()
+        WHERE id_cuota = $1 AND estado = 'PENDIENTE'
         `,
         [Number(pago.id_cuota)],
       );
@@ -387,7 +395,7 @@ export class PagosService {
         LEFT JOIN unidades u ON u.id_unidad = uo.id_unidad
         WHERE p.id_pago = $1 AND c.id_condominio = $2
         LIMIT 1
-        FOR UPDATE
+        FOR UPDATE OF p
         `,
         [input.idPago, input.idCondominio],
       );

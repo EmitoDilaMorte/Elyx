@@ -66,26 +66,31 @@ ON CONFLICT (id_usuario_condominio) DO UPDATE SET
 -- ============================================================================
 -- 4. UNIDADES (16)
 -- ============================================================================
-INSERT INTO unidades (id_unidad, clave_unidad, tipo_unidad, estado, id_condominio) VALUES
-( 1, 'A-101', 'DEPARTAMENTO', 'ACTIVA', 1),
-( 2, 'A-102', 'DEPARTAMENTO', 'ACTIVA', 1),
-( 3, 'A-201', 'DEPARTAMENTO', 'ACTIVA', 1),
-( 4, 'A-202', 'DEPARTAMENTO', 'ACTIVA', 1),
-( 5, 'A-301', 'DEPARTAMENTO', 'ACTIVA', 1),
-( 6, 'A-302', 'DEPARTAMENTO', 'ACTIVA', 1),
-( 7, 'B-101', 'CASA',         'ACTIVA', 2),
-( 8, 'B-102', 'CASA',         'ACTIVA', 2),
-( 9, 'B-201', 'CASA',         'ACTIVA', 2),
-(10, 'B-202', 'CASA',         'ACTIVA', 2),
-(11, 'B-301', 'CASA',         'ACTIVA', 2),
-(12, 'L-101', 'LOCAL',        'ACTIVA', 3),
-(13, 'L-102', 'LOCAL',        'ACTIVA', 3),
-(14, 'D-201', 'DEPARTAMENTO', 'ACTIVA', 3),
-(15, 'D-202', 'DEPARTAMENTO', 'ACTIVA', 3),
-(16, 'D-301', 'DEPARTAMENTO', 'ACTIVA', 3)
+-- `fecha_alta` explicita: sin ella toma la fecha en que se creo la base, y las
+-- unidades quedarian "mas nuevas" que sus propias cuotas. Eso rompe el
+-- backfill mensual (una unidad no debe cuotas de meses en que no existia) y
+-- hace que los reportes muestren huecos. Se usa la fecha del condominio.
+INSERT INTO unidades (id_unidad, clave_unidad, tipo_unidad, estado, id_condominio, fecha_alta) VALUES
+( 1, 'A-101', 'DEPARTAMENTO', 'ACTIVA', 1, '2021-03-15'),
+( 2, 'A-102', 'DEPARTAMENTO', 'ACTIVA', 1, '2021-03-15'),
+( 3, 'A-201', 'DEPARTAMENTO', 'ACTIVA', 1, '2021-03-15'),
+( 4, 'A-202', 'DEPARTAMENTO', 'ACTIVA', 1, '2021-03-15'),
+( 5, 'A-301', 'DEPARTAMENTO', 'ACTIVA', 1, '2021-03-15'),
+( 6, 'A-302', 'DEPARTAMENTO', 'ACTIVA', 1, '2021-03-15'),
+( 7, 'B-101', 'CASA',         'ACTIVA', 2, '2020-08-01'),
+( 8, 'B-102', 'CASA',         'ACTIVA', 2, '2020-08-01'),
+( 9, 'B-201', 'CASA',         'ACTIVA', 2, '2020-08-01'),
+(10, 'B-202', 'CASA',         'ACTIVA', 2, '2020-08-01'),
+(11, 'B-301', 'CASA',         'ACTIVA', 2, '2020-08-01'),
+(12, 'L-101', 'LOCAL',        'ACTIVA', 3, '2019-01-10'),
+(13, 'L-102', 'LOCAL',        'ACTIVA', 3, '2019-01-10'),
+(14, 'D-201', 'DEPARTAMENTO', 'ACTIVA', 3, '2019-01-10'),
+(15, 'D-202', 'DEPARTAMENTO', 'ACTIVA', 3, '2019-01-10'),
+(16, 'D-301', 'DEPARTAMENTO', 'ACTIVA', 3, '2019-01-10')
 ON CONFLICT (id_unidad) DO UPDATE SET
   clave_unidad = EXCLUDED.clave_unidad, tipo_unidad = EXCLUDED.tipo_unidad,
-  estado = EXCLUDED.estado, id_condominio = EXCLUDED.id_condominio;
+  estado = EXCLUDED.estado, id_condominio = EXCLUDED.id_condominio,
+  fecha_alta = EXCLUDED.fecha_alta;
 
 -- ============================================================================
 -- 5. UNIDADES_OCUPANTES (13)

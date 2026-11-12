@@ -23,7 +23,9 @@
 - `config-notificaciones`
 - `notificaciones`
 - `gastos`
-- `reportes-financieros`
+- `reportes-financieros` (se calcula desde `cuotas` + `pagos` + `gastos` + `cargos_cuota`;
+  las tablas `reportes_financieros` y `reporte_financiero_detalle` son legado del seed)
+- `cobros` (configuracion de cobro, cargos SPEI, Stripe Connect v2 y webhook de Connect)
 - `condominio-alta` (logica de alta compartida entre onboarding, registro publico e invitaciones)
 - `cupo` (unico punto de verdad del cupo de unidades y de la operatividad del condominio)
 - `registro` (alta publica "Crea tu condominio" + verificacion de correo)
@@ -41,11 +43,84 @@ por conexiones a la base:
 | Hora | Tarea | Que hace |
 |---|---|---|
 | cada hora | `RegistroService.purgarRegistrosVencidos` | Marca `EXPIRADO` los registros sin verificar |
+| cada hora | `CobrosService.expirarCargosVencidos` | Expira los cargos SPEI vencidos y libera la cuota |
 | 2:00 AM | `SuscripcionesService.reconciliarConStripe` | Red de seguridad de los webhooks |
 | 3:00 AM | `SuscripcionesService.suspenderVencidas` | Condominios con suscripcion vencida |
 | 4:00 AM | `SuscripcionesService.purgarSinPago` | Borra condominios que nunca pagaron |
 | 4:30 AM | `RetencionService.purgar` | Plazos de conservacion de datos |
 | 5:00 AM | `SuscripcionesService.suspenderPorImpago` | Fin del periodo de gracia |
+
+## Cobro de cuotas
+
+`modules/cobros` resuelve dos caminos con la misma interfaz y una regla de dinero comun:
+**la cuota nunca se incrementa**. El condomino paga exactamente el monto de su cuota.
+
+**Donde se usa en la interfaz** (no hay una seccion nueva en el menu del administrador):
+
+- **Suscripcion y cobro** (`/suscripcion`): la configuracion de cobro vive junto a la
+  suscripcion de la plataforma, porque son las dos caras del mismo dinero. Arriba, lo que
+  Elyx le cobra al condominio; abajo, como el condominio les cobra a sus condominos.
+- **Validar pagos** (`/validaciones`): las transferencias SPEI por conciliar aparecen arriba
+  de la lista de pagos. Es la misma tarea —revisar dinero que ya entro— y evita que el
+  administrador tenga que mirar dos pantallas para saber que falta por validar. El flujo de
+  comprobantes sigue intacto: el condomino registra su pago y sube la imagen, y se aprueba
+  desde esa misma lista. Al aprobar un comprobante se **cancela** el cargo en linea
+  pendiente de esa cuota para que la referencia SPEI no acepte un segundo deposito.
+
+- **SPEI**: el condominio captura CLABE, banco y beneficiario. Cada cuota genera una
+  referencia legible (`PREFIJO-PERIODO-UNIDAD`, ej. `JAR-202611-B201`) que se reutiliza
+  mientras el cargo siga vigente. El administrador confirma el cargo cuando ve el deposito
+  en su estado de cuenta; la cuota pasa a `PAGADA` en la misma transaccion.
+- **Tarjeta (Stripe Connect v2)**: `direct charge` sobre la cuenta conectada
+  (`{ stripeAccount: acct_... }`). El dinero nunca entra al balance de Elyx; la comision de
+  Stripe se debita a la cuenta del condominio. Se usa `dashboard: full` con
+  `fees_collector` y `losses_collector` en `stripe`, el equivalente a una cuenta Standard.
+  El cobro se confirma por webhook (`/api/webhooks/stripe/connect`), no por la respuesta del
+  navegador.
+  > **Cambio en curso**: el `dashboard: full` se va a sustituir por `dashboard: 'none'` con
+  > onboarding embebido. El porque, la verificacion empirica y las consecuencias estan en
+  > `docs/decision-connect-dashboard-none.md`.
+- **RFC obligatorio para Connect**: sin RFC del condominio la cuenta conectada no puede
+  verificarse. La configuracion responde `403 RFC_REQUERIDO_PARA_CONNECT` y la UI
+  deshabilita la opcion antes de intentar. SPEI sigue disponible.
+- **MSI apagado por defecto**: con dynamic payment methods Stripe ofrece meses sin intereses
+  automaticamente y cada plazo agrega 5% o mas de comision que absorbe el condominio.
+- **Comisiones**: `cargos_cuota.monto_comision` guarda la comision real leida del
+  `balance transaction`. El reporte financiero la muestra por periodo **aparte de `gastos`**
+  para no contar dos veces si el administrador tambien registra el movimiento a mano.
+- **Estado de cuenta**: `GET /api/estado-cuenta` calcula el saldo desde `cuotas`
+  (pendientes + recargos devengados). `cuotas.recargo_por_dia` es una tasa diaria, no el
+  acumulado. La tabla `estado_cuenta` es legado y ya no se usa.
+
+### Confirmacion del pago con tarjeta
+
+La cuota **nunca** se marca pagada desde el navegador: la respuesta del cliente no es
+confiable. La fuente de verdad es el webhook de Connect, y solo cuando el dinero ya entro
+(`payment_status` en `paid` o `no_payment_required`). Una sesion `complete` con
+`unpaid` significa que el cliente termino su parte pero el pago es asincrono (OXXO):
+`checkout.session.completed` no debe acreditarlo, y el cobro se confirma con
+`checkout.session.async_payment_succeeded`.
+
+Eventos que liberan el cargo para permitir reintentos:
+
+| Evento | Efecto en `cargos_cuota` |
+|---|---|
+| `checkout.session.async_payment_failed` | `CANCELADO` |
+| `checkout.session.expired` | `EXPIRADO` |
+
+Sin liberarlo, el indice unico parcial de cargos `PENDIENTE` impediria generar uno nuevo y
+la cuota quedaria imposible de pagar en linea.
+
+**Como se entera la pantalla.** Hay dos caminos que se complementan, porque la sesion usa
+el comportamiento por defecto de Stripe (`redirect_on_completion: if_required`):
+
+- Sin 3D Secure: el iframe invoca `onComplete`, `PagoCuotaModal` consulta
+  `GET /cobros/cargo/estado` hasta que la base confirme y refresca el listado en el lugar.
+- Con 3D Secure: el banco obliga a navegar y Stripe redirige a
+  `/pagos?checkout=ok&idCuota=...`; `App.tsx` sondea el mismo endpoint.
+
+Ademas el backend emite `pagoChanged` por WebSocket al confirmar (tarjeta o SPEI), igual
+que `PagosService.aprobar`, para que administrador y condomino vean el cambio sin recargar.
 
 ## Retencion de datos
 

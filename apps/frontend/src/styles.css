@@ -1903,3 +1903,157 @@ th {
     white-space: normal;
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* Pago de cuotas: modal, configuracion de cobro y conciliacion SPEI   */
+/* ------------------------------------------------------------------ */
+
+.mono {
+  font-family: 'Space Grotesk', monospace;
+  letter-spacing: 0.02em;
+  word-break: break-all;
+}
+
+.field-hint {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.78rem;
+  font-weight: 400;
+  color: var(--ink-soft);
+}
+
+/* `.field-label` es inline-block; en los formularios nuevos el campo debe
+   ocupar el ancho de la columna y la ayuda ir debajo. */
+.form-grid .field-label {
+  display: block;
+}
+
+.form-grid .field-label > input,
+.form-grid .field-label > select {
+  width: 100%;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  overflow-y: auto;
+  background: rgba(15, 20, 38, 0.55);
+  backdrop-filter: blur(3px);
+}
+
+.modal-card {
+  width: min(640px, 100%);
+  max-height: calc(100vh - 2rem);
+  padding: 1.25rem 1.4rem 1.4rem;
+  overflow-y: auto;
+  border-radius: var(--radius);
+  border: 1px solid rgba(180, 160, 130, 0.35);
+  background: var(--surface-strong);
+  box-shadow: var(--shadow);
+}
+
+.pago-cuota-modal {
+  width: min(720px, 100%);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 0.9rem;
+}
+
+.modal-header h4 {
+  margin: 0;
+}
+
+.cobro-metodo {
+  padding: 1rem 0;
+  border-top: 1px dashed rgba(160, 140, 110, 0.35);
+}
+
+.cobro-metodo:first-of-type {
+  border-top: none;
+}
+
+.cobro-metodo-bloqueado {
+  opacity: 0.85;
+}
+
+.cobro-costos {
+  margin-top: 0.9rem;
+  padding: 0.9rem 1rem;
+  border-radius: 14px;
+  border: 1px solid rgba(226, 176, 116, 0.5);
+  background: rgba(255, 242, 229, 0.6);
+}
+
+.checkbox-label {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+}
+
+.checkbox-label input[type='checkbox'] {
+  margin-top: 0.25rem;
+}
+
+@media (max-width: 640px) {
+  .modal-card {
+    padding: 1rem;
+  }
+}
+
+/* Bloque de transferencias SPEI dentro de "Validar pagos".
+   Va sobre la lista de pagos porque es la misma tarea: revisar dinero que ya
+   entro al condominio. El borde lo separa de los comprobantes sin partirlo en
+   dos pantallas. */
+.spei-pendientes {
+  margin: 0.9rem 0 1.1rem;
+  padding: 0.9rem 1rem;
+  border-radius: 14px;
+  border: 1px solid rgba(226, 176, 116, 0.55);
+  background: rgba(255, 242, 229, 0.5);
+}
+
+.spei-pendientes h5 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.spei-pendientes .payment-list {
+  gap: 0.6rem;
+}
+
+.spei-pendientes .payment-item {
+  background: rgba(255, 255, 255, 0.72);
+}
+
+/* Enlace de texto con apariencia de boton.
+   Se usa para acciones secundarias que no deben competir con el boton
+   principal (p. ej. "¿Ya pagaste? Consultar el estado" dentro del modal). */
+.link-btn {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--brand-strong);
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.link-btn:hover {
+  color: var(--brand);
+}
+
+.link-btn:disabled {
+  color: var(--ink-soft);
+  cursor: default;
+  text-decoration: none;
+}

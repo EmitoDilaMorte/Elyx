@@ -157,6 +157,8 @@ type BackendReporteFinanciero = {
   periodo: string;
   ingresos: number;
   gastos: number;
+  /** Comision de Stripe descontada del deposito del condominio. */
+  comisiones?: number;
   adeudos: number;
 };
 
@@ -744,6 +746,29 @@ export const backendApi = {
       recargo: item.recargo,
       status: item.estado,
     }));
+  },
+
+  /**
+   * Estado de cuenta calculado en el servidor.
+   *
+   * Antes el saldo se sumaba en el cliente como `monto + recargo`, pero
+   * `recargo` es la TASA por dia: sumarla una sola vez subestimaba el adeudo
+   * (con 236 dias de atraso, $7,340 en vez de $21,655). El servidor multiplica
+   * la tasa por los dias transcurridos y devuelve el desglose.
+   */
+  async getEstadoCuenta(idCondominio: number, idUsuarioCondominio: number) {
+    return requestJson<{
+      idCondominio: number;
+      idUsuarioCondominio: number;
+      claveUnidad: string | null;
+      cuotasPendientes: number;
+      cuotasVencidas: number;
+      totalAdeudo: number;
+      recargosEstimados: number;
+      saldoActual: number;
+      fechaCorte: string;
+      proximoVencimiento: string | null;
+    }>(`/estado-cuenta?idCondominio=${idCondominio}&idUsuarioCondominio=${idUsuarioCondominio}`);
   },
 
   async getUnidadByUsuarioCondominio(idUsuarioCondominio: number): Promise<UnidadConOcupante> {

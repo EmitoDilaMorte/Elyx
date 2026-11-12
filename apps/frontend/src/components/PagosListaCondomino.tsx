@@ -24,7 +24,16 @@ type PagosListaCondominoProps = {
   pagoPorCuota: Record<number, PagoDeCuota>;
   evidenciasPorPago: Record<number, EvidenciaPago[]>;
   formatShortDate: (isoDate: string) => string;
+  /**
+   * Contador que fuerza una recarga del listado.
+   *
+   * El listado se pagina en el servidor, asi que no se actualiza solo cuando
+   * cambia `appData`: hay que pedirle otra vez. Se incrementa al confirmarse un
+   * pago en linea (webhook de Stripe o conciliacion SPEI).
+   */
+  refrescoPagos?: number;
   onRegistrarPago: (cuotaId: number) => void;
+  onPagarEnLinea: (cuotaId: number) => void;
   onSubirComprobante: (cuotaId: number, file: File) => void;
   onDescargarReciboCuota: (cuotaId: number) => void;
   onEliminarEvidenciaPago: (idEvidencia: number) => void;
@@ -65,7 +74,9 @@ export function PagosListaCondomino({
   pagoPorCuota,
   evidenciasPorPago,
   formatShortDate,
+  refrescoPagos = 0,
   onRegistrarPago,
+  onPagarEnLinea,
   onSubirComprobante,
   onDescargarReciboCuota,
   onEliminarEvidenciaPago,
@@ -132,7 +143,7 @@ export function PagosListaCondomino({
     return () => {
       cancelado = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps, refrescoPagos
   }, [idCondominio, idUsuarioCondominio, page, q, claveEstados, orden]);
 
   const alternarEstado = (valor: string, activo: boolean) => {
@@ -200,8 +211,18 @@ export function PagosListaCondomino({
                 {etiquetaEstado(cuota.estado)}
               </span>
               <div className="btn-row">
+                {/* Pago en linea: SPEI o tarjeta segun lo que configuro el
+                    administrador. Si no hay metodo configurado, el modal lo
+                    explica y remite a subir el comprobante. */}
                 <button
                   className="primary-btn"
+                  onClick={() => onPagarEnLinea(cuota.idCuota)}
+                  disabled={cuota.estado !== 'PENDIENTE'}
+                >
+                  Pagar en linea
+                </button>
+                <button
+                  className="soft-btn"
                   onClick={() => onRegistrarPago(cuota.idCuota)}
                   disabled={cuota.estado !== 'PENDIENTE'}
                 >
