@@ -2,6 +2,11 @@ import { Injectable, Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import type Stripe from 'stripe';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
+import {
+  idSuscripcionDeFactura,
+  periodoDeFactura,
+  periodoDeSuscripcion,
+} from './stripe-campos';
 
 /**
  * Procesa los webhooks de Stripe de forma idempotente.
@@ -125,12 +130,9 @@ export class StripeWebhookService {
     const idCondominio = this.numeroDeMetadata(suscripcion.metadata, 'idCondominio');
 
     const estadoStripe = this.mapearEstadoStripe(suscripcion.status);
-    const fin = this.fechaDesdeUnix(
-      (suscripcion as unknown as { current_period_end?: number }).current_period_end,
-    );
-    const inicio = this.fechaDesdeUnix(
-      (suscripcion as unknown as { current_period_start?: number }).current_period_start,
-    );
+    // El periodo se lee con `periodoDeSuscripcion`: en la API actual vive en
+    // cada item, no en la raiz (ver `stripe-campos.ts`).
+    const { inicio, fin } = periodoDeSuscripcion(suscripcion);
 
     // Items de la suscripcion. El checkout los crea siempre en el mismo orden
     // (base, unidades, ajuste opcional), asi que el indice identifica cada
@@ -144,6 +146,11 @@ export class StripeWebhookService {
 
 
     if (idCondominio) {
+      // `$6::text` en AMBOS usos es obligatorio: si se pasa sin cast, Postgres
+      // infiere `varchar(30)` por `estado = $6` y `text` por la comparacion del
+      // CASE, y falla con "inconsistent types deduced for parameter $6". Ese
+      // error dejaba la suscripcion en PENDIENTE aunque el cobro se hubiera
+      // hecho: el webhook respondia 200 porque el error se captura arriba.
       await this.dataSource.query(
         `
         UPDATE suscripciones_condominio
@@ -152,12 +159,12 @@ export class StripeWebhookService {
             stripe_item_base_id = COALESCE($4, stripe_item_base_id),
             stripe_item_unidades_id = COALESCE($3, stripe_item_unidades_id),
             stripe_item_ajuste_id = $5,
-            estado = $6,
+            estado = $6::text,
             fecha_inicio = COALESCE($7, fecha_inicio),
             fecha_fin = COALESCE($8, fecha_fin),
             unidades_facturadas = COALESCE($9, unidades_facturadas),
             cancelar_al_final = $10,
-            vencida_desde = CASE WHEN $6 = 'ACTIVA' THEN NULL ELSE vencida_desde END,
+            vencida_desde = CASE WHEN $6::text = 'ACTIVA' THEN NULL ELSE vencida_desde END,
             actualizado_en = NOW()
         WHERE id_condominio = $1
         `,
@@ -240,17 +247,19 @@ export class StripeWebhookService {
    * en la suscripcion. Se deduplica por `(proveedor, id_externo)`.
    */
   private async onFacturaPagada(evento: Stripe.Event): Promise<void> {
-    const factura = evento.data.object as Stripe.Invoice & {
-      subscription?: string | { id: string } | null;
-      subscription_details?: { metadata?: Stripe.Metadata | null } | null;
-    };
+    const factura = evento.data.object as Stripe.Invoice;
 
-    const idSuscripcionStripe =
-      typeof factura.subscription === 'string'
-        ? factura.subscription
-        : (factura.subscription?.id ?? null);
+    const idSuscripcionStripe = idSuscripcionDeFactura(factura);
 
     if (!idSuscripcionStripe) {
+      // El `logger.warn` es obligatorio: si Stripe vuelve a mover el campo, el
+      // sintoma seria "el pago se cobro y Elyx sigue en pendiente" con
+      // respuestas 200 y ninguna pista. Con esto queda en el log del backend.
+      this.logger.warn(
+        `Factura ${factura.id} sin suscripcion asociada. ` +
+          `parent=${JSON.stringify((factura as unknown as { parent?: unknown }).parent)}. ` +
+          'Se ignora el evento.',
+      );
       return;
     }
 
@@ -274,8 +283,11 @@ export class StripeWebhookService {
     const monto = (factura.amount_paid ?? 0) / 100;
     const moneda = (factura.currency ?? 'mxn').toUpperCase();
 
-    const periodoInicio = this.fechaDesdeUnix(factura.period_start);
-    const periodoFin = this.fechaDesdeUnix(factura.period_end);
+    // Periodo de SERVICIO (lo que la factura cubre), no el periodo propio de
+    // la factura: en la primera factura de un checkout ambos extremos traen el
+    // mismo instante y guardarlo como `fecha_fin` haria que el cron de las 3 AM
+    // suspendiera una suscripcion recien pagada. Ver `stripe-campos.ts`.
+    const { inicio: periodoInicio, fin: periodoFin } = periodoDeFactura(factura);
 
     await this.dataSource.query(
       `
@@ -284,7 +296,9 @@ export class StripeWebhookService {
         estado, metodo, periodo_inicio, periodo_fin, fecha, payload
       )
       VALUES ($1, 'STRIPE', $2, $3, $4, $5, 'PAGADO', 'CHECKOUT', $6, $7, NOW(), $8)
-      ON CONFLICT (proveedor, id_externo) WHERE id_externo IS NOT NULL DO NOTHING
+      ON CONFLICT (proveedor, id_externo) WHERE id_externo IS NOT NULL DO UPDATE
+      SET periodo_inicio = COALESCE(EXCLUDED.periodo_inicio, pagos_suscripcion.periodo_inicio),
+          periodo_fin = COALESCE(EXCLUDED.periodo_fin, pagos_suscripcion.periodo_fin)
       `,
       [
         idSuscripcion,
@@ -326,16 +340,14 @@ export class StripeWebhookService {
    * (dia 3) no reinician el contador.
    */
   private async onPagoFallido(evento: Stripe.Event): Promise<void> {
-    const factura = evento.data.object as Stripe.Invoice & {
-      subscription?: string | { id: string } | null;
-    };
+    const factura = evento.data.object as Stripe.Invoice;
 
-    const idSuscripcionStripe =
-      typeof factura.subscription === 'string'
-        ? factura.subscription
-        : (factura.subscription?.id ?? null);
+    const idSuscripcionStripe = idSuscripcionDeFactura(factura);
 
     if (!idSuscripcionStripe) {
+      this.logger.warn(
+        `Factura impaga ${factura.id} sin suscripcion asociada. Se ignora el evento.`,
+      );
       return;
     }
 
@@ -474,12 +486,5 @@ export class StripeWebhookService {
     }
     const numero = Number(valor);
     return Number.isInteger(numero) && numero > 0 ? numero : null;
-  }
-
-  private fechaDesdeUnix(segundos: number | null | undefined): string | null {
-    if (!segundos || !Number.isFinite(segundos)) {
-      return null;
-    }
-    return new Date(segundos * 1000).toISOString();
   }
 }

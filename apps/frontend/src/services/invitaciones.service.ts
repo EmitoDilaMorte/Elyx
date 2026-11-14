@@ -125,4 +125,19 @@ export const invitacionesApi = {
       { method: 'POST', body: JSON.stringify({ token, captchaToken }) },
     );
   },
+
+  /**
+   * Une al usuario con sesion iniciada al condominio del enlace.
+   *
+   * Requiere JWT: el backend toma el correo de la sesion y crea la solicitud ya
+   * verificada, sin mandar correo de confirmacion (el login ya probo el buzon).
+   * El condominio sale del token, no del cuerpo, para que no se pueda unir a
+   * otro condominio cambiando un id.
+   */
+  unirseDesdeToken(token: string, idUnidad: number) {
+    return apiRequest<{ ok: true; message: string; estado: string }>(
+      `/invitaciones/publica/${encodeURIComponent(token)}/unirse`,
+      { method: 'POST', body: JSON.stringify({ idUnidad }) },
+    );
+  },
 };

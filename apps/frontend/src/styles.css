@@ -1572,6 +1572,24 @@ th {
   color: #fff;
 }
 
+/* Encabezado con accion a la derecha (panel de depositos) */
+.panel-header-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+/* Totales del panel de depositos */
+.depositos-resumen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  margin-bottom: 0.9rem;
+}
+
 /* Estados adicionales de los chips (suscripcion y solicitudes de alta) */
 .status-activa,
 .status-aprobada,
@@ -2036,7 +2054,7 @@ th {
 
 /* Enlace de texto con apariencia de boton.
    Se usa para acciones secundarias que no deben competir con el boton
-   principal (p. ej. "¿Ya pagaste? Consultar el estado" dentro del modal). */
+   principal (p. ej. "ï¿½Ya pagaste? Consultar el estado" dentro del modal). */
 .link-btn {
   padding: 0;
   border: none;
@@ -2056,4 +2074,137 @@ th {
   color: var(--ink-soft);
   cursor: default;
   text-decoration: none;
+}
+
+/* ------------------------------------------------------------------ */
+/* Pagina publica del condominio (/condominio/:id, /invitacion/:token) */
+/* ------------------------------------------------------------------ */
+/* Es la URL que se declara a Stripe como business_url: se sirve sin
+   autenticacion, asi que solo contiene lo que Stripe exige y lo minimo
+   para que el condomino reconozca su condominio. */
+
+.condo-hero {
+  margin-bottom: 1rem;
+}
+
+.condo-bloque {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px dashed rgba(160, 140, 110, 0.35);
+}
+
+.condo-bloque:first-of-type {
+  border-top: none;
+  padding-top: 0;
+}
+
+.condo-bloque h3 {
+  margin: 0 0 0.45rem;
+  font-size: 1rem;
+  font-family: 'Space Grotesk', sans-serif;
+}
+
+.condo-bloque-aviso {
+  padding: 0.9rem 1rem;
+  border-top: none;
+  border-radius: 14px;
+  border: 1px solid rgba(226, 176, 116, 0.55);
+  background: rgba(255, 242, 229, 0.6);
+}
+
+.condo-bloque-ok {
+  padding: 0.9rem 1rem;
+  border-top: none;
+  border-radius: 14px;
+  border: 1px solid rgba(10, 138, 124, 0.35);
+  background: rgba(222, 245, 242, 0.6);
+}
+
+.condo-footer {
+  margin-top: 1.5rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid rgba(180, 160, 130, 0.3);
+  text-align: center;
+  font-size: 0.85rem;
+}
+
+/* ------------------------------------------------------------------ */
+/* Formulario de alta dentro de la pagina publica del condominio       */
+/* ------------------------------------------------------------------ */
+/* El formulario se despliega debajo de los botones de acceso, asi que
+   necesita separacion propia: sin ella, el primer campo ("Nombre") queda
+   pegado a los botones y parece parte del mismo bloque. */
+
+.condo-formulario {
+  margin-top: 1.25rem;
+  padding-top: 1.1rem;
+  border-top: 1px dashed rgba(160, 140, 110, 0.35);
+}
+
+/* En la pagina publica los campos llevan etiqueta arriba y control abajo,
+   nunca en la misma linea: `.field-label` es inline-block por defecto y el
+   texto terminaba pegado al campo ("Unidad que ocupasA-301"). */
+.condo-bloque .field-label {
+  display: block;
+  margin-bottom: 0.85rem;
+}
+
+.condo-bloque .field-label > input,
+.condo-bloque .field-label > select,
+.condo-bloque .field-label > textarea {
+  display: block;
+  width: 100%;
+  margin-top: 0.35rem;
+  box-sizing: border-box;
+}
+
+.condo-bloque .btn-row {
+  margin-top: 1rem;
+}
+
+.condo-bloque .helper-text + .btn-row {
+  margin-top: 0.75rem;
+}
+
+/* Un solo campo (el selector de unidad cuando ya hay sesion): no necesita el
+   aire de un formulario completo. */
+.condo-bloque .form-grid {
+  margin-bottom: 0.35rem;
+}
+
+/* ------------------------------------------------------------------ */
+/* Onboarding embebido de Stripe Connect                              */
+/* ------------------------------------------------------------------ */
+/* El formulario lo renderiza Stripe dentro de un custom element; aqui solo
+   se controla el marco. El condominio nunca sale de Elyx ni obtiene el
+   dashboard de Stripe (dashboard: 'none'). */
+
+.connect-onboarding {
+  margin-top: 1rem;
+  padding: 1rem;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(180, 160, 130, 0.35);
+}
+
+.connect-onboarding-montaje {
+  width: 100%;
+  /* Reserva el alto del formulario mientras Stripe carga: sin esto el bloque
+     crece de golpe al recibir el componente y se percibe como un salto. */
+  min-height: 420px;
+}
+
+.connect-onboarding-nota {
+  margin: 0.75rem 0 0;
+  font-size: 0.82rem;
+}
+
+@media (max-width: 640px) {
+  .connect-onboarding {
+    padding: 0.75rem;
+  }
+
+  .connect-onboarding-montaje {
+    min-height: 520px;
+  }
 }

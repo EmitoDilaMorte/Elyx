@@ -9,6 +9,7 @@
     "preview": "vite preview --host 0.0.0.0 --port 5173"
   },
   "dependencies": {
+    "@stripe/connect-js": "^3.5.0",
     "@stripe/stripe-js": "^10.2.1",
     "pdf-lib": "^1.17.1",
     "react": "^18.3.1",

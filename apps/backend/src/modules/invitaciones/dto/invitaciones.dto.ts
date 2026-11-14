@@ -64,6 +64,20 @@ export class ConfirmarSolicitudDto {
   token!: string;
 }
 
+/**
+ * Union de un usuario con sesion iniciada.
+ *
+ * Solo se envia la unidad: el condominio sale del token y los datos personales
+ * de la cuenta autenticada. Recibir un correo o un id de condominio del cliente
+ * permitiria unirse a un condominio ajeno o suplantar a otra persona.
+ */
+export class UnirseInvitacionDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  idUnidad!: number;
+}
+
 export class ResolverSolicitudAltaDto {
   @IsInt()
   @Min(1)

@@ -65,6 +65,10 @@ export class CobrosService {
       SELECT
         c.id_condominio,
         c.rfc,
+        c.descripcion_publica,
+        c.correo_contacto,
+        c.telefono_contacto,
+        c.pagina_publica_activa,
         cc.id_cuenta_cobro,
         cc.metodo,
         cc.clabe,
@@ -91,8 +95,19 @@ export class CobrosService {
     }
 
     const row = rows[0] as Record<string, unknown>;
-    const tieneRfc = Boolean(String(row.rfc ?? '').trim());
     const clabe = row.clabe ? String(row.clabe) : null;
+    const descripcionPublica = row.descripcion_publica
+      ? String(row.descripcion_publica)
+      : null;
+    const correoContacto = row.correo_contacto ? String(row.correo_contacto) : null;
+    const telefonoContacto = row.telefono_contacto ? String(row.telefono_contacto) : null;
+
+    const requisitosFaltantes = this.requisitosConnectFaltantes({
+      rfc: row.rfc ? String(row.rfc) : null,
+      descripcionPublica,
+      correoContacto,
+      telefonoContacto,
+    });
 
     return {
       idCondominio: Number(row.id_condominio),
@@ -110,45 +125,180 @@ export class CobrosService {
       comisionTasa: Number(row.comision_tasa ?? 3.6),
       comisionFijo: Number(row.comision_fijo ?? 3),
       activo: row.id_cuenta_cobro ? Boolean(row.activo) : false,
-      puedeUsarConnect: tieneRfc,
-      motivoNoConnect: tieneRfc
-        ? null
-        : 'Para cobrar con tarjeta necesitas registrar el RFC del condominio: Stripe lo exige ' +
-          'para verificar la cuenta y poder depositarle. Si aun no lo tienes, usa transferencia ' +
-          'SPEI, que solo requiere una CLABE.',
+      descripcionPublica,
+      correoContacto,
+      telefonoContacto,
+      paginaPublicaActiva: row.pagina_publica_activa !== false,
+      urlPublica: this.urlPublica(idCondominio),
+      requisitosConnectFaltantes: requisitosFaltantes,
+      puedeUsarConnect: requisitosFaltantes.length === 0,
+      motivoNoConnect: this.motivoNoConnect(requisitosFaltantes),
       puedeUsarSpei: Boolean(clabe),
     };
   }
 
   /**
+   * Campos que faltan para que Stripe pueda verificar la cuenta.
+   *
+   * - **RFC**: identifica al condominio ante el SAT y Stripe lo exige para
+   *   verificar la cuenta y poder depositarle.
+   * - **Descripcion, correo y telefono**: Stripe revisa la URL del negocio y
+   *   exige que muestre que vende y como contactarlo. Sin esos datos la pagina
+   *   publica no cumple el requisito y la cuenta queda restringida.
+   */
+  private requisitosConnectFaltantes(datos: {
+    rfc: string | null;
+    descripcionPublica: string | null;
+    correoContacto: string | null;
+    telefonoContacto: string | null;
+  }): string[] {
+    const faltantes: string[] = [];
+    if (!String(datos.rfc ?? '').trim()) {
+      faltantes.push('rfc');
+    }
+    if (!String(datos.descripcionPublica ?? '').trim()) {
+      faltantes.push('descripcionPublica');
+    }
+    if (!String(datos.correoContacto ?? '').trim()) {
+      faltantes.push('correoContacto');
+    }
+    if (!String(datos.telefonoContacto ?? '').trim()) {
+      faltantes.push('telefonoContacto');
+    }
+    return faltantes;
+  }
+
+  /**
+   * Explicacion del bloqueo, con la salida concreta.
+   *
+   * Se redacta por campo faltante en lugar de un mensaje generico: el
+   * administrador necesita saber que capturar, no solo que "falta algo".
+   */
+  private motivoNoConnect(faltantes: string[]): string | null {
+    if (faltantes.length === 0) {
+      return null;
+    }
+
+    const etiquetas: Record<string, string> = {
+      rfc: 'el RFC del condominio (Datos de facturación)',
+      descripcionPublica: 'una descripción de los servicios que cobras',
+      correoContacto: 'un correo de atención a condóminos',
+      telefonoContacto: 'un teléfono de atención a condóminos',
+    };
+
+    const lista = faltantes.map((campo) => etiquetas[campo] ?? campo).join(', ');
+
+    return (
+      `Para cobrar con tarjeta falta ${lista}. Stripe revisa la página pública del ` +
+      'condominio y exige que muestre qué servicios cobras y cómo contactarte, además del ' +
+      'RFC para verificar la cuenta y poder depositarle. Captúralos aquí abajo; mientras ' +
+      'tanto la transferencia SPEI funciona sin ellos.'
+    );
+  }
+
+  /**
+   * URL publica del condominio: es la que se declara a Stripe como `business_url`.
+   *
+   * Se respeta `STRIPE_BUSINESS_BASE_URL` porque Stripe exige una URL publica
+   * con https: en desarrollo el frontend vive en `localhost` y esa URL no le
+   * sirve. Aqui solo se muestra al administrador la que se va a usar.
+   */
+  private urlPublica(idCondominio: number): string {
+    const base = (
+      process.env.STRIPE_BUSINESS_BASE_URL ??
+      process.env.PUBLIC_APP_URL ??
+      process.env.FRONTEND_URL ??
+      'http://localhost:5173'
+    )
+      .trim()
+      .replace(/\/+$/, '');
+    return `${base || 'http://localhost:5173'}/condominio/${idCondominio}`;
+  }
+
+  /**
    * Actualiza la configuracion.
    *
-   * El bloqueo por RFC es deliberado y ocurre ANTES de llamar a Stripe: si el
-   * condominio no tiene RFC, la cuenta conectada no podria verificarse y el
-   * dinero no tendria a donde llegar. Es preferible explicarlo aqui que dejar
+   * El bloqueo por RFC y datos de contacto es deliberado y ocurre ANTES de
+   * llamar a Stripe: sin ellos la cuenta conectada no podria verificarse (el RFC
+   * identifica al negocio y la pagina publica es lo que Stripe revisa), asi que
+   * el dinero no tendria a donde llegar. Es preferible explicarlo aqui que dejar
    * que Stripe rechace con un error opaco meses despues.
    */
   async actualizarConfiguracion(
     idCondominio: number,
     dto: ActualizarConfiguracionCobroDto,
   ): Promise<ConfiguracionCobro> {
+    // Los datos publicos se pueden guardar en cualquier momento: son de la
+    // pagina del condominio y no dependen del metodo de cobro.
+    if (
+      dto.descripcionPublica !== undefined ||
+      dto.correoContacto !== undefined ||
+      dto.telefonoContacto !== undefined ||
+      dto.paginaPublicaActiva !== undefined
+    ) {
+      await this.dataSource.query(
+        `
+        UPDATE condominios
+        SET descripcion_publica = COALESCE($2, descripcion_publica),
+            correo_contacto = COALESCE($3, correo_contacto),
+            telefono_contacto = COALESCE($4, telefono_contacto),
+            pagina_publica_activa = COALESCE($5, pagina_publica_activa)
+        WHERE id_condominio = $1
+        `,
+        [
+          idCondominio,
+          dto.descripcionPublica?.trim() || null,
+          dto.correoContacto?.trim() || null,
+          dto.telefonoContacto?.trim() || null,
+          dto.paginaPublicaActiva ?? null,
+        ],
+      );
+    }
+
     if (dto.metodo === 'STRIPE_CONNECT') {
-      const rfcRows = await this.dataSource.query(
-        `SELECT rfc FROM condominios WHERE id_condominio = $1 LIMIT 1`,
+      // Se comprueban los cuatro campos que Stripe necesita, no solo el RFC:
+      // una cuenta creada con la pagina incompleta queda restringida y hay que
+      // rehacer el tramite.
+      const filas = await this.dataSource.query(
+        `
+        SELECT rfc, descripcion_publica, correo_contacto, telefono_contacto
+        FROM condominios
+        WHERE id_condominio = $1
+        LIMIT 1
+        `,
         [idCondominio],
       );
-      if (rfcRows.length === 0) {
+      if (filas.length === 0) {
         throw new NotFoundException('No se encontro el condominio indicado.');
       }
-      const rfc = String((rfcRows[0] as Record<string, unknown>).rfc ?? '').trim();
-      if (!rfc) {
+
+      const fila = filas[0] as Record<string, unknown>;
+      const faltantes = this.requisitosConnectFaltantes({
+        rfc: fila.rfc ? String(fila.rfc) : null,
+        descripcionPublica: fila.descripcion_publica ? String(fila.descripcion_publica) : null,
+        correoContacto: fila.correo_contacto ? String(fila.correo_contacto) : null,
+        telefonoContacto: fila.telefono_contacto ? String(fila.telefono_contacto) : null,
+      });
+
+      if (faltantes.length > 0) {
+        // El RFC conserva su codigo propio: la UI y las pruebas ya lo conocen y
+        // separarlo permite distinguir "falta RFC" de "falta la pagina".
+        if (faltantes.includes('rfc')) {
+          throw new ForbiddenException({
+            statusCode: 403,
+            code: 'RFC_REQUERIDO_PARA_CONNECT',
+            message:
+              'Para cobrar con tarjeta necesitas registrar el RFC del condominio: Stripe lo exige ' +
+              'para verificar la cuenta y poder depositarle. Si aun no lo tienes, usa transferencia ' +
+              'SPEI, que solo requiere una CLABE.',
+          });
+        }
+
         throw new ForbiddenException({
           statusCode: 403,
-          code: 'RFC_REQUERIDO_PARA_CONNECT',
-          message:
-            'Para cobrar con tarjeta necesitas registrar el RFC del condominio: Stripe lo exige ' +
-            'para verificar la cuenta y poder depositarle. Si aun no lo tienes, usa transferencia ' +
-            'SPEI, que solo requiere una CLABE.',
+          code: 'PAGINA_PUBLICA_INCOMPLETA',
+          message: this.motivoNoConnect(faltantes),
+          requisitosFaltantes: faltantes,
         });
       }
     }
@@ -375,8 +525,15 @@ export class CobrosService {
    *
    * Si ya hay un cargo vigente lo reutiliza: regenerarlo en cada visita haria
    * que el condomino viera una referencia distinta cada vez y pagara dos veces.
+   *
+   * `idUsuarioCondominio` es la MEMBRESIA de quien paga (no el `sub` del JWT):
+   * con ella se guarda y se vuelve a mostrar la tarjeta.
    */
-  async datosPagoCuota(idCondominio: number, idCuota: number): Promise<DatosPagoCuota> {
+  async datosPagoCuota(
+    idCondominio: number,
+    idCuota: number,
+    idUsuarioCondominio?: number | null,
+  ): Promise<DatosPagoCuota> {
     const cuota = await this.cuotaParaCobro(idCondominio, idCuota);
 
     const existente = await this.cargoVigente(idCuota);
@@ -387,7 +544,7 @@ export class CobrosService {
       // Stripe este viva. `crearCobroTarjeta` reutiliza la sesion existente
       // (o crea otra) y siempre devuelve el secreto.
       if (existente.metodo === 'STRIPE') {
-        return this.cobrosStripe.crearCobroTarjeta(idCondominio, idCuota);
+        return this.cobrosStripe.crearCobroTarjeta(idCondominio, idCuota, idUsuarioCondominio);
       }
       return this.armarDatosPago(existente, idCondominio);
     }
@@ -422,7 +579,7 @@ export class CobrosService {
         };
       }
 
-      return this.cobrosStripe.crearCobroTarjeta(idCondominio, idCuota);
+      return this.cobrosStripe.crearCobroTarjeta(idCondominio, idCuota, idUsuarioCondominio);
     }
 
     const cargo = await this.crearCargoSpei(idCondominio, cuota, configuracion);

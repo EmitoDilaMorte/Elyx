@@ -24,6 +24,7 @@ import { EvidenciasPagoModule } from './modules/evidencias-pago/evidencias-pago.
 import { FotosMantenimientoModule } from './modules/fotos-mantenimiento/fotos-mantenimiento.module';
 import { GastosModule } from './modules/gastos/gastos.module';
 import { InvitacionesModule } from './modules/invitaciones/invitaciones.module';
+import { PublicoModule } from './modules/publico/publico.module';
 import { MailModule } from './modules/mail/mail.module';
 import { MembresiasModule } from './modules/membresias/membresias.module';
 import { NotificacionesModule } from './modules/notificaciones/notificaciones.module';
@@ -83,6 +84,7 @@ import { VotacionesModule } from './modules/votaciones/votaciones.module';
     ReportesFinancierosModule,
     UnidadesModule,
     InvitacionesModule,
+    PublicoModule,
     SuscripcionesModule,
     MembresiasModule,
     // Plazos de conservacion de datos (politica de privacidad). Solo cron.

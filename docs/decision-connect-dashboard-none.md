@@ -1,6 +1,6 @@
 # Decisión: migrar el cobro con tarjeta a `dashboard: 'none'` + componentes embebidos
 
-**Estado**: decisión tomada, pendiente de planeación e implementación
+**Estado**: implementada y verificada. Fases 0 a 6 completas
 **Fecha de la investigación**: 2026-11-11
 **Ámbito**: `apps/backend/src/modules/cobros/connect.service.ts` y el onboarding de Stripe Connect
 **Decide**: cambiar `dashboard: 'full'` por `dashboard: 'none'` y sustituir el onboarding
@@ -347,7 +347,98 @@ Luis **no se creó** (falló por la URL), y no hay ningún cliente real con cuen
 para decidir es ahora; después de tener condominios onboardeados, cambiar implicaría repetir el
 KYC completo de cada uno.
 
-### 5.7 Lo que no se pudo verificar empíricamente
+### 5.7 Depósitos (payouts) y tarjeta guardada: viables
+
+Segunda ronda de verificación, contra la cuenta `acct_1UanT2DMdbafSDGb` (`dashboard: 'none'`).
+Se hizo porque el plan dependía de dos funcionalidades que no estaban confirmadas.
+
+**a) La capacidad de depósitos se solicita sola.**
+
+Se consultó la cuenta recién creada y `stripe_balance.payouts` ya estaba presente:
+
+```
+capabilities del config merchant:
+  "stripe_balance": {
+    "payouts": {
+      "status": "restricted",
+      "status_details": [{ "code": "requirements_past_due", "resolution": "provide_info" }]
+    }
+  }
+```
+
+`restricted` significa que existe y está pendiente el KYC, no que falte pedirla. La
+documentación lo confirma: *"Adding the `merchant` configuration to an `Account` automatically
+requests the merchant configuration's `stripe_balance.payouts` capability, even if you don't
+request any other merchant capability."* **No hay que solicitar nada en el código.**
+
+**b) La API de payouts funciona con `dashboard: 'none'`.**
+
+```
+stripe.payouts.list({ limit: 5 }, { stripeAccount: CONNECTED })
+→ OK. payouts devueltos: 0  (la API respondió; la cuenta no tiene movimientos)
+
+stripe.balance.retrieve({}, { stripeAccount: CONNECTED })
+→ OK. available: [{ "amount": 0, "currency": "mxn", "source_types": { "card": 0 } }]
+```
+
+**Trampa encontrada**: `stripe.balance.retrieve({ stripeAccount })` (la cuenta conectada como
+primer argumento) falla con `parameter_unknown: Received unknown parameter: stripeAccount`. La
+cuenta conectada va en las **opciones**, no en los parámetros: `retrieve({}, { stripeAccount })`.
+
+**c) Los cinco tipos de evento de payout son válidos.**
+
+Se creó un destino de eventos temporal con esos nombres y Stripe lo aceptó; luego se eliminó:
+
+```
+payout.created, payout.updated, payout.paid, payout.failed, payout.reconciliation_completed
+```
+
+> *"Regardless of the Accounts API version that you use, payouts trigger only the v1 events
+> described here. They don't have equivalent v2 events."*
+
+Es decir, los eventos de payout de una cuenta v2 llegan como eventos v1, y viajan en el scope
+"Connected accounts", que es **el mismo webhook que ya existe**.
+
+**d) Estado actual del webhook en el Dashboard.**
+
+```
+https://elyx-app.com/api/webhooks/stripe/connect
+  status: enabled | eventos: 2
+  checkout.session.completed, account.updated
+```
+
+Hay que **agregar los eventos `payout.*` a ese destino** en el Dashboard. Es un cambio de
+configuración, no de código, y sin él los depósitos nunca se verían en Elyx.
+
+**e) La tarjeta guardada sí funciona con el checkout embebido.**
+
+Se creó un `Customer` **en la cuenta conectada** y dos sesiones con
+`saved_payment_method_options: { payment_method_save: 'enabled' }`:
+
+```
+Customer creado EN LA CUENTA CONECTADA: cus_Vc3Qc0QvV5oFFh
+OK  ui_mode=embedded_page -> client_secret=presente
+OK  ui_mode=form          -> client_secret=presente
+```
+
+**Esto elimina el riesgo de la Fase 4**: no hace falta migrar de `embedded_page` a `form`.
+
+**f) `link_payments` se puede solicitar en una cuenta sin dashboard.**
+
+```
+OK. capabilities tras solicitar link_payments:
+  link_payments: {"status":"restricted", ...}
+  card_payments: "restricted"
+```
+
+Queda en `restricted` por el KYC pendiente, pero la solicitud se acepta. Es necesario hacerlo
+explícitamente: con `dashboard: 'none'` Stripe cae en la columna *"Express or other Dashboard"*
+de la tabla de capacidades, donde dice *"you must request payment method capabilities for them"*.
+Con `full` se activaban solas.
+
+**Conclusión: los depósitos son viables.** No hay que degradar el plan a "sin payouts".
+
+### 5.8 Lo que no se pudo verificar empíricamente
 
 **Un contracargo end-to-end con dinero real en test.** Dos bloqueos:
 
@@ -360,6 +451,11 @@ KYC completo de cada uno.
 Aun así la conclusión es sólida por tres vías independientes: la API **declara**
 `losses_collector: 'stripe'`, la API **rechaza** lo contrario, y la documentación lo confirma con
 la tabla de responsabilidades (sección 6).
+
+**Un payout real.** `payouts.list` respondió, pero devolvió una lista vacía porque la cuenta no
+tiene movimientos (el KYC está incompleto y no se puede cobrar). Queda pendiente confirmar el
+`payload` de un evento `payout.paid` real; la estructura del objeto está documentada
+(`amount`, `arrival_date`, `status`, `currency`, `method`, `type`).
 
 ---
 
@@ -515,15 +611,55 @@ queda en Elyx, Stripe conserva el KYC y las pérdidas, y Elyx no asume riesgo.**
 | `connect.service.ts` | Agregar `defaults.profile.product_description` |
 | `connect.service.ts` | Nuevo método para crear Account Sessions (`v1/account_sessions`) |
 | `connect.service.ts` | El `crearEnlaceOnboarding` queda como respaldo, no como camino principal |
+| `connect.service.ts` | Solicitar `link_payments` (con `dashboard: 'none'` no se activa sola) |
+| `connect.service.ts` | Bloquear la creación si faltan los datos de contacto del condominio |
 | `cobros.controller.ts` | Nuevo endpoint `POST /api/cobros/connect/sesion` |
+| `cobros.controller.ts` | Nuevo endpoint `GET /api/cobros/depositos` |
+| `cobros-stripe.service.ts` | `Customer` en la cuenta conectada + `saved_payment_method_options` |
+| `stripe-connect-webhook.controller.ts` | Casos `payout.created/updated/paid/failed` |
 | `cobros.service.ts` | Al configurar Connect, prellenar también datos públicos |
+| Nueva migración | `condominios` (contacto), `condominos_clientes_stripe`, `depositos_condominio` |
 | Frontend | Nueva dependencia `@stripe/connect-js` |
 | Frontend | Componente `OnboardingConnect` que monta `account-onboarding` |
 | Frontend | Componente de gestión con `account-management` y `notification_banner` |
 | Frontend | Rutas `/connect/return` y `/connect/refresh` (**hoy no existen**) |
 | Frontend | `ConfiguracionCobroPanel` deja de redirigir a Stripe y monta el componente |
-| Nueva página | Página pública por condominio (`/condominio/:id`) para satisfacer `business_url` |
+| Frontend | Bloque de depósitos en `finanzas` |
+| Nueva página | `CondominioPublicoPage` en `/condominio/:id` (`noindex`) |
+| Nueva página | `PoliticaPagosPage` en `/politica-pagos` (reembolsos y disputas) |
+| Frontend | `InvitacionPage` deja de ser un formulario y pasa a ser la página pública |
 | Docs | README y `estructura-proyecto.md` |
+
+### 8.1.1 La página pública: qué se muestra y qué no
+
+Stripe exige en la web del negocio, según su
+[FAQ de activación](https://support.stripe.com/questions/business-website-for-account-activation-faq):
+
+1. **Nombre del negocio.**
+2. **Descripción de los bienes o servicios** ofrecidos.
+3. **Datos de contacto de atención al cliente** (teléfono, correo, dirección, formulario o
+   mensajería).
+4. **Política de reembolsos y disputas.**
+5. Debe **cargar sin contraseña**.
+6. Debe estar completa (no "en construcción").
+
+Además el negocio debe existir realmente: *"You are required to maintain a functioning website
+with the appropriate information at all times. Stripe regularly checks that the provided website
+is compliant."*
+
+**Decisión del usuario**: mostrar solo lo que Stripe necesita y lo mínimo para que el condómino
+reconozca que es su condominio.
+
+| Se muestra | Se omite |
+|---|---|
+| Nombre del condominio | Dirección exacta (calle y número) |
+| Descripción de los servicios (cobro de cuotas de mantenimiento) | Datos personales del administrador |
+| Correo y teléfono de contacto del condominio | Lista de unidades |
+| Resumen de qué es Elyx | Nombres de condóminos |
+| Enlace a la política de pagos | Cualquier importe o cuota |
+
+La página lleva `noindex` (meta robots + `robots.txt`) para no aparecer en buscadores, pero
+**sigue siendo accesible sin autenticación**, que es lo que Stripe verifica.
 
 ### 8.2 Qué se reemplaza
 
@@ -554,13 +690,16 @@ Se recalca porque es donde es fácil equivocarse al implementar:
 
 | # | Consecuencia | Mitigación |
 |---|---|---|
-| 1 | El condominio **no puede ver sus depósitos** en ningún lado salvo su banco o Elyx | Integrar el componente `payments` o un reporte propio de depósitos |
-| 2 | **Elyx es la primera línea de soporte** para disputas y reembolsos | Documentar el proceso y, si crece, integrar `disputes-list` |
+| 1 | El condominio **no puede ver sus depósitos** en ningún lado salvo su banco o Elyx | Integrar `payouts` y mostrar los depósitos en Elyx (verificado viable, 5.7) |
+| 2 | **Elyx es la primera línea de soporte** para disputas y reembolsos | Correos de soporte de Elyx; evaluar `disputes-list` si crece |
 | 3 | El onboarding muestra **un popup de autenticación de Stripe** (correo + código) | Anticiparlo en la UI: explicar que es un paso de verificación |
 | 4 | **No hay vuelta atrás** por cuenta: el dashboard es inmutable | Aceptado; no hay clientes reales todavía |
 | 5 | Más trabajo de integración que el onboarding hospedado | Asumido; es la única vía para los objetivos |
 | 6 | Puede que Radar/Tax/Climate **sigan apareciendo** en el componente | Fallback documentado: `collectionOptions.requirements.exclude` |
 | 7 | El condominio ya no puede **desactivar** su cuenta desde Stripe | Elyx debe ofrecer ese camino o documentar el soporte |
+| 8 | El **webhook del Dashboard** hay que ampliarlo con los eventos `payout.*` | Es configuración, no código; sin esto los depósitos no se ven |
+| 9 | Stripe puede **verificar la propiedad del dominio** de la página pública | La página debe estar publicada en el dominio real antes de crear cuentas |
+| 10 | La verificación de Stripe es **continua**: si la página deja de cumplir, avisan | La página se genera desde campos obligatorios del condominio |
 
 **Efecto secundario positivo**: al desaparecer el dashboard, el condominio **ya no puede reactivar
 MSI**, que era un riesgo aceptado en el plan original. Con `dashboard: 'none'` el control de MSI
@@ -602,47 +741,107 @@ Sin ella, en México el onboarding se bloquea. La URL debe ser estable y públic
 
 ## 11. Pendientes antes y durante la implementación
 
-| # | Pendiente | Cómo se resuelve |
+| # | Pendiente | Estado | Cómo se resuelve |
+|---|---|---|---|
+| 1 | ¿Desaparecen Radar / Tax / Climate con `dashboard: 'none'`? | **Abierto (manual)** | El iframe de Stripe no carga en el navegador automatizado (13.3). Abrirlo en un navegador normal; si no desaparecen, `collectionOptions.requirements.exclude` |
+| 2 | Contracargo real end-to-end | **Abierto** | Completar el KYC en test con la UI y usar la tarjeta `4000000000000259` |
+| 3 | Página pública por condominio | **Resuelto** | `/condominio/:id` con `noindex`; contenido en 8.1.1 |
+| 4 | Depósitos del condominio | **Resuelto** | `DepositosService` + panel en Gastos y reportes (13.2) |
+| 5 | Manejo de disputas sin dashboard | **Definido** | Correos de soporte de Elyx; `disputes-list` queda como mejora futura |
+| 6 | Rutas `/connect/return` y `/connect/refresh` | **Resuelto** | `pages/public/ConnectReturnPage.tsx` |
+| 7 | Migración de cuentas existentes | **No aplica** | No hay cuentas con clientes reales |
+| 8 | Agregar `payout.*` al webhook del Dashboard | **Pendiente (config)** | Dashboard → Webhooks → endpoint de Connect: `payout.created`, `payout.updated`, `payout.paid`, `payout.failed`, `payout.reconciliation_completed`. Sin ellos el cron de las 6:15 y el botón «Actualizar» siguen cubriendo el caso |
+| 9 | Confirmar el `payload` de un `payout.paid` real | **Abierto** | Requiere un payout real; la estructura está documentada |
+
+### 11.1 Correcciones necesarias en el flujo de invitaciones
+
+Detectadas al explorar el código para rediseñar la página pública. Se corrigen en la misma
+migración porque comparten archivos:
+
+| # | Problema | Evidencia |
 |---|---|---|
-| 1 | ¿Desaparecen Radar / Tax / Climate con `dashboard: 'none'`? | Probar el componente en la UI. Si no, `collectionOptions.requirements.exclude` |
-| 2 | Contracargo real end-to-end | Completar el KYC en test con la UI (datos ficticios que Stripe acepta) y usar la tarjeta `4000000000000259` |
-| 3 | Página pública por condominio | Diseñar la ruta y su contenido mínimo (nombre, dirección, logo, contacto) |
-| 4 | Reporte de depósitos para el condominio | Decidir entre `payments` embebido o cálculo propio |
-| 5 | Manejo de disputas sin dashboard | Definir el proceso de soporte y notificaciones |
-| 6 | Rutas `/connect/return` y `/connect/refresh` | Crearlas o eliminarlas si el componente las hace innecesarias |
-| 7 | Migración de cuentas existentes | No aplica: no hay cuentas con clientes reales |
+| 1 | `ConfirmarInvitacionPage` **no envía `captchaToken`** y el endpoint tiene `TurnstileGuard` → con `TURNSTILE_ENABLED=true` la confirmación responde **400** | `apps/frontend/src/pages/public/ConfirmarInvitacionPage.tsx` |
+| 2 | La **contraseña temporal se descarta**: si alguien deja la contraseña vacía, la cuenta queda con `requiere_cambio_password=true` pero nadie la conoce | `invitaciones.service.ts:283-291` |
+| 3 | `rechazarSolicitud` **no notifica** al solicitante, aunque el tipo `SOLICITUD_ALTA_RECHAZADA` existe en el CHECK | `invitaciones.service.ts:393-425` |
+| 4 | `es_cuenta_existente` se calcula pero **no se usa** en ninguna decisión | `invitaciones.service.ts:505-509` |
+
+No se tocan (se documentan como deuda preexistente): el IDOR potencial en aprobar/rechazar, la
+falta de índice único de ocupante activo y la ausencia de cron de expiración.
 
 ---
 
 ## 12. Anexos
 
 ### 12.1 Cuentas de prueba creadas durante la verificación
-
 Todas en **modo test**, sin efecto en producción:
 
 | Cuenta | Configuración | Propósito |
 |---|---|---|
 | `acct_1UanPUDMdbCBkHgR` | `dashboard: none`, solo `product_description` | Confirmar que la URL seguía pendiente |
-| `acct_1UanT2DMdbafSDGb` | `dashboard: none` + `business_url` de Elyx | Confirmar que el requisito desaparece |
+| `acct_1UanT2DMdbafSDGb` | `dashboard: none` + `business_url` de Elyx + `link_payments` | Confirmar que el requisito desaparece y verificar payouts |
 
-### 12.2 Script reproducible
+Clientes de prueba creados en la cuenta conectada (modo test): `cus_Vc3Px2y8EYepSn`,
+`cus_Vc3PgMBoB2mrUy`, `cus_Vc3Qc0QvV5oFFh`. Destinos de webhook temporales creados y eliminados
+durante la validación de tipos de evento.
 
-`scripts/verificar-dashboard-none.js` recrea la verificación de las secciones 5.1 a 5.6.
+### 12.2 Scripts reproducibles
+
+**`scripts/verificar-dashboard-none.js`** — secciones 5.1 a 5.6: creación con `dashboard: 'none'`,
+responsabilidades, requisitos, Account Session, Account Link e inmutabilidad.
+
+**`scripts/verificar-payouts.js`** — sección 5.7: capacidad de payouts auto-solicitada,
+`payouts.list`, `balance.retrieve`, validez de los tipos `payout.*` y
+`saved_payment_method_options` con `embedded_page` y `form`.
 
 ```powershell
-docker cp scripts/verificar-dashboard-none.js elyx-backend:/app/v.js
-docker exec -w /app elyx-backend node v.js
-docker exec elyx-backend rm -f /app/v.js
+docker cp scripts/verificar-payouts.js elyx-backend:/app/vp.js
+docker exec -w /app elyx-backend node vp.js
+docker exec elyx-backend rm -f /app/vp.js
 ```
 
-El script aborta si la llave no es `sk_test_`, para no crear cuentas reales por accidente.
+Ambos scripts abortan si la llave no es `sk_test_`, para no tocar cuentas reales por accidente.
+
+**`scripts/verificar-tarjeta-guardada.js`** — Fase 4: crea un `Customer` en la cuenta conectada,
+confirma que **no** existe en la cuenta plataforma (direct charges) y valida la combinación real de
+la app (`saved_payment_method_options.payment_method_save = 'enabled'` +
+`payment_intent_data.setup_future_usage = 'on_session'`) en dos sesiones consecutivas.
+
+```powershell
+docker cp scripts/verificar-tarjeta-guardada.js elyx-backend:/app/vtg.js
+docker exec -w /app elyx-backend node vtg.js [acct_...]
+docker exec elyx-backend rm -f /app/vtg.js
+```
+
+**`scripts/probar-webhook-connect.js`** — envía eventos firmados al webhook de Connect para probar
+la confirmación de cargos y los eventos asíncronos.
+
+**`scripts/probar-webhook-payouts.js`** — Fase 5: envía `payout.created`, `payout.paid`,
+`payout.failed` y `payout.updated` firmados, comprueba la idempotencia con un evento repetido y
+que una cuenta ajena no crea filas.
+
+```powershell
+docker cp scripts/probar-webhook-payouts.js elyx-backend:/app/pwp.js
+docker exec -w /app elyx-backend node pwp.js [acct_...]
+docker exec elyx-backend rm -f /app/pwp.js
+```
+
+**`scripts/verificar-cuenta-final.js`** — Fase 6: crea una cuenta v2 con los parámetros reales de
+`connect.service.ts` y comprueba `dashboard: 'none'`, las tres responsabilidades en `stripe`, las
+capacidades pedidas, que **ningún requisito pida `business_url`**, la Account Session del onboarding
+embebido y el Account Link de respaldo. Cierra la cuenta al terminar.
+
+```powershell
+docker cp scripts/verificar-cuenta-final.js elyx-backend:/app/vcf.js
+docker exec -w /app elyx-backend node vcf.js
+docker exec elyx-backend rm -f /app/vcf.js
+```
 
 ### 12.3 Referencias de código
 
 | Tema | Archivo |
 |---|---|
 | Creación de cuenta y onboarding | `apps/backend/src/modules/cobros/connect.service.ts` |
-| Direct charges y confirmación | `apps/backend/src/modules/cobros/cobros-stripe.service.ts` |
+| Direct charges, Customer y confirmación | `apps/backend/src/modules/cobros/cobros-stripe.service.ts` |
 | Webhook de Connect | `apps/backend/src/modules/cobros/stripe-connect-webhook.controller.ts` |
 | Cliente de Stripe y secretos | `apps/backend/src/modules/suscripciones/stripe-client.service.ts` |
 | Configuración de cobro (frontend) | `apps/frontend/src/components/ConfiguracionCobroPanel.tsx` |
@@ -651,6 +850,10 @@ El script aborta si la llave no es `sk_test_`, para no crear cuentas reales por 
 
 ### 12.4 Documentación oficial consultada
 
+- `docs.stripe.com/payments/checkout/save-during-payment` — guardar y reutilizar tarjetas en el
+  formulario embebido (solo tarjetas; requiere `customer`)
+- `docs.stripe.com/api/checkout/sessions/create` — `saved_payment_method_options`,
+  `payment_intent_data.setup_future_usage`
 - `docs.stripe.com/api/v2/core/accounts/create` — parámetro `dashboard` y códigos de error
 - `docs.stripe.com/api/v2/core/accounts/object` — atributos `dashboard` y `responsibilities`
 - `docs.stripe.com/connect/risk-management` — tabla de responsabilidades y KYC
@@ -661,3 +864,167 @@ El script aborta si la llave no es `sk_test_`, para no crear cuentas reales por 
 - `docs.stripe.com/connect/supported-embedded-components/account-onboarding` — `collectionOptions` y `StepChange`
 - `docs.stripe.com/connect/design-an-integration` — escenarios de dashboard
 - `docs.stripe.com/connect/get-started-connect-embedded-components` — Account Sessions
+
+---
+
+## 13. Estado de implementación
+
+### 13.1 Fase 4 — tarjeta guardada (completa, 2026-11-13)
+
+**Qué se hizo**
+
+- `CobrosStripeService.asegurarCliente()` crea o reutiliza el `Customer` **en la cuenta
+  conectada** (`{ stripeAccount }`). Se mapea por `(id_condominio, id_usuario_condominio)` en
+  `condominos_clientes_stripe`; nunca por usuario, porque la misma persona en otro condominio usa
+  otra cuenta y otro Customer.
+- La membresía se toma del JWT (`memberships[].idUsuarioCondominio`) en `CobrosController` y se
+  propaga a `CobrosService.datosPagoCuota()` y a `crearCobroTarjeta()`. Es la traducción
+  `sub` → membresía que ya se usa en invitaciones.
+- La sesión se crea con `customer`, `saved_payment_method_options.payment_method_save =
+  'enabled'` y `payment_intent_data.setup_future_usage = 'on_session'`.
+- Si el Customer falla (Stripe caído, membresía inactiva), el cobro **sigue funcionando** sin
+  tarjeta guardada: `asegurarCliente()` nunca lanza.
+- `DatosPagoCuota` expone `tarjetaGuardada` y `guardarTarjeta`; `PagoCuotaModal` avisa al
+  condómino en ambos casos.
+
+**Por qué `on_session` y no `off_session`**: `on_session` adjunta la tarjeta al Customer sin crear
+un mandato de cobro automático. `off_session` permitiría cobrarle al condómino sin que esté
+presente, que es justo lo que no se le promete al ofrecerle guardar la tarjeta.
+
+**Verificación (cuenta de test `acct_1Ub9fHDMdbqDU7B3`, condominio 2, membresía 7)**
+
+```
+GET /api/cobros/cuota/26?idCondominio=2   (JWT de la condómina)
+→ { "tarjetaGuardada": false, "guardarTarjeta": true, "clientSecret": "cs_test_..." }
+
+condominos_clientes_stripe
+→ (2, 7, cus_VcOljG9G7KlrS8)
+
+Stripe (cuenta conectada)
+→ checkout session cs_test_a0js... customer = cus_VcOljG9G7KlrS8
+→ saved_payment_method_options = { payment_method_save: "enabled", ... }
+
+Segunda llamada (misma cuota, sesión viva)
+→ mismo clientSecret, "tarjetaGuardada": true   (no se creó otra sesión ni otro Customer)
+```
+
+**Pendiente de comprobar en navegador**: que la tarjeta guardada aparezca visualmente en la
+segunda compra. Requiere completar un pago real en el formulario embebido, y el KYC de la cuenta
+de test sigue `restricted`; el `Customer` y las opciones de la sesión ya están verificados por API.
+
+### 13.3 Fase 6 — verificación final (completa, 2026-11-13)
+
+**Matriz de verificación**
+
+| # | Punto del plan | Resultado | Evidencia |
+|---|---|---|---|
+| 1 | Migración idempotente + espejo validado | ✅ | Aplicada 3 veces sobre una BD temporal con `ON_ERROR_STOP=1`: exit 0 y solo `NOTICE ... already exists`. Columnas, tipos, nulabilidad, defaults y constraints **idénticos** entre el espejo (`01_schema.sql`) y la BD migrada |
+| 2 | Página pública cumple los 6 puntos de la FAQ de Stripe | ✅ | Nombre, descripción, correo y teléfono, enlace a la política, carga sin credenciales y está completa. `robots: noindex, nofollow` + `Disallow` en `robots.txt` |
+| 3 | Enlaces viejos `/invitacion/<token>` siguen funcionando | ✅ | Con token revocado muestra la página pública + «enlace desactivado»; con token válido muestra la sección de unión |
+| 4 | Unión autenticada → `VERIFICADA` sin correo | ✅ | `POST /invitaciones/publica/:token/unirse` → fila `VERIFICADA` con `verificado_en = NOW()` y sin `password_hash`; aprobar crea membresía + ocupación |
+| 5 | `business_url` desaparece de `requirements.entries` | ✅ | Cuenta nueva con los parámetros reales: 45 requisitos, **ninguno** pide `business_url` |
+| 6 | Onboarding embebido monta | ⚠️ Parcial | El `<stripe-connect-account-onboarding>` y su iframe se crean en el DOM y el backend emite Account Sessions válidas; el navegador automatizado **no puede cargar** `connect-js.stripe.com` (`net::ERR_ABORTED`, igual que `challenges.cloudflare.com`), así que el contenido interno no se pudo ver |
+| 7 | Radar/Tax/Climate desaparecen | ⏳ Manual | Requiere abrir el onboarding en un navegador normal; sin conexión a connect-js no hay nada que inspeccionar |
+| 8 | Tarjeta guardada visible en la segunda compra | ⚠️ Parcial | `Customer` + `payment_method_save` + `setup_future_usage: on_session` verificados en la sesión real; ver la tarjeta exige completar un pago, y el KYC de la cuenta de test sigue `restricted` |
+| 9 | `payout.paid` firmado → fila en `depositos_condominio` | ✅ | 4 eventos firmados → 3 filas; repetido → `evento-duplicado`; cuenta ajena → `cuenta-desconocida` |
+| 10 | Docs actualizados | ✅ | Este documento, `README.md` y `docs/estructura-proyecto.md` |
+
+**Script de verificación**: `scripts/verificar-cuenta-final.js` crea la cuenta con los parámetros reales,
+comprueba responsabilidades, capacidades, la ausencia de `business_url`, la Account Session y el
+Account Link, y **cierra la cuenta** al terminar (`applied_configurations: ['merchant']`).
+
+```
+OK   dashboard = none
+OK   fees_collector = stripe
+OK   losses_collector = stripe
+OK   requirements_collector = stripe
+OK   card_payments existe
+OK   link_payments existe
+OK   ningun requisito pide business_url        (45 requisitos revisados)
+OK   devuelve client_secret                    (accountSessions.create)
+OK   devuelve URL de Stripe                    (accountLinks.create)
+Cuenta de prueba cerrada
+```
+
+**Correcciones encontradas al verificar**
+
+1. **`VistaCondominio` no distinguía a un miembro actual.** A quien ya pertenece al condominio se le
+   ofrecía «Unirme» y, al pulsar, veía «Solicitud enviada» aunque el backend respondiera
+   `YA_MIEMBRO`. Ahora, al recuperar la sesión se revisan las membresías y se muestra «Ya perteneces
+   a este condominio» con un enlace de entrada. El estado se comprueba **antes** que el del enlace,
+   porque un enlace revocado no le impide nada a quien ya está dentro.
+2. **`ConnectOnboarding` cacheaba una instancia fallida.** `obtenerInstancia` guardaba la promesa de
+   `loadConnectAndInitialize` incluso cuando se rechazaba, así que un fallo de red inicial dejaba el
+   formulario en blanco hasta recargar la página. Ahora la promesa se descarta al fallar.
+3. **`InvitacionesController` respondía 500 sin `idCondominio`.** El query param se convertía con
+   `Number(...)` y llegaba `NaN` al SQL. Se cambió a `ParseIntPipe` en los cuatro endpoints del
+   panel: ahora responde **400** con el parámetro faltante.
+
+**Limitaciones que quedan abiertas (no son defectos del código)**
+
+- El iframe de Stripe no se puede inspeccionar en el navegador automatizado de este entorno:
+  `connect-js.stripe.com` devuelve `ERR_ABORTED`. La misma restricción afecta a Turnstile. La
+  comprobación de Radar/Tax/Climate debe hacerse a mano en un navegador normal.
+- El KYC de la cuenta de test sigue `restricted`, así que no se puede completar un pago ni generar un
+  payout real.
+
+### 13.4 Fase 5 — payouts / depósitos (completa, 2026-11-13)
+
+**Qué se hizo**
+
+- Nuevo `DepositosService` (`modules/cobros/depositos.service.ts`):
+  - `registrarDesdeWebhook(payout, stripeAccountId)` resuelve el condominio por
+    `event.account` y hace upsert por `stripe_payout_id`. Un mismo payout llega varias veces
+    (`created`, `updated`, `paid`) y deja **una sola fila** con el estado más reciente.
+  - `listar(idCondominio)` alimenta el panel del administrador.
+  - `reconciliar(idCondominio)` compara contra `payouts.list({ limit: 100 }, { stripeAccount })`.
+  - `@Cron('0 15 6 * * *')` reconcilia todas las cuentas conectadas (6:15, sin chocar con los
+    crons de suscripciones de 2 a 5 AM).
+- Webhook de Connect: casos `payout.created`, `payout.updated`, `payout.paid`, `payout.failed` y
+  `payout.reconciliation_completed`. Los cinco traen un objeto `Payout` (verificado en
+  `stripe-node`), así que comparten el mismo manejador.
+- Endpoints `GET /api/cobros/depositos?idCondominio=` y `POST /api/cobros/depositos/reconciliar`.
+- Frontend: `components/DepositosPanel.tsx` montado en **Gastos y reportes**, con totales
+  (depositado / en camino), tabla por fecha de llegada y botón «Actualizar» que fuerza la
+  reconciliación.
+
+**Verificación (eventos firmados contra el webhook real, cuenta `acct_1Ub9fHDMdbqDU7B3`)**
+
+```
+payout.created  (payout A, pending)   -> procesado: true
+payout.paid     (payout A, paid)      -> procesado: true   (misma fila, estado final paid)
+payout.failed   (payout B)            -> procesado: true
+payout.updated  (payout C, in_transit)-> procesado: true
+payout.paid repetido                  -> procesado: false, motivo: evento-duplicado
+payout.paid de una cuenta ajena       -> procesado: false, motivo: cuenta-desconocida
+
+GET /api/cobros/depositos?idCondominio=2
+-> 3 filas: A=paid 1800 MXN, B=failed 950 MXN, C=in_transit 500 MXN (card/instant)
+POST /api/cobros/depositos/reconciliar?idCondominio=2
+-> { revisados: 0, creados: 0, actualizados: 0 }   (la API respondió; la cuenta no tiene payouts)
+```
+
+**UI verificada en navegador**: el panel muestra los totales ($1,800 depositado / $500 en
+camino), las tres filas con su chip de estado y el botón «Actualizar» responde «Stripe no
+reporta depósitos todavía» cuando no hay movimientos reales.
+
+**Límite conocido**: no se pudo crear un payout real porque la cuenta de test sigue `restricted`
+(`charges_enabled: false` por KYC pendiente), así que el `payload` real de un `payout.paid` no se
+observó. La forma del objeto está tomada del SDK (`stripe-node` 23.1.0) y los eventos firmados
+con esa forma se procesan correctamente.
+
+**Configuración manual pendiente**: agregar los cinco eventos `payout.*` al destino del webhook
+de **Connected accounts** (`/api/webhooks/stripe/connect`) en el Dashboard de Stripe. Sin eso,
+los depósitos solo aparecen por el cron de las 6:15 o al pulsar «Actualizar».
+
+### 13.5 Fases anteriores
+
+| Fase | Estado |
+|---|---|
+| 0 — migración (`20261112_connect_none_publico.sql`) | ✅ aplicada + espejo en `01_schema.sql` |
+| 1 — página pública `/condominio/:id` + `/politica-pagos` | ✅ |
+| 2 — unión desde la invitación + 4 bugs corregidos | ✅ |
+| 3 — `dashboard: 'none'` + onboarding embebido + `link_payments` | ✅ |
+| 4 — tarjeta guardada (`on_session`) | ✅ |
+| 5 — payouts / depósitos | ✅ |
+| 6 — verificación final y documentación | ✅ (con 2 comprobaciones manuales pendientes, 13.3) |

@@ -32,12 +32,24 @@ ON CONFLICT (id_usuario) DO UPDATE SET
 -- ============================================================================
 -- 2. CONDOMINIOS (3)
 -- ============================================================================
-INSERT INTO condominios (id_condominio, nombre, direccion, estado, fecha_alta) VALUES
-(1, 'Residencial Arcos del Parque', 'Av. de los Arcos 1420, Col. Lomas del Parque, Alcaldía Miguel Hidalgo, CDMX, CP 11950', 'ACTIVO', '2021-03-15 00:00:00'),
-(2, 'Condominio Jardines de la Sierra', 'Calle Sierra Nevada 355, Col. Vista Hermosa, Zapopan, Jalisco, CP 45130', 'ACTIVO', '2020-08-01 00:00:00'),
-(3, 'Plaza Comercial del Valle', 'Blvd. del Valle 780, Col. Centro Comercial, San Pedro Garza García, N.L., CP 64720', 'ACTIVO', '2019-01-10 00:00:00')
+INSERT INTO condominios (
+  id_condominio, nombre, direccion, estado, fecha_alta,
+  telefono_contacto, correo_contacto, descripcion_publica
+) VALUES
+(1, 'Residencial Arcos del Parque', 'Av. de los Arcos 1420, Col. Lomas del Parque, Alcaldía Miguel Hidalgo, CDMX, CP 11950', 'ACTIVO', '2021-03-15 00:00:00',
+    '+525555123401', 'contacto@arcosdelparque.mx',
+    'Administración y cobro de cuotas de mantenimiento del Residencial Arcos del Parque. Incluye vigilancia, mantenimiento de áreas comunes, jardinería y limpieza.'),
+(2, 'Condominio Jardines de la Sierra', 'Calle Sierra Nevada 355, Col. Vista Hermosa, Zapopan, Jalisco, CP 45130', 'ACTIVO', '2020-08-01 00:00:00',
+    '+523333123402', 'contacto@jardinesdelasierra.mx',
+    'Administración y cobro de cuotas de mantenimiento del Condominio Jardines de la Sierra. Incluye seguridad, jardinería, alberca y áreas recreativas.'),
+(3, 'Plaza Comercial del Valle', 'Blvd. del Valle 780, Col. Centro Comercial, San Pedro Garza García, N.L., CP 64720', 'ACTIVO', '2019-01-10 00:00:00',
+    '+528181123403', 'contacto@plazadelvalle.mx',
+    'Administración y cobro de cuotas de mantenimiento de la Plaza Comercial del Valle. Incluye limpieza, seguridad y mantenimiento de locales.')
 ON CONFLICT (id_condominio) DO UPDATE SET
-  nombre = EXCLUDED.nombre, direccion = EXCLUDED.direccion, estado = EXCLUDED.estado;
+  nombre = EXCLUDED.nombre, direccion = EXCLUDED.direccion, estado = EXCLUDED.estado,
+  telefono_contacto = EXCLUDED.telefono_contacto,
+  correo_contacto = EXCLUDED.correo_contacto,
+  descripcion_publica = EXCLUDED.descripcion_publica;
 
 -- ============================================================================
 -- 3. USUARIOS_CONDOMINIOS (16 membresías)

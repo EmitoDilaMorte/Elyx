@@ -91,6 +91,9 @@ services:
       STRIPE_TAX_RATE_ID: ${STRIPE_TAX_RATE_ID:-}
       SUSCRIPCION_DATOS_PAGO: ${SUSCRIPCION_DATOS_PAGO:-}
       PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:${FRONTEND_PORT:-5173}}
+      # Stripe exige que la URL del negocio sea publica y con https. En
+      # produccion debe ser el dominio real del frontend.
+      STRIPE_BUSINESS_BASE_URL: ${STRIPE_BUSINESS_BASE_URL:-}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
       # Retencion de datos (docs/politica-privacidad.md). "false" la desactiva.
       RETENCION_ENABLED: ${RETENCION_ENABLED:-true}

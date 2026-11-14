@@ -23,8 +23,23 @@ export type ConfiguracionCobro = {
   comisionFijo: number;
   activo: boolean;
   /**
-   * `false` cuando falta el RFC: sin el, Stripe no puede verificar la cuenta y
-   * no hay forma de depositarle. La UI deshabilita la opcion ANTES de intentar.
+   * Datos que se publican en `/condominio/:id`, la URL que Stripe revisa para
+   * verificar el negocio. Se editan desde este mismo panel porque son requisito
+   * del cobro con tarjeta, no del resto de la plataforma.
+   */
+  descripcionPublica: string | null;
+  correoContacto: string | null;
+  telefonoContacto: string | null;
+  /** `true` mientras `/condominio/:id` sea accesible. */
+  paginaPublicaActiva: boolean;
+  /** URL publica que se declara a Stripe como `business_url`. */
+  urlPublica: string;
+  /** Campos del RFC y de contacto que aun faltan para poder usar Connect. */
+  requisitosConnectFaltantes: string[];
+  /**
+   * `false` cuando falta el RFC o los datos de contacto: sin ellos Stripe no
+   * puede verificar la cuenta y no hay forma de depositarle. La UI deshabilita
+   * la opcion ANTES de intentar.
    */
   puedeUsarConnect: boolean;
   /** Motivo legible cuando `puedeUsarConnect` es false. */
@@ -51,6 +66,16 @@ export type DatosPagoCuota = {
   clientSecret?: string | null;
   /** `true` si el condominio permite meses sin intereses. */
   permitirMsi?: boolean;
+  /**
+   * `true` si el condomino ya tiene tarjetas guardadas de compras anteriores:
+   * el formulario de Stripe las muestra al inicio.
+   */
+  tarjetaGuardada?: boolean;
+  /**
+   * `true` si esta compra puede guardar la tarjeta para las siguientes. Es
+   * `on_session`: nunca se cobra sin que el condomino este presente.
+   */
+  guardarTarjeta?: boolean;
   /** Mensaje cuando el cobro no se puede iniciar. */
   motivo?: string | null;
 };
@@ -82,4 +107,31 @@ export type CargoPendiente = {
   montoTotal: number;
   referenciaSpei: string | null;
   expiraEn: string | null;
+};
+
+/** Estados del objeto Payout de Stripe, replicados en `depositos_condominio`. */
+export type EstadoDeposito = 'pending' | 'in_transit' | 'paid' | 'failed' | 'canceled';
+
+/**
+ * Deposito que Stripe hizo (o hara) a la cuenta bancaria del condominio.
+ *
+ * Con `dashboard: 'none'` el condominio no tiene donde consultarlos, asi que
+ * se replican aqui desde los eventos `payout.*`.
+ */
+export type DepositoCondominio = {
+  idDeposito: number;
+  idCondominio: number;
+  /** `po_...` de Stripe. */
+  stripePayoutId: string;
+  monto: number;
+  moneda: string;
+  estado: EstadoDeposito;
+  /** `standard` o `instant`. */
+  metodo: string | null;
+  /** `bank_account` o `card`. */
+  tipo: string | null;
+  /** Fecha (YYYY-MM-DD) en que Stripe espera que llegue al banco. */
+  llegaEn: string | null;
+  creadoEn: string | null;
+  actualizadoEn: string | null;
 };

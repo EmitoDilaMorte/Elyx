@@ -1,10 +1,12 @@
 import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { Request } from 'express';
+import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { extractClientIp, TurnstileGuard } from '../../common/turnstile/turnstile.guard';
 import {
   ConfirmarSolicitudDto,
   CrearSolicitudInvitacionDto,
+  UnirseInvitacionDto,
 } from './dto/invitaciones.dto';
 import { InvitacionesService } from './invitaciones.service';
 
@@ -46,5 +48,28 @@ export class InvitacionesPublicasController {
   @Throttle({ default: { limit: 10, ttl: 600_000 } })
   confirmar(@Body() dto: ConfirmarSolicitudDto) {
     return this.invitacionesService.confirmarSolicitud(dto.token);
+  }
+
+  /**
+   * Union de un usuario que ya inicio sesion.
+   *
+   * Requiere JWT: el correo sale de la sesion, no del cuerpo, asi que no se
+   * puede suplantar. La solicitud nace VERIFICADA y no se manda correo, porque
+   * el login ya probo el buzon. Sin Turnstile: el costo de abuso es una sesion
+   * valida y el throttle limita el resto.
+   */
+  @Post(':token/unirse')
+  @UseGuards(JwtAuthGuard)
+  @Throttle({ default: { limit: 10, ttl: 600_000 } })
+  unirse(
+    @Param('token') token: string,
+    @Body() dto: UnirseInvitacionDto,
+    @Req() req: Request & { user?: { sub?: number } },
+  ) {
+    return this.invitacionesService.unirseConSesion(
+      token,
+      Number(req.user?.sub),
+      dto.idUnidad,
+    );
   }
 }

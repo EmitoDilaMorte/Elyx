@@ -29,6 +29,7 @@ import {
   leerParametrosPrecio,
   type DesglosePrecio,
 } from './precio-suscripcion';
+import { periodoDeSuscripcion } from './stripe-campos';
 import { StripeClientService } from './stripe-client.service';
 
 type SuscripcionRow = Record<string, unknown>;
@@ -985,9 +986,9 @@ export class SuscripcionesService {
           continue;
         }
 
-        const fin = this.fechaDesdeUnix(
-          (suscripcion as unknown as { current_period_end?: number }).current_period_end,
-        );
+        // El periodo se lee con `periodoDeSuscripcion`: en la API actual vive
+        // en cada item de la suscripcion, no en la raiz.
+        const { fin } = periodoDeSuscripcion(suscripcion);
 
         await this.dataSource.query(
           `
@@ -1020,13 +1021,6 @@ export class SuscripcionesService {
     } catch (error) {
       this.logger.error('Fallo la reconciliacion con Stripe.', error as Error);
     }
-  }
-
-  private fechaDesdeUnix(segundos: number | null | undefined): string | null {
-    if (!segundos || !Number.isFinite(segundos)) {
-      return null;
-    }
-    return new Date(segundos * 1000).toISOString();
   }
 
   /**

@@ -7,6 +7,7 @@ import { CobrosController } from './cobros.controller';
 import { CobrosService } from './cobros.service';
 import { CobrosStripeService } from './cobros-stripe.service';
 import { ConnectService } from './connect.service';
+import { DepositosService } from './depositos.service';
 import { StripeConnectWebhookController } from './stripe-connect-webhook.controller';
 
 /**
@@ -23,7 +24,7 @@ import { StripeConnectWebhookController } from './stripe-connect-webhook.control
 @Module({
   imports: [CuotasModule, NotificacionesModule, SuscripcionesModule, PagosModule],
   controllers: [CobrosController, StripeConnectWebhookController],
-  providers: [CobrosService, ConnectService, CobrosStripeService],
-  exports: [CobrosService, ConnectService, CobrosStripeService],
+  providers: [CobrosService, ConnectService, CobrosStripeService, DepositosService],
+  exports: [CobrosService, ConnectService, CobrosStripeService, DepositosService],
 })
 export class CobrosModule {}

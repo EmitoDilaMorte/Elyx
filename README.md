@@ -617,7 +617,16 @@ comprobantes que suben los condóminos.
 | `GET` | `/api/cobros/connect/estado` | Estado real de la cuenta Connect del condominio |
 | `POST` | `/api/cobros/connect/cuenta` | Crea o reutiliza la cuenta Connect (Accounts v2) |
 | `POST` | `/api/cobros/connect/enlace` | Devuelve la URL de onboarding hospedada por Stripe |
+| `POST` | `/api/cobros/connect/sesion` | Sesión para montar el onboarding **dentro de Elyx** |
+| `GET` | `/api/cobros/depositos` | Depósitos (payouts) que Stripe hizo al condominio |
+| `POST` | `/api/cobros/depositos/reconciliar` | Fuerza la conciliación de depósitos contra Stripe |
 | `POST` | `/api/webhooks/stripe/connect` | Webhook de Connect (firma y secreto propios) |
+
+**Depósitos.** La cuenta conectada se crea con `dashboard: 'none'`, así que el condominio
+no tiene ningún panel de Stripe. Elyx replica los payouts en `depositos_condominio` desde los
+eventos `payout.created|updated|paid|failed|reconciliation_completed` y los muestra en
+**Gastos y reportes → Depósitos de Stripe**. Además hay un cron diario (6:15) que reconcilia
+contra `payouts.list`.
 
 ### Comunicación y comunidad
 

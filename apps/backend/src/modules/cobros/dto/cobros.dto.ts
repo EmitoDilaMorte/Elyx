@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import {
   IsBoolean,
+  IsEmail,
   IsIn,
   IsInt,
   IsNumber,
@@ -76,6 +77,37 @@ export class ActualizarConfiguracionCobroDto {
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   comisionFijo?: number;
+
+  /**
+   * Datos publicos del condominio.
+   *
+   * Son requisito del cobro con tarjeta: Stripe exige que la URL del negocio
+   * muestre la descripcion de los servicios y datos de contacto de atencion al
+   * cliente, y la revisa periodicamente. Se editan desde este panel porque sin
+   * ellos no se puede crear la cuenta conectada.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(600)
+  descripcionPublica?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  @IsEmail({}, { message: 'El correo de contacto no es valido.' })
+  correoContacto?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  @Matches(/^[+]?[\d\s()-]{7,30}$/, {
+    message: 'El telefono de contacto debe tener al menos 7 digitos.',
+  })
+  telefonoContacto?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  paginaPublicaActiva?: boolean;
 }
 
 /** Cuerpo para crear el cargo de una cuota. */

@@ -411,6 +411,50 @@ export class InvitacionesService {
       throw new BadRequestException('La solicitud ya fue resuelta o no existe.');
     }
 
+    // Se avisa al solicitante. Sin esto, quien habia confirmado su correo solo
+    // veia que el enlace dejaba de funcionar: no hay ninguna otra via para que
+    // se entere del rechazo ni del motivo.
+    try {
+      const usuarioExistente = await this.dataSource.query(
+        `SELECT id_usuario FROM usuarios WHERE LOWER(correo) = LOWER($1) LIMIT 1`,
+        [String((rows[0] as Record<string, unknown>).correo ?? '')],
+      );
+
+      if (usuarioExistente.length > 0) {
+        const idUsuario = Number((usuarioExistente[0] as Record<string, unknown>).id_usuario);
+        const membresia = await this.dataSource.query(
+          `SELECT id_usuario_condominio FROM usuarios_condominios
+           WHERE id_usuario = $1 AND id_condominio = $2 LIMIT 1`,
+          [idUsuario, idCondominio],
+        );
+
+        // Solo se puede notificar a quien ya tiene membresia en este condominio
+        // (la notificacion apunta a `usuarios_condominios`). Un solicitante nuevo
+        // aun no la tiene, y esa es justamente la razon por la que no hay canal.
+        if (membresia.length > 0) {
+          const motivo = input.comentario?.trim();
+          await this.alta.notificarAlta(this.dataSource.manager, {
+            idCondominio,
+            idUsuarioCondominio: Number(
+              (membresia[0] as Record<string, unknown>).id_usuario_condominio,
+            ),
+            tipo: 'SOLICITUD_ALTA_RECHAZADA',
+            asunto: 'Tu solicitud de alta fue rechazada',
+            mensaje: motivo
+              ? `Tu solicitud para unirte al condominio fue rechazada. Motivo: ${motivo}`
+              : 'Tu solicitud para unirte al condominio fue rechazada. Contacta al administrador para mas informacion.',
+          });
+        }
+      }
+    } catch (error) {
+      // La notificacion nunca debe tumbar el rechazo, que ya esta guardado.
+      this.logger.warn(
+        `No fue posible notificar el rechazo de la solicitud ${input.idSolicitud}: ${
+          (error as Error).message
+        }`,
+      );
+    }
+
     const actualizadas = await this.dataSource.query(
       `
       SELECT s.*, un.clave_unidad
@@ -508,6 +552,16 @@ export class InvitacionesService {
     );
     const esCuentaExistente = usuariosRows.length > 0;
 
+    // Cuenta nueva sin contraseña: antes se generaba una temporal y se
+    // descartaba, dejando al usuario con `requiere_cambio_password` pero sin
+    // forma de conocerla (solo le quedaba "olvide mi contraseña"). Enviarla por
+    // correo tampoco es aceptable, asi que se pide aqui.
+    if (!esCuentaExistente && !dto.password) {
+      throw new BadRequestException(
+        'Define una contraseña para crear tu cuenta. Si ya tienes una, inicia sesión y únete desde ahí.',
+      );
+    }
+
     // Cuenta nueva: el usuario elige su password. Cuenta existente: se ignora y
     // la propiedad del buzon se prueba con el enlace enviado por correo.
     const passwordHash =
@@ -566,6 +620,129 @@ export class InvitacionesService {
     });
 
     return { ok: true, message: MENSAJE_GENERICO };
+  }
+
+  /**
+   * Une a un usuario YA AUTENTICADO al condominio del enlace.
+   *
+   * La diferencia con `crearSolicitud` es que aqui la propiedad del correo ya
+   * esta probada por el inicio de sesion, asi que la solicitud nace
+   * **VERIFICADA** y no se manda correo de confirmacion. Sin esto, alguien con
+   * cuenta que recibe una invitacion tendria que registrarse otra vez o esperar
+   * un correo que solo repite lo que el login ya demostro.
+   *
+   * El condominio y la invitacion salen del **token**, nunca del cuerpo: aceptar
+   * un `idCondominio` del cliente permitiria unirse a un condominio ajeno.
+   *
+   * Los datos personales se toman de la cuenta, no del formulario: el usuario no
+   * los vuelve a capturar.
+   */
+  async unirseConSesion(
+    rawToken: string,
+    idUsuario: number,
+    idUnidad: number,
+  ): Promise<{ ok: true; message: string; estado: string }> {
+    const invitacion = await this.resolverInvitacionActiva(rawToken);
+    const idCondominio = Number(invitacion.id_condominio);
+
+    await this.cupo.assertCondominioOperativo(idCondominio);
+
+    const usuarios = await this.dataSource.query(
+      `SELECT id_usuario, nombre, primer_apellido, segundo_apellido, correo
+       FROM usuarios WHERE id_usuario = $1 LIMIT 1`,
+      [idUsuario],
+    );
+
+    if (usuarios.length === 0) {
+      throw new NotFoundException('No se encontro el usuario de la sesion.');
+    }
+
+    const usuario = usuarios[0] as Record<string, unknown>;
+    const correo = String(usuario.correo ?? '').trim().toLowerCase();
+
+    // Ya es miembro: no hay nada que hacer. Se responde ok para que la UI no
+    // muestre un error por algo que el usuario queria de todas formas.
+    //
+    // Se comprueba ANTES del cupo a proposito: si el condominio esta lleno, un
+    // miembro actual no debe leer "no hay unidades disponibles" cuando su
+    // situacion ya esta resuelta.
+    const yaMiembro = await this.dataSource.query(
+      `
+      SELECT 1 FROM usuarios_condominios
+      WHERE id_usuario = $1 AND id_condominio = $2
+      LIMIT 1
+      `,
+      [idUsuario, idCondominio],
+    );
+
+    if (yaMiembro.length > 0) {
+      return {
+        ok: true,
+        message: 'Ya perteneces a este condominio.',
+        estado: 'YA_MIEMBRO',
+      };
+    }
+
+    if (!(await this.cupo.hayAsientosLibres(idCondominio))) {
+      throw new BadRequestException(ENLACE_NO_DISPONIBLE);
+    }
+
+    const unidadRows = await this.dataSource.query(
+      `
+      SELECT id_unidad FROM unidades
+      WHERE id_unidad = $1 AND id_condominio = $2 AND estado = 'ACTIVA'
+      LIMIT 1
+      `,
+      [idUnidad, idCondominio],
+    );
+
+    if (unidadRows.length === 0) {
+      throw new BadRequestException(ENLACE_NO_DISPONIBLE);
+    }
+
+    const { tokenHash } = this.generarToken();
+    const expiracion = new Date(Date.now() + 48 * 60 * 60 * 1000);
+
+    try {
+      await this.dataSource.query(
+        `
+        INSERT INTO solicitudes_alta_invitacion (
+          id_condominio, id_invitacion, nombre, apellido_paterno, apellido_materno,
+          correo, password_hash, es_cuenta_existente, telefono, id_unidad_propuesta,
+          tipo_ocupacion, token_hash, expiracion, estado, verificado_en
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,NULL,TRUE,NULL,$7,'PROPIETARIO',$8,$9,'VERIFICADA',NOW())
+        `,
+        [
+          idCondominio,
+          Number(invitacion.id_invitacion),
+          String(usuario.nombre ?? ''),
+          String(usuario.primer_apellido ?? ''),
+          usuario.segundo_apellido ? String(usuario.segundo_apellido) : null,
+          correo,
+          idUnidad,
+          tokenHash,
+          expiracion.toISOString(),
+        ],
+      );
+    } catch (error) {
+      this.logger.debug('Union por invitacion rechazada por unicidad.', error as Error);
+      throw new BadRequestException(
+        'Ya existe una solicitud en curso para esa unidad o para tu correo.',
+      );
+    }
+
+    await this.avisarAdmins(idCondominio, 'SOLICITUD_ALTA_CREADA', {
+      asunto: 'Nueva solicitud de alta',
+      mensaje: `${usuario.nombre} ${usuario.primer_apellido} solicito unirse al condominio (correo ya verificado).`,
+    });
+
+    return {
+      ok: true,
+      message:
+        'Solicitud enviada. El administrador la revisara y te avisara cuando quede aprobada.',
+      estado: 'VERIFICADA',
+    };
   }
 
   async confirmarSolicitud(rawToken: string): Promise<{

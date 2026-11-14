@@ -27,6 +27,14 @@ CREATE TABLE IF NOT EXISTS condominios (
   regimen_fiscal VARCHAR(100),
   cp_fiscal VARCHAR(5),
   correo_facturacion VARCHAR(150),
+  -- Datos publicos: los exige Stripe en la web del negocio para verificar la
+  -- cuenta. NO se reutilizan los del administrador: publicarlos expondria datos
+  -- personales de una persona fisica en una pagina abierta.
+  telefono_contacto VARCHAR(30),
+  correo_contacto VARCHAR(150),
+  descripcion_publica TEXT,
+  -- FALSE oculta /condominio/:id sin tocar la cuenta de Stripe.
+  pagina_publica_activa BOOLEAN NOT NULL DEFAULT TRUE,
   estado VARCHAR(30) NOT NULL DEFAULT 'ACTIVO'
     CHECK (estado IN ('PENDIENTE_VERIFICACION', 'PENDIENTE_PAGO', 'ACTIVO', 'INACTIVO', 'SUSPENDIDO')),
   fecha_alta TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -243,6 +251,55 @@ CREATE INDEX IF NOT EXISTS idx_cargos_cuota_spei
 CREATE UNIQUE INDEX IF NOT EXISTS uq_cargos_cuota_session_stripe
   ON cargos_cuota (stripe_checkout_session_id)
   WHERE stripe_checkout_session_id IS NOT NULL;
+
+-- Customer de Stripe por membresia. Vive EN LA CUENTA CONECTADA del condominio
+-- (direct charges), no en la plataforma, y por eso se mapea por condominio: el
+-- mismo usuario en otro condominio usa otra cuenta y otro Customer.
+-- `stripe_customer_id` es UNIQUE: si se duplicara, un pago podria mostrar las
+-- tarjetas guardadas de otro condominio.
+CREATE TABLE IF NOT EXISTS condominos_clientes_stripe (
+  id_cliente SERIAL PRIMARY KEY,
+  id_condominio INT NOT NULL,
+  id_usuario_condominio INT NOT NULL,
+  stripe_customer_id VARCHAR(120) NOT NULL,
+  creado_en TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT uq_cliente_stripe_membresia UNIQUE (id_condominio, id_usuario_condominio),
+  CONSTRAINT uq_cliente_stripe_customer UNIQUE (stripe_customer_id),
+  CONSTRAINT fk_cliente_stripe_condominio
+    FOREIGN KEY (id_condominio) REFERENCES condominios(id_condominio)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_cliente_stripe_membresia
+    FOREIGN KEY (id_usuario_condominio) REFERENCES usuarios_condominios(id_usuario_condominio)
+    ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_clientes_stripe_condominio
+  ON condominos_clientes_stripe (id_condominio);
+
+-- Replica de los payouts de Stripe. Con `dashboard: 'none'` el condominio no
+-- tiene donde ver cuanto y cuando le depositaron, asi que se guarda aqui desde
+-- los eventos payout.* del webhook de Connect.
+CREATE TABLE IF NOT EXISTS depositos_condominio (
+  id_deposito SERIAL PRIMARY KEY,
+  id_condominio INT NOT NULL,
+  stripe_payout_id VARCHAR(120) NOT NULL,
+  monto NUMERIC(12,2) NOT NULL CHECK (monto >= 0),
+  moneda VARCHAR(3) NOT NULL DEFAULT 'MXN',
+  estado VARCHAR(20) NOT NULL
+    CHECK (estado IN ('pending', 'in_transit', 'paid', 'failed', 'canceled')),
+  metodo VARCHAR(20),
+  tipo VARCHAR(20),
+  llega_en DATE,
+  creado_en TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT uq_deposito_payout UNIQUE (stripe_payout_id),
+  CONSTRAINT fk_deposito_condominio
+    FOREIGN KEY (id_condominio) REFERENCES condominios(id_condominio)
+    ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_depositos_condominio_fecha
+  ON depositos_condominio (id_condominio, llega_en DESC);
 
 CREATE TABLE IF NOT EXISTS pagos (
   id_pago SERIAL PRIMARY KEY,

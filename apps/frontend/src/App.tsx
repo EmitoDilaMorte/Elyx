@@ -10,8 +10,11 @@ import { DashboardPage } from './pages/DashboardPage';
 import { LoginPage } from './pages/LoginPage';
 import { SuperuserPage } from './pages/SuperuserPage';
 import { ConfirmarInvitacionPage } from './pages/public/ConfirmarInvitacionPage';
+import { CondominioPublicoPage } from './pages/public/CondominioPublicoPage';
+import { ConnectReturnPage } from './pages/public/ConnectReturnPage';
 import { CrearCondominioPage } from './pages/public/CrearCondominioPage';
 import { InvitacionPage } from './pages/public/InvitacionPage';
+import { PoliticaPagosPage } from './pages/public/PoliticaPagosPage';
 import { VerificarCorreoPage } from './pages/public/VerificarCorreoPage';
 import { backendApi, esDesafioMfa, getApiHostUrl, type BackendLoginResponse, type ElectoradoMiembro, type LoginOutcome, type LoginPayload } from './services/backendApi.service';
 import { cobrosApi } from './services/cobros.service';
@@ -78,6 +81,13 @@ const RUTAS_PUBLICAS: Array<{ patron: RegExp; render: () => ReactNode }> = [
   { patron: /^\/registro\/verificar\/?$/, render: () => <VerificarCorreoPage /> },
   { patron: /^\/crear-condominio\/?$/, render: () => <CrearCondominioPage /> },
   { patron: /^\/invitacion\/confirmar\/?$/, render: () => <ConfirmarInvitacionPage /> },
+  // Pagina publica del condominio: es la URL que se declara a Stripe como
+  // `business_url`, asi que tiene que resolverse sin sesion.
+  { patron: /^\/condominio\/[^/]+\/?$/, render: () => <CondominioPublicoPage /> },
+  { patron: /^\/politica-pagos\/?$/, render: () => <PoliticaPagosPage /> },
+  // Regreso del onboarding de Stripe cuando se usa el enlace hospedado
+  // (respaldo del componente embebido).
+  { patron: /^\/connect\/(return|refresh)\/?$/, render: () => <ConnectReturnPage /> },
   // Exactamente un segmento despues de /invitacion: el panel /invitaciones no coincide.
   { patron: /^\/invitacion\/[^/]+\/?$/, render: () => <InvitacionPage /> },
 ];
@@ -1511,6 +1521,7 @@ function AppContent() {
       if (location.pathname === '/') {
         navigate('/inicio', { replace: true });
       }
+      volverAlDestinoPendiente();
       return { status: 'ok' };
     } catch (error) {
       console.error(error);
@@ -1558,6 +1569,7 @@ function AppContent() {
       if (location.pathname === '/') {
         navigate('/inicio', { replace: true });
       }
+      volverAlDestinoPendiente();
       return { status: 'ok' };
     } catch (error) {
       console.error(error);
@@ -1565,6 +1577,22 @@ function AppContent() {
       setLoadingLabel(null);
       return { status: 'error' };
     }
+  };
+
+  /**
+   * Vuelve a la pagina desde la que se pidio iniciar sesion (`?volver=`).
+   *
+   * La usa el enlace de invitacion: quien no tiene cuenta inicia sesion y, sin
+   * esto, caeria en el panel perdiendo la invitacion que estaba viendo. Solo se
+   * aceptan rutas internas para no convertir el parametro en un redirector
+   * abierto que sirva para enviar a un usuario a otro dominio.
+   */
+  const volverAlDestinoPendiente = () => {
+    const destino = new URLSearchParams(location.search).get('volver');
+    if (!destino || !destino.startsWith('/') || destino.startsWith('//')) {
+      return;
+    }
+    navigate(destino, { replace: true });
   };
 
   const handleResendMfa = async (challengeId: string): Promise<string> => {

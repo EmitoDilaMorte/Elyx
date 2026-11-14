@@ -49,10 +49,17 @@ export class CobrosStripeService {
    * Es idempotente por cuota: si ya hay un cargo con una sesion VIVA, devuelve
    * su `client_secret` en lugar de crear otra. Reabrir el modal del condomino
    * no debe dejar dos sesiones cobrables para la misma cuota.
+   *
+   * **Tarjeta guardada**: si se recibe la membresia que paga, se crea (o
+   * reutiliza) su `Customer` EN LA CUENTA CONECTADA y la sesion se abre con el.
+   * Asi el formulario muestra las tarjetas guardadas y ofrece guardar la nueva.
+   * El guardado es `on_session`: nunca se crea un mandato para cobrar sin el
+   * condomino presente.
    */
   async crearCobroTarjeta(
     idCondominio: number,
     idCuota: number,
+    idUsuarioCondominio?: number | null,
   ): Promise<DatosPagoCuota> {
     const stripe = this.stripe;
     if (!stripe) {
@@ -75,13 +82,19 @@ export class CobrosStripeService {
 
     const cuota = await this.cuotaParaCobro(idCondominio, idCuota);
 
+    // Se consulta ANTES de crear la sesion: indica si el formulario mostrara
+    // tarjetas guardadas de compras anteriores.
+    const tarjetaGuardada = Boolean(
+      await this.clienteGuardado(idCondominio, idUsuarioCondominio),
+    );
+
     // Reutiliza el cargo vigente: regenerarlo cambiaria el monto o dejaria dos
     // sesiones vivas para la misma cuota.
     const vigente = await this.cargoVigente(idCuota);
     if (vigente?.metodo === 'STRIPE' && vigente.checkoutSessionId) {
       const existente = await this.recuperarClientSecret(stripe, vigente.checkoutSessionId, configuracion.stripeAccountId);
       if (existente) {
-        return this.armarDatos(vigente, existente, configuracion);
+        return this.armarDatos(vigente, existente, configuracion, tarjetaGuardada, tarjetaGuardada);
       }
     }
 
@@ -92,6 +105,14 @@ export class CobrosStripeService {
       // `idCargo` se llena tras insertar; se actualiza en el metadata de abajo.
       origen: 'CUOTA',
     };
+
+    // El Customer vive EN LA CUENTA CONECTADA (direct charges). Si falla, el
+    // cobro sigue sin tarjeta guardada: es una comodidad, no un requisito.
+    const cliente = await this.asegurarCliente(
+      idCondominio,
+      idUsuarioCondominio,
+      configuracion.stripeAccountId,
+    );
 
     const sesion = await stripe.checkout.sessions.create(
       {
@@ -124,8 +145,26 @@ export class CobrosStripeService {
             installments: { enabled: configuracion.permitirMsi },
           },
         },
+        // Con `customer` el formulario muestra las tarjetas guardadas y ofrece
+        // guardar la nueva. Es la misma cuenta conectada la que guarda la
+        // tarjeta, no la plataforma: por eso el id se creo con `stripeAccount`.
+        ...(cliente
+          ? {
+              customer: cliente.customerId,
+              saved_payment_method_options: {
+                payment_method_save: 'enabled' as const,
+              },
+            }
+          : {}),
         metadata,
-        payment_intent_data: { metadata },
+        payment_intent_data: {
+          metadata,
+          // `on_session` guarda la tarjeta SIN crear un mandato de cobro
+          // automatico: solo se puede usar cuando el condomino esta presente.
+          // `off_session` permitiria cobrarle sin avisar, que no es lo que se
+          // le promete al guardar la tarjeta.
+          ...(cliente ? { setup_future_usage: 'on_session' as const } : {}),
+        },
       },
       { stripeAccount: configuracion.stripeAccountId },
     );
@@ -142,7 +181,7 @@ export class CobrosStripeService {
       ? await this.reemplazarSesionDeCargo(vigente.idCargo, cuota, sesion, configuracion.stripeAccountId)
       : await this.guardarCargo(idCondominio, cuota, sesion, configuracion.stripeAccountId);
 
-    return this.armarDatos(cargo, sesion.client_secret, configuracion);
+    return this.armarDatos(cargo, sesion.client_secret, configuracion, tarjetaGuardada, Boolean(cliente));
   }
 
   /**
@@ -502,6 +541,8 @@ export class CobrosStripeService {
     },
     clientSecret: string,
     configuracion: { permitirMsi: boolean },
+    tarjetaGuardada = false,
+    guardarTarjeta = false,
   ): DatosPagoCuota {
     return {
       idCargo: cargo.idCargo,
@@ -512,8 +553,191 @@ export class CobrosStripeService {
       moneda: cargo.moneda ?? 'MXN',
       clientSecret,
       permitirMsi: configuracion.permitirMsi,
+      tarjetaGuardada,
+      guardarTarjeta,
     };
   }
+
+  /**
+   * Customer de Stripe de la membresia, si ya existe.
+   *
+   * Se mapea por (condominio, membresia) y NO por usuario: la misma persona en
+   * dos condominios cobra contra dos cuentas conectadas distintas y por tanto
+   * necesita dos Customers distintos.
+   */
+  private async clienteGuardado(
+    idCondominio: number,
+    idUsuarioCondominio?: number | null,
+  ): Promise<string | null> {
+    if (!idUsuarioCondominio || !Number.isInteger(idUsuarioCondominio)) {
+      return null;
+    }
+
+    const rows = await this.dataSource.query(
+      `
+      SELECT stripe_customer_id
+      FROM condominos_clientes_stripe
+      WHERE id_condominio = $1 AND id_usuario_condominio = $2
+      LIMIT 1
+      `,
+      [idCondominio, idUsuarioCondominio],
+    );
+
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return null;
+    }
+    const id = (rows[0] as Record<string, unknown>).stripe_customer_id;
+    return id ? String(id) : null;
+  }
+
+  /**
+   * Devuelve el Customer del condomino, creandolo si hace falta.
+   *
+   * **Vive en la cuenta conectada**, no en la plataforma: con direct charges el
+   * cobro se crea sobre `acct_...` y un Customer de la plataforma no sirve para
+   * guardar ni para volver a mostrar la tarjeta.
+   *
+   * Nunca lanza: guardar la tarjeta es una comodidad. Si Stripe falla, el cobro
+   * se completa igual y el condomino solo vuelve a capturar la tarjeta.
+   */
+  private async asegurarCliente(
+    idCondominio: number,
+    idUsuarioCondominio: number | null | undefined,
+    stripeAccountId: string,
+  ): Promise<{ customerId: string; nuevo: boolean } | null> {
+    const stripe = this.stripe;
+    if (!stripe || !idUsuarioCondominio || !Number.isInteger(idUsuarioCondominio)) {
+      return null;
+    }
+
+    const existente = await this.clienteGuardado(idCondominio, idUsuarioCondominio);
+    if (existente) {
+      // El id pudo quedar apuntando a la cuenta conectada ANTERIOR (el
+      // condominio rehizo su cuenta de Stripe). En ese caso `retrieve` falla y
+      // se descarta el mapeo en lugar de romper el cobro.
+      try {
+        const customer = await stripe.customers.retrieve(
+          existente,
+          {},
+          { stripeAccount: stripeAccountId },
+        );
+        if (!(customer as Stripe.DeletedCustomer).deleted) {
+          return { customerId: existente, nuevo: false };
+        }
+      } catch (error) {
+        const codigo = (error as { code?: string }).code;
+        if (codigo !== 'resource_missing') {
+          // Error transitorio (red, limite de peticiones): NO se borra el
+          // mapeo. Se usa el Customer guardado; si de verdad no existiera,
+          // Stripe rechazaria la sesion y el error se ve en el cobro.
+          this.logger.warn(
+            `No se pudo verificar el Customer ${existente} del condominio ${idCondominio}: ` +
+              `${(error as Error).message}`,
+          );
+          return { customerId: existente, nuevo: false };
+        }
+
+        this.logger.warn(
+          `El Customer ${existente} del condominio ${idCondominio} no existe en ${stripeAccountId} ` +
+            `(${(error as Error).message}). Se crea uno nuevo.`,
+        );
+      }
+
+      await this.dataSource.query(
+        `
+        DELETE FROM condominos_clientes_stripe
+        WHERE id_condominio = $1 AND id_usuario_condominio = $2 AND stripe_customer_id = $3
+        `,
+        [idCondominio, idUsuarioCondominio, existente],
+      );
+    }
+
+    const datos = await this.datosFacturacionMembresia(idCondominio, idUsuarioCondominio);
+    if (!datos) {
+      // Sin membresia activa no hay persona a quien asociar el Customer.
+      return null;
+    }
+
+    try {
+      const customer = await stripe.customers.create(
+        {
+          ...(datos.correo ? { email: datos.correo } : {}),
+          ...(datos.nombre ? { name: datos.nombre } : {}),
+          metadata: {
+            idCondominio: String(idCondominio),
+            idUsuarioCondominio: String(idUsuarioCondominio),
+          },
+        },
+        { stripeAccount: stripeAccountId },
+      );
+
+      const insertados = await this.dataSource.query(
+        `
+        INSERT INTO condominos_clientes_stripe (
+          id_condominio, id_usuario_condominio, stripe_customer_id
+        )
+        VALUES ($1, $2, $3)
+        ON CONFLICT (id_condominio, id_usuario_condominio) DO NOTHING
+        RETURNING stripe_customer_id
+        `,
+        [idCondominio, idUsuarioCondominio, customer.id],
+      );
+
+      if (this.filasDe(insertados).length > 0) {
+        return { customerId: customer.id, nuevo: true };
+      }
+
+      // Perdio la carrera contra otra peticion: se usa el Customer ganador y se
+      // borra el recien creado para no dejar Customers huerfanos en Stripe.
+      await stripe.customers
+        .del(customer.id, {}, { stripeAccount: stripeAccountId })
+        .catch(() => undefined);
+      const ganador = await this.clienteGuardado(idCondominio, idUsuarioCondominio);
+      return ganador ? { customerId: ganador, nuevo: false } : null;
+    } catch (error) {
+      this.logger.warn(
+        `No se pudo preparar el Customer de Stripe del condominio ${idCondominio}: ` +
+          `${(error as Error).message}`,
+      );
+      return null;
+    }
+  }
+
+  /** Nombre y correo de la membresia, para prellenar el Customer. */
+  private async datosFacturacionMembresia(
+    idCondominio: number,
+    idUsuarioCondominio: number,
+  ): Promise<{ correo: string | null; nombre: string | null } | null> {
+    const rows = await this.dataSource.query(
+      `
+      SELECT u.correo, u.nombre, u.primer_apellido, u.segundo_apellido
+      FROM usuarios_condominios uc
+      INNER JOIN usuarios u ON u.id_usuario = uc.id_usuario
+      WHERE uc.id_usuario_condominio = $1
+        AND uc.id_condominio = $2
+        AND uc.estado = 'ACTIVO'
+      LIMIT 1
+      `,
+      [idUsuarioCondominio, idCondominio],
+    );
+
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return null;
+    }
+
+    const row = rows[0] as Record<string, unknown>;
+    const nombre = [row.nombre, row.primer_apellido, row.segundo_apellido]
+      .filter((parte) => Boolean(parte))
+      .map((parte) => String(parte))
+      .join(' ')
+      .trim();
+
+    return {
+      correo: row.correo ? String(row.correo) : null,
+      nombre: nombre.length > 0 ? nombre : null,
+    };
+  }
+
   private async idCargoDeSesion(
     sessionId: string,
     stripeAccountId: string,

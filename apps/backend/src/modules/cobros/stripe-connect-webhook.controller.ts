@@ -6,6 +6,7 @@ import type Stripe from 'stripe';
 import { SkipCsrf } from '../../common/csrf/skip-csrf.decorator';
 import { StripeClientService } from '../suscripciones/stripe-client.service';
 import { CobrosStripeService } from './cobros-stripe.service';
+import { DepositosService } from './depositos.service';
 
 /**
  * Webhook de Stripe para los cobros de cuotas (Connect).
@@ -31,6 +32,7 @@ export class StripeConnectWebhookController {
   constructor(
     private readonly stripeClient: StripeClientService,
     private readonly cobrosStripe: CobrosStripeService,
+    private readonly depositos: DepositosService,
   ) {}
 
   @Post()
@@ -191,6 +193,34 @@ export class StripeConnectWebhookController {
           const puedeCobrar = Boolean(cuenta.charges_enabled);
           await this.sincronizarCuenta(cuenta.id, puedeCobrar);
           return { procesado: true };
+        }
+
+        /**
+         * Depositos que Stripe hace al condominio.
+         *
+         * Con `dashboard: 'none'` el condominio no tiene panel de Stripe: sin
+         * estos eventos no tendria forma de saber cuanto ni cuando le
+         * depositaron. El mismo payout llega varias veces (`created`,
+         * `updated`, `paid`); el upsert por `stripe_payout_id` deja una sola
+         * fila con el estado mas reciente.
+         *
+         * **Requiere configuracion manual**: agregar estos eventos al destino
+         * del webhook en el Dashboard de Stripe (scope "Connected accounts").
+         * Si no estan, el cron `reconciliarDepositos` los recupera igual.
+         */
+        case 'payout.created':
+        case 'payout.updated':
+        case 'payout.paid':
+        case 'payout.failed':
+        case 'payout.reconciliation_completed': {
+          const payout = evento.data.object as Stripe.Payout;
+          const cuenta = this.cuentaDelEvento(evento);
+
+          if (!cuenta) {
+            return { procesado: false, motivo: 'sin-cuenta-conectada' };
+          }
+
+          return this.depositos.registrarDesdeWebhook(payout, cuenta);
         }
 
         default:

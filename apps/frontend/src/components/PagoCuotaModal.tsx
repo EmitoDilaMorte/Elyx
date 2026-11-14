@@ -230,6 +230,22 @@ export function PagoCuotaModal({
               El pago se procesa en el momento y la cuota queda marcada como pagada.
             </p>
 
+            {/* Se avisa en la app, no solo dentro del iframe: la tarjeta se
+                guarda EN STRIPE (cuenta del condominio) y solo para pagos en
+                los que el condomino este presente. */}
+            {datos.tarjetaGuardada && (
+              <p className="muted-text" style={{ margin: '0 0 0.75rem', fontSize: '0.85rem' }}>
+                Tus tarjetas guardadas aparecen al inicio del formulario. Si pagas con una
+                nueva, tambien se guardara para la proxima.
+              </p>
+            )}
+            {!datos.tarjetaGuardada && datos.guardarTarjeta && (
+              <p className="muted-text" style={{ margin: '0 0 0.75rem', fontSize: '0.85rem' }}>
+                Tu tarjeta se guardara de forma segura en Stripe para tus proximos pagos.
+                Solo se usa cuando tu la eliges: no se hacen cobros automaticos.
+              </p>
+            )}
+
             {confirmando && (
               <div className="reminder-box">
                 <strong className="reminder-title">Confirmando tu pago...</strong>

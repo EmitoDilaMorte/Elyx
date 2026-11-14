@@ -14,6 +14,7 @@ import type { NavItem } from '../types/app';
 import { statusLabel } from '../constants/status';
 import { CondominioSwitcher } from '../components/CondominioSwitcher';
 import { ConfiguracionCobroPanel } from '../components/ConfiguracionCobroPanel';
+import { DepositosPanel } from '../components/DepositosPanel';
 import { CrearCondominioAdminPanel } from '../components/CrearCondominioAdminPanel';
 import { Icon } from '../components/Icon';
 import { InvitacionesPanel } from '../components/InvitacionesPanel';
@@ -2190,6 +2191,11 @@ export function DashboardPage({
                   </button>
                 </div>
               </article>
+
+              {/* Depositos de Stripe. Con `dashboard: 'none'` el condominio no
+                  tiene panel de Stripe: este bloque es lo unico que le dice
+                  cuanto y cuando le transfirieron. */}
+              <DepositosPanel idCondominio={activeCondominioId} />
 
               {/* Desglose por periodo. Las comisiones se muestran aparte de los
                   gastos porque las descuenta Stripe del deposito: sumarlas a

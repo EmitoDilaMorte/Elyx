@@ -25,7 +25,9 @@
 - `gastos`
 - `reportes-financieros` (se calcula desde `cuotas` + `pagos` + `gastos` + `cargos_cuota`;
   las tablas `reportes_financieros` y `reporte_financiero_detalle` son legado del seed)
-- `cobros` (configuracion de cobro, cargos SPEI, Stripe Connect v2 y webhook de Connect)
+- `cobros` (configuracion de cobro, cargos SPEI, Stripe Connect v2, tarjeta guardada,
+  depositos/payouts y webhook de Connect)
+- `publico` (pagina publica del condominio: URL del negocio para Stripe y entrada de invitaciones)
 - `condominio-alta` (logica de alta compartida entre onboarding, registro publico e invitaciones)
 - `cupo` (unico punto de verdad del cupo de unidades y de la operatividad del condominio)
 - `registro` (alta publica "Crea tu condominio" + verificacion de correo)
@@ -49,6 +51,7 @@ por conexiones a la base:
 | 4:00 AM | `SuscripcionesService.purgarSinPago` | Borra condominios que nunca pagaron |
 | 4:30 AM | `RetencionService.purgar` | Plazos de conservacion de datos |
 | 5:00 AM | `SuscripcionesService.suspenderPorImpago` | Fin del periodo de gracia |
+| 6:15 AM | `DepositosService.reconciliarTodos` | Copia los payouts de Stripe que el webhook no alcanzo a registrar |
 
 ## Cobro de cuotas
 
@@ -73,21 +76,42 @@ por conexiones a la base:
   en su estado de cuenta; la cuota pasa a `PAGADA` en la misma transaccion.
 - **Tarjeta (Stripe Connect v2)**: `direct charge` sobre la cuenta conectada
   (`{ stripeAccount: acct_... }`). El dinero nunca entra al balance de Elyx; la comision de
-  Stripe se debita a la cuenta del condominio. Se usa `dashboard: full` con
-  `fees_collector` y `losses_collector` en `stripe`, el equivalente a una cuenta Standard.
+  Stripe se debita a la cuenta del condominio. Se usa `dashboard: 'none'` con
+  `fees_collector` y `losses_collector` en `stripe`: Stripe conserva el KYC y las perdidas, y el
+  condominio **no** obtiene panel de Stripe. El onboarding se monta dentro de Elyx con los
+  componentes embebidos (`account-onboarding`, `account-management`, `notification-banner`).
+  El porque y la verificacion estan en `docs/decision-connect-dashboard-none.md`.
   El cobro se confirma por webhook (`/api/webhooks/stripe/connect`), no por la respuesta del
   navegador.
-  > **Cambio en curso**: el `dashboard: full` se va a sustituir por `dashboard: 'none'` con
-  > onboarding embebido. El porque, la verificacion empirica y las consecuencias estan en
-  > `docs/decision-connect-dashboard-none.md`.
-- **RFC obligatorio para Connect**: sin RFC del condominio la cuenta conectada no puede
-  verificarse. La configuracion responde `403 RFC_REQUERIDO_PARA_CONNECT` y la UI
-  deshabilita la opcion antes de intentar. SPEI sigue disponible.
+- **RFC y página pública obligatorios para Connect**: Stripe exige el RFC del condominio, una
+  descripción de los servicios y datos de contacto de atención para verificar el negocio. Si
+  falta alguno, `PATCH /cobros/configuracion` responde `403 RFC_REQUERIDO_PARA_CONNECT` o
+  `403 PAGINA_PUBLICA_INCOMPLETA` con la lista de campos, y la UI deshabilita la tarjeta antes
+  de intentar. SPEI sigue disponible sin ellos.
+- **`STRIPE_BUSINESS_BASE_URL` debe ser https y pública**: Stripe rechaza `localhost` con
+  `Invalid URL`. En desarrollo hay que apuntarla a un túnel o al dominio real.
 - **MSI apagado por defecto**: con dynamic payment methods Stripe ofrece meses sin intereses
   automaticamente y cada plazo agrega 5% o mas de comision que absorbe el condominio.
+- **Tarjeta guardada**: cada membresia tiene un `Customer` **en la cuenta conectada**
+  (`condominos_clientes_stripe`). La sesion se crea con `customer`,
+  `saved_payment_method_options.payment_method_save = 'enabled'` y
+  `payment_intent_data.setup_future_usage = 'on_session'`: el formulario muestra las tarjetas
+  anteriores y ofrece guardar la nueva, **sin** crear un mandato de cobro automatico. Se mapea
+  por membresia y no por usuario porque la misma persona en otro condominio usa otra cuenta.
 - **Comisiones**: `cargos_cuota.monto_comision` guarda la comision real leida del
   `balance transaction`. El reporte financiero la muestra por periodo **aparte de `gastos`**
   para no contar dos veces si el administrador tambien registra el movimiento a mano.
+- **Depósitos**: `DepositosService` replica los payouts de Stripe en `depositos_condominio`
+  desde los eventos `payout.*` del webhook de Connect y, como red de seguridad, con un cron
+  diario que compara contra `payouts.list`. Se muestran en **Gastos y reportes → Depósitos de
+  Stripe**; con `dashboard: 'none'` es la unica forma en que el condominio sabe cuanto y cuando
+  le depositaron. El boton «Actualizar» fuerza la reconciliacion (`POST
+  /cobros/depositos/reconciliar`). **Los cinco eventos `payout.*` hay que agregarlos a mano**
+  al destino del webhook de Connected accounts en el Dashboard de Stripe.
+- **`ConnectOnboarding` no debe cachear una instancia fallida**: `loadConnectAndInitialize` se
+  guarda en una promesa a nivel de modulo para no inyectar el script dos veces, pero si la
+  inicializacion falla (red, clave invalida) hay que descartarla. Sin eso, cualquier reintento
+  reutiliza el mismo fallo y el formulario queda en blanco hasta recargar la pagina.
 - **Estado de cuenta**: `GET /api/estado-cuenta` calcula el saldo desde `cuotas`
   (pendientes + recargos devengados). `cuotas.recargo_por_dia` es una tasa diaria, no el
   acumulado. La tabla `estado_cuenta` es legado y ya no se usa.
@@ -121,6 +145,38 @@ el comportamiento por defecto de Stripe (`redirect_on_completion: if_required`):
 
 Ademas el backend emite `pagoChanged` por WebSocket al confirmar (tarjeta o SPEI), igual
 que `PagosService.aprobar`, para que administrador y condomino vean el cambio sin recargar.
+
+## Pagina publica del condominio
+
+`modules/publico` sirve `/condominio/:id`, la pagina que se declara a Stripe como
+`business_url` al crear una cuenta conectada.
+
+- **Por que existe**: Stripe exige una web publica con el nombre del negocio, la descripcion de
+  los servicios y datos de contacto de atencion al cliente, y la revisa periodicamente. En lugar
+  de pedirle al administrador que invente un sitio, Elyx la genera desde `condominios`.
+- **Que publica**: nombre, `descripcion_publica`, `correo_contacto` y `telefono_contacto`.
+  **No** publica la direccion, ni datos del administrador, ni unidades, ni importes: la pagina se
+  sirve sin autenticacion.
+- **`noindex`** (meta robots + `robots.txt`), pero accesible sin credenciales, que es lo que
+  Stripe verifica.
+- **`pagina_publica_activa`** permite apagarla sin tocar la cuenta de Stripe. Ojo: apagarla deja la
+  cuenta sin URL valida y Stripe puede suspenderla.
+
+### Entrada de invitaciones
+
+`/invitacion/<token>` renderiza la misma vista con una seccion para unirse. Los enlaces ya
+compartidos siguen funcionando.
+
+| Situacion | Que ve el visitante |
+|---|---|
+| Token invalido, vencido o revocado | Mensaje y enlace para pedir uno nuevo |
+| Sin unidades libres | "No hay unidades disponibles" |
+| Condominio suspendido o sin suscripcion | "No esta recibiendo solicitudes" |
+| Valido + con sesion iniciada | Boton **Unirme** (la solicitud nace `VERIFICADA`, sin correo) |
+| Valido + sin sesion | **Iniciar sesion** (vuelve al enlace via `?volver=`) o registrarse en el mismo formulario | |
+
+El alta de un usuario nuevo conserva el flujo con verificacion por correo: la cuenta **no** se crea
+al enviar, se crea al aprobar el administrador. La contraseña es obligatoria en ese camino.
 
 ## Retencion de datos
 

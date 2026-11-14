@@ -1,4 +1,10 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import type Stripe from 'stripe';
 import { StripeClientService } from '../suscripciones/stripe-client.service';
@@ -29,17 +35,26 @@ export type EstadoCuentaConnect = {
  * Stripe Connect con Accounts v2 para el cobro de cuotas.
  *
  * Modelo elegido (verificado contra la cuenta de prueba del proyecto):
- *  - `dashboard: 'full'`  -> el condominio tiene su propio panel de Stripe.
+ *  - `dashboard: 'none'`  -> el condominio NO tiene panel de Stripe. Se gestiona
+ *    desde Elyx con los componentes embebidos.
  *  - `fees_collector: 'stripe'`   -> Stripe le cobra SU comision al condominio.
- *  - `losses_collector: 'stripe'` -> Elyx NO absorbe contrapesos ni saldos
+ *  - `losses_collector: 'stripe'` -> Elyx NO absorbe contracargos ni saldos
  *    negativos. Elyx no es intermediario: el dinero nunca pasa por su balance.
  *
- * Las cuentas son v2 (`stripe.v2.core.accounts`), que es la API que Stripe
- * recomienda para integraciones nuevas; los tipos Standard/Express/Custom
- * estan marcados como obsoletos.
+ * **Por que `none` y no `full`** (antecedente completo en
+ * `docs/decision-connect-dashboard-none.md`):
+ *  - Con `full` el administrador salia de Elyx a un registro largo, tenia que
+ *    inventar una pagina web, atravesaba pantallas de productos que no pidio
+ *    (Radar, Stripe Tax, Climate) y terminaba con una herramienta de pagos
+ *    completa que duplica —y puede desconfigurar— el cobro de Elyx.
+ *  - `express` no sirve: obliga a `fees_collector` y `losses_collector` en
+ *    `application`, es decir, a que Elyx absorba los contracargos.
+ *  - Verificado contra la API: con `none` las tres responsabilidades quedan en
+ *    `stripe` (incluido el KYC) e intentar `losses_collector: 'application'`
+ *    responde `account_creation_losses_collector_unavailable`.
  *
- * Con `dashboard: 'full'` Stripe hace el KYC y la recoleccion de requisitos,
- * por eso `requirements_collector` resulta `stripe` automaticamente.
+ * **Ojo con el dashboard**: es **inmutable**. Cambiarlo exige crear una cuenta
+ * nueva y repetir el KYC completo.
  */
 @Injectable()
 export class ConnectService {
@@ -84,6 +99,20 @@ export class ConnectService {
       return this.consultarEstado(idCondominio);
     }
 
+    // Stripe revisa la URL del negocio antes de habilitar los cobros. Crear la
+    // cuenta con la pagina incompleta deja la cuenta restringida y obliga a
+    // rehacer el tramite, asi que se bloquea antes de llamar a Stripe.
+    if (!datos.correoContacto || !datos.telefonoContacto) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        code: 'PAGINA_PUBLICA_INCOMPLETA',
+        message:
+          'Antes de conectar Stripe necesitas capturar el correo y el telefono de atencion a ' +
+          'condominos: Stripe revisa la pagina publica del condominio para verificar el negocio ' +
+          'y rechaza las cuentas sin datos de contacto.',
+      });
+    }
+
     const cuenta = await stripe.v2.core.accounts.create({
       display_name: datos.nombre,
       ...(datos.correoAdmin ? { contact_email: datos.correoAdmin } : {}),
@@ -98,6 +127,10 @@ export class ConnectService {
         merchant: {
           capabilities: {
             card_payments: { requested: true },
+            // Con `dashboard: 'none'` Stripe cae en la columna "Express or other
+            // Dashboard", donde las capacidades de metodos de pago NO se activan
+            // solas: si no se pide, Link nunca aparece en el checkout.
+            link_payments: { requested: true },
           },
         },
       },
@@ -105,14 +138,23 @@ export class ConnectService {
         currency: 'mxn',
         // `es-MX` NO es un enum valido en Stripe; para LatAm es `es-419`.
         locales: ['es-419'],
+        profile: {
+          // La URL publica del condominio es lo que Stripe revisa para verificar
+          // el negocio. Se prellena para que el administrador no tenga que
+          // inventar un sitio que no existe.
+          business_url: this.businessUrl(idCondominio),
+          product_description: this.descripcionProducto(datos),
+        },
         responsibilities: {
           // Stripe cobra sus comisiones directamente al condominio...
           fees_collector: 'stripe',
           // ...y absorbe los saldos negativos. Elyx queda fuera de la ecuacion.
+          // `requirements_collector` NO se puede enviar: la API lo rechaza como
+          // "Unknown field" y lo deriva a `stripe`, que es lo que queremos (KYC).
           losses_collector: 'stripe',
         },
       },
-      dashboard: 'full',
+      dashboard: 'none',
       metadata: { idCondominio: String(idCondominio) },
       include: ['configuration.merchant', 'identity', 'defaults', 'requirements'],
     });
@@ -120,10 +162,54 @@ export class ConnectService {
     await this.guardarCuenta(idCondominio, cuenta);
 
     this.logger.log(
-      `Cuenta Connect v2 creada para el condominio ${idCondominio}: ${cuenta.id}`,
+      `Cuenta Connect v2 creada para el condominio ${idCondominio}: ${cuenta.id} ` +
+        `(dashboard: ${cuenta.dashboard})`,
     );
 
     return this.consultarEstado(idCondominio);
+  }
+
+  /**
+   * Crea una Account Session para montar el onboarding dentro de Elyx.
+   *
+   * Es lo que sustituye al onboarding hospedado: el componente de Stripe se
+   * renderiza en la propia interfaz, asi que el administrador no sale de Elyx y
+   * nunca ve el dashboard.
+   *
+   * **Los tres componentes son obligatorios**, no opcionales: cuando Stripe es
+   * responsable de los saldos negativos (nuestro caso) exige onboarding, gestion
+   * de la cuenta y el banner de avisos, para que el condominio pueda resolver
+   * por su cuenta los requisitos que Stripe le pida.
+   *
+   * Ojo: `accountSessions` es un endpoint **v1** aunque la cuenta sea v2.
+   */
+  async crearSesionOnboarding(idCondominio: number): Promise<{ clientSecret: string }> {
+    const stripe = this.stripe;
+    if (!stripe) {
+      throw new BadRequestException(
+        'Stripe no esta configurado en esta instancia. Usa transferencia SPEI.',
+      );
+    }
+
+    const estado = await this.crearOReutilizarCuenta(idCondominio);
+    if (!estado.stripeAccountId) {
+      throw new BadRequestException('No fue posible crear la cuenta de Stripe del condominio.');
+    }
+
+    const sesion = await stripe.accountSessions.create({
+      account: estado.stripeAccountId,
+      components: {
+        account_onboarding: { enabled: true },
+        account_management: { enabled: true },
+        notification_banner: { enabled: true },
+      },
+    });
+
+    if (!sesion.client_secret) {
+      throw new BadRequestException('Stripe no devolvio el secreto de la sesion de onboarding.');
+    }
+
+    return { clientSecret: sesion.client_secret };
   }
 
   /**
@@ -295,6 +381,9 @@ export class ConnectService {
     razonSocial: string | null;
     rfc: string | null;
     correoAdmin: string | null;
+    descripcionPublica: string | null;
+    correoContacto: string | null;
+    telefonoContacto: string | null;
     stripeAccountId: string | null;
     stripeChargesEnabled: boolean;
     stripeConectadoEn: string | null;
@@ -305,6 +394,9 @@ export class ConnectService {
         c.nombre,
         c.razon_social,
         c.rfc,
+        c.descripcion_publica,
+        c.correo_contacto,
+        c.telefono_contacto,
         cc.stripe_account_id,
         cc.stripe_charges_enabled,
         cc.stripe_conectado_en,
@@ -330,12 +422,79 @@ export class ConnectService {
       razonSocial: row.razon_social ? String(row.razon_social) : null,
       rfc: row.rfc ? String(row.rfc) : null,
       correoAdmin: row.correo_admin ? String(row.correo_admin) : null,
+      descripcionPublica: row.descripcion_publica ? String(row.descripcion_publica) : null,
+      correoContacto: row.correo_contacto ? String(row.correo_contacto) : null,
+      telefonoContacto: row.telefono_contacto ? String(row.telefono_contacto) : null,
       stripeAccountId: row.stripe_account_id ? String(row.stripe_account_id) : null,
       stripeChargesEnabled: Boolean(row.stripe_charges_enabled),
       stripeConectadoEn: row.stripe_conectado_en
         ? new Date(String(row.stripe_conectado_en)).toISOString()
         : null,
     };
+  }
+
+  /**
+   * URL publica del condominio que se declara a Stripe como `business_url`.
+   *
+   * **Stripe rechaza las URLs que no sean alcanzables publicamente.** Verificado
+   * contra la API: con `PUBLIC_APP_URL=http://localhost:5173` responde
+   * `400 Invalid URL`, porque `localhost` no es un sitio que Stripe pueda
+   * revisar. Un `http://` tampoco sirve.
+   *
+   * Por eso se puede configurar `STRIPE_BUSINESS_BASE_URL` aparte del frontend
+   * (por ejemplo un tunel en desarrollo o el dominio de produccion) y se falla
+   * con un mensaje accionable en lugar de dejar que Stripe responda con un error
+   * opaco: si la URL no sirve, la cuenta se crearia con la pagina equivocada y
+   * quedaria restringida.
+   */
+  private businessUrl(idCondominio: number): string {
+    const explicita = (process.env.STRIPE_BUSINESS_BASE_URL ?? '').trim();
+    const base = (explicita || process.env.PUBLIC_APP_URL || process.env.FRONTEND_URL || '')
+      .trim()
+      .replace(/\/+$/, '');
+
+    if (!/^https:\/\//i.test(base)) {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: 'URL_PUBLICA_REQUERIDA',
+        message:
+          'Stripe necesita que la pagina del condominio este en una URL publica con https para ' +
+          'poder verificarla. Configura STRIPE_BUSINESS_BASE_URL con el dominio real (o un tunel ' +
+          'publico en desarrollo): la URL actual es ' +
+          (base || '(vacia)') +
+          '.',
+      });
+    }
+
+    return `${base}/condominio/${idCondominio}`;
+  }
+
+  /**
+   * Descripcion del producto para Stripe.
+   *
+   * Se prefiere la que escribio el administrador; si no hay, se genera una
+   * generica con el nombre del condominio.
+   *
+   * **Comportamiento verificado**: cuando se envia junto con `business_url`,
+   * Stripe **descarta** la descripcion y deja solo la URL (el requisito resuelto
+   * es el de la URL, y `product_description` ni aparece en `requirements`). No
+   * es un error: la documentacion los plantea como alternativa —"si el negocio
+   * no tiene URL, prellena la descripcion"— y la descripcion ya se publica en la
+   * propia pagina, que es lo que Stripe revisa.
+   *
+   * Se sigue enviando porque en algunos paises Stripe exige las dos, y despues
+   * de crear una Account Session el campo queda bloqueado
+   * (`permission to write to defaults.profile.product_description`).
+   */
+  private descripcionProducto(datos: {
+    nombre: string;
+    descripcionPublica: string | null;
+  }): string {
+    const propia = String(datos.descripcionPublica ?? '').trim();
+    if (propia.length > 0) {
+      return propia.slice(0, 500);
+    }
+    return `Administración y cobro de cuotas de mantenimiento del condominio ${datos.nombre}.`;
   }
 
   private async guardarCuenta(idCondominio: number, cuenta: { id: string }): Promise<void> {

@@ -2,4 +2,8 @@ User-agent: *
 Disallow: /api/
 Disallow: /uploads/
 Disallow: /perfil
+# Paginas publicas por condominio: se sirven sin autenticacion porque Stripe
+# las exige como URL del negocio, pero no deben indexarse en buscadores.
+Disallow: /condominio/
+Disallow: /invitacion/
 Crawl-delay: 2
