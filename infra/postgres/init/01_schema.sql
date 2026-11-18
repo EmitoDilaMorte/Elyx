@@ -407,11 +407,23 @@ CREATE TABLE IF NOT EXISTS evidencias_pago (
   nombre_archivo VARCHAR(180) NOT NULL,
   url_archivo TEXT NOT NULL,
   fecha_carga TIMESTAMP NOT NULL,
-  id_pago INT NOT NULL,
+  -- Cuelga de un pago ya declarado o de un cargo en linea por conciliar. Al
+  -- confirmarse la transferencia el backend mueve la evidencia al pago.
+  id_pago INT,
+  id_cargo INT,
   CONSTRAINT fk_evidencia_pago
     FOREIGN KEY (id_pago) REFERENCES pagos(id_pago)
-    ON DELETE CASCADE
+    ON DELETE CASCADE,
+  CONSTRAINT fk_evidencia_cargo
+    FOREIGN KEY (id_cargo) REFERENCES cargos_cuota(id_cargo)
+    ON DELETE CASCADE,
+  CONSTRAINT ck_evidencia_destino
+    CHECK (id_pago IS NOT NULL OR id_cargo IS NOT NULL)
 );
+
+CREATE INDEX IF NOT EXISTS idx_evidencias_cargo
+  ON evidencias_pago (id_cargo)
+  WHERE id_cargo IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS recibos (
   id_recibo SERIAL PRIMARY KEY,

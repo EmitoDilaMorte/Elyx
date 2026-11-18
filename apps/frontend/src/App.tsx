@@ -204,12 +204,40 @@ const EMPTY_SCOPE: CondominioScope = {
 
 type EvidenciaPagoItem = {
   idEvidencia: number;
-  idPago: number;
+  /** `null` mientras la evidencia respalda una transferencia sin conciliar. */
+  idPago: number | null;
+  /** Cargo al que cuelga la evidencia hasta que se confirma la transferencia. */
+  idCargo: number | null;
   idCondominio: number;
   nombreArchivo: string;
   urlArchivo: string;
   fechaCarga: string;
 };
+
+/**
+ * Separa las evidencias por pago y por cargo.
+ *
+ * Las de cargo son las fotos de transferencias que aun no se concilian; las de
+ * pago ya respaldan un movimiento declarado. Una misma evidencia cambia de
+ * cubeta cuando el administrador confirma la transferencia.
+ */
+function agruparEvidencias(evidencias: EvidenciaPagoItem[]): {
+  porPago: Record<number, EvidenciaPagoItem[]>;
+  porCargo: Record<number, EvidenciaPagoItem[]>;
+} {
+  const porPago: Record<number, EvidenciaPagoItem[]> = {};
+  const porCargo: Record<number, EvidenciaPagoItem[]> = {};
+
+  for (const evidencia of evidencias) {
+    if (evidencia.idPago) {
+      (porPago[evidencia.idPago] ??= []).push(evidencia);
+    } else if (evidencia.idCargo) {
+      (porCargo[evidencia.idCargo] ??= []).push(evidencia);
+    }
+  }
+
+  return { porPago, porCargo };
+}
 
 type ConfigNotificacionesState = {
   diasAntes: number;
@@ -460,6 +488,8 @@ function AppContent() {
   const [votacionPregunta, setVotacionPregunta] = useState('');
   const [periodosSeleccionados, setPeriodosSeleccionados] = useState<string[]>([]);
   const [evidenciasPorPago, setEvidenciasPorPago] = useState<Record<number, EvidenciaPagoItem[]>>({});
+  /** Comprobantes de transferencias que aun esperan conciliacion del admin. */
+  const [evidenciasPorCargo, setEvidenciasPorCargo] = useState<Record<number, EvidenciaPagoItem[]>>({});
   const [fotosPorReporte, setFotosPorReporte] = useState<Record<number, FotoMantenimiento[]>>({});
   const [configNotificaciones, setConfigNotificaciones] =
     useState<ConfigNotificacionesState>(DEFAULT_CONFIG_NOTIFICACIONES);
@@ -995,33 +1025,15 @@ function AppContent() {
 
         setEstadoCuenta(estadoCuentaApi);
 
-        setEstadoCuenta(estadoCuentaApi);
-
-        const evidenciasAgrupadas = evidenciasApi.reduce<Record<number, EvidenciaPagoItem[]>>((acc, item) => {
-          if (!acc[item.idPago]) {
-            acc[item.idPago] = [];
-          }
-          acc[item.idPago].push(item);
-          return acc;
-        }, {});
-
-        setEvidenciasPorPago((prev) => {
-          const next: Record<number, EvidenciaPagoItem[]> = { ...prev };
-
-          Object.keys(next).forEach((pagoId) => {
-            const pagoIdNum = Number(pagoId);
-            const pago = pagosApi.find((p) => p.id === pagoIdNum);
-            if (!pago || pago.idCondominio === effectiveActiveCondominioId) {
-              delete next[pagoIdNum];
-            }
-          });
-
-          Object.entries(evidenciasAgrupadas).forEach(([pagoId, evidencias]) => {
-            next[Number(pagoId)] = evidencias;
-          });
-
-          return next;
-        });
+        /*
+         * Se reemplazan ambas cubetas completas: el endpoint devuelve todas las
+         * evidencias del condominio, y una evidencia cambia de pago a cargo
+         * (o al reves) sin que llegue un evento nuevo. Mezclar con `prev`
+         * dejaba la fila vieja duplicada tras conciliar una transferencia.
+         */
+        const { porPago, porCargo } = agruparEvidencias(evidenciasApi);
+        setEvidenciasPorPago(porPago);
+        setEvidenciasPorCargo(porCargo);
 
         const fotosAgrupadas = fotosMantenimientoApi.reduce<Record<number, FotoMantenimiento[]>>((acc, item) => {
           if (!acc[item.idReporte]) {
@@ -1265,15 +1277,9 @@ function AppContent() {
     socket.on('evidenciaPagoChanged', async () => {
       try {
         const evidenciasApi = await backendApi.listEvidenciasPago({ idCondominio: effectiveActiveCondominioId });
-        const evidenciasAgrupadas = evidenciasApi.reduce<Record<number, EvidenciaPagoItem[]>>((acc, item) => {
-          if (!acc[item.idPago]) {
-            acc[item.idPago] = [];
-          }
-          acc[item.idPago].push(item);
-          return acc;
-        }, {});
-
-        setEvidenciasPorPago((prev) => ({ ...prev, ...evidenciasAgrupadas }));
+        const { porPago, porCargo } = agruparEvidencias(evidenciasApi);
+        setEvidenciasPorPago(porPago);
+        setEvidenciasPorCargo(porCargo);
       } catch (error) {
         console.error('No se pudo refrescar evidencias por websocket:', error);
       }
@@ -1809,7 +1815,7 @@ function AppContent() {
     setPagoCuota({ idCuota: cuotaId, periodo: cuota.periodo, monto: cuota.monto });
   };
 
-  const subirComprobante = async (cuotaId: number, file: File) => {
+  const subirComprobante = async (cuotaId: number, file: File, idCargo?: number | null) => {
     if (!effectiveActiveCondominioId || !activeMembership) {
       return;
     }
@@ -1821,18 +1827,40 @@ function AppContent() {
     }
 
     try {
-      /*
-       * Un comprobante siempre cuelga de un pago (`evidencias_pago.id_pago` es
-       * FK obligatoria). Antes habia que pulsar "Registrar pago" primero, lo
-       * que dejaba el boton inutil tras pagar por SPEI en linea.
-       *
-       * Ahora el comprobante ES la declaracion de pago: si no existe, se crea
-       * el pago CAPTURADO aqui mismo y la cuota pasa a "En validacion".
-       */
       let pago = pagosScoped.find(
         (item: Pago) => item.cuotaId === cuotaId && item.status !== 'RECHAZADO',
       );
 
+      /*
+       * Con una referencia SPEI viva y sin pago declarado, el comprobante es la
+       * foto de ESA transferencia: se cuelga del cargo para que el administrador
+       * la vea al conciliarla.
+       *
+       * Antes se creaba un pago CAPTURADO solo para poder guardar el archivo (la
+       * FK exigia un pago), asi que al revisar aparecian dos movimientos: la
+       * transferencia por conciliar y un pago con la foto.
+       */
+      if (!pago && idCargo) {
+        const evidenciaCargo = await backendApi.createEvidenciaPago({
+          idCondominio: effectiveActiveCondominioId,
+          idCargo,
+          nombreArchivo: file.name,
+          archivo: file,
+        });
+
+        setEvidenciasPorCargo((prev) => ({
+          ...prev,
+          [idCargo]: [evidenciaCargo, ...(prev[idCargo] ?? [])],
+        }));
+
+        runAction('Subiendo comprobante...', 'Comprobante cargado correctamente');
+        return;
+      }
+
+      /*
+       * Sin referencia en linea el comprobante ES la declaracion de pago: si no
+       * existe, se crea el pago CAPTURADO y la cuota pasa a "En validacion".
+       */
       if (!pago) {
         const creado = await backendApi.capturarPago({
           idCondominio: effectiveActiveCondominioId,
@@ -1874,6 +1902,30 @@ function AppContent() {
     }
   };
 
+  /**
+   * Vuelve a pedir las evidencias del condominio.
+   *
+   * Conciliar una transferencia mueve el comprobante de la cubeta del cargo a
+   * la del pago, y eso ocurre solo en el servidor: no hay evento de websocket
+   * que lo anuncie.
+   */
+  const refrescarEvidencias = async () => {
+    if (!effectiveActiveCondominioId) {
+      return;
+    }
+
+    try {
+      const evidenciasApi = await backendApi.listEvidenciasPago({
+        idCondominio: effectiveActiveCondominioId,
+      });
+      const { porPago, porCargo } = agruparEvidencias(evidenciasApi);
+      setEvidenciasPorPago(porPago);
+      setEvidenciasPorCargo(porCargo);
+    } catch (error) {
+      console.error('No se pudieron refrescar las evidencias de pago:', error);
+    }
+  };
+
   const eliminarEvidenciaPago = async (idEvidencia: number) => {
     if (!effectiveActiveCondominioId) {
       return;
@@ -1891,6 +1943,17 @@ function AppContent() {
           const filtradas = evidencias.filter((e) => e.idEvidencia !== idEvidencia);
           if (filtradas.length > 0) {
             next[Number(pagoId)] = filtradas;
+          }
+        }
+        return next;
+      });
+
+      setEvidenciasPorCargo((prev) => {
+        const next: Record<number, EvidenciaPagoItem[]> = {};
+        for (const [cargoId, evidencias] of Object.entries(prev)) {
+          const filtradas = evidencias.filter((e) => e.idEvidencia !== idEvidencia);
+          if (filtradas.length > 0) {
+            next[Number(cargoId)] = filtradas;
           }
         }
         return next;
@@ -3644,6 +3707,7 @@ function AppContent() {
       votacionesActivas={votacionesScoped}
       gastosRecientes={gastosRecientes}
       evidenciasPorPago={evidenciasPorPago}
+      evidenciasPorCargo={evidenciasPorCargo}
       fotosPorReporte={fotosPorReporte}
       fotosReporte={fotosReporte}
       onFotosReporteChange={setFotosReporte}
@@ -3686,6 +3750,7 @@ function AppContent() {
       refrescoPagos={refrescoPagos}
       onSubirComprobante={subirComprobante}
       onEliminarEvidenciaPago={eliminarEvidenciaPago}
+      onRefrescarEvidencias={() => void refrescarEvidencias()}
       onDescargarReciboCuota={descargarReciboCuota}
       onAprobarPago={aprobarPago}
       onRechazarPago={rechazarPago}

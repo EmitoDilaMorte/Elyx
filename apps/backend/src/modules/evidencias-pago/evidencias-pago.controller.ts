@@ -34,17 +34,27 @@ export class EvidenciasPagoController {
   list(
     @Query('idCondominio', ParseIntPipe) idCondominio: number,
     @Query('idPago') idPagoRaw?: string,
+    @Query('idCargo') idCargoRaw?: string,
   ) {
-    let idPago: number | undefined;
-    if (idPagoRaw !== undefined && idPagoRaw !== null && idPagoRaw !== '') {
-      const parsed = Number(idPagoRaw);
-      if (!Number.isInteger(parsed) || parsed <= 0) {
-        throw new BadRequestException('idPago debe ser un entero positivo.');
-      }
-      idPago = parsed;
+    return this.evidenciasPagoService.listByCondominio(
+      idCondominio,
+      this.enteroPositivo(idPagoRaw, 'idPago'),
+      this.enteroPositivo(idCargoRaw, 'idCargo'),
+    );
+  }
+
+  /** `undefined` si no viene; error 400 si viene pero no es un entero valido. */
+  private enteroPositivo(valor: string | undefined, campo: string): number | undefined {
+    if (valor === undefined || valor === null || valor === '') {
+      return undefined;
     }
 
-    return this.evidenciasPagoService.listByCondominio(idCondominio, idPago);
+    const parsed = Number(valor);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      throw new BadRequestException(`${campo} debe ser un entero positivo.`);
+    }
+
+    return parsed;
   }
 
   @Post()

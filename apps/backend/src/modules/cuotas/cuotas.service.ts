@@ -25,6 +25,13 @@ export type CuotaPaginada = CuotaRecord & {
    */
   cargoMetodo: 'SPEI' | 'STRIPE' | null;
   cargoReferencia: string | null;
+  /**
+   * Id del cargo vigente.
+   *
+   * Lo usa el condomino para colgar el comprobante de su transferencia del
+   * cargo mismo, sin tener que crear un pago aparte.
+   */
+  cargoId: number | null;
 };
 
 export type MetaPaginacion = {
@@ -125,6 +132,7 @@ export class CuotasService {
           u.clave_unidad,
           cargo.metodo AS cargo_metodo,
           cargo.referencia_spei AS cargo_referencia,
+          cargo.id_cargo AS cargo_id,
           CASE
             WHEN c.estado = 'PAGADA' THEN 'PAGADA'
             WHEN p.estado = 'CAPTURADO' THEN 'EN_VALIDACION'
@@ -136,7 +144,7 @@ export class CuotasService {
         -- Cargo en linea vigente: el indice unico parcial garantiza que haya
         -- como maximo uno PENDIENTE por cuota.
         LEFT JOIN LATERAL (
-          SELECT metodo, referencia_spei
+          SELECT id_cargo, metodo, referencia_spei
           FROM cargos_cuota
           WHERE id_cuota = c.id_cuota AND estado = 'PENDIENTE'
           LIMIT 1
@@ -183,6 +191,7 @@ export class CuotasService {
           ? (String(row.cargo_metodo) as 'SPEI' | 'STRIPE')
           : null,
         cargoReferencia: row.cargo_referencia ? String(row.cargo_referencia) : null,
+        cargoId: row.cargo_id ? Number(row.cargo_id) : null,
       })),
       meta: {
         page,

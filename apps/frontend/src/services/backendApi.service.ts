@@ -22,6 +22,13 @@ export type CuotaPaginada = {
    */
   cargoMetodo: 'SPEI' | 'STRIPE' | null;
   cargoReferencia: string | null;
+  /**
+   * Id del cargo vigente.
+   *
+   * Permite colgar el comprobante de la transferencia del cargo mismo, sin
+   * crear un pago aparte que el administrador veria duplicado.
+   */
+  cargoId: number | null;
 };
 
 export type OrigenPago = 'COMPROBANTE' | 'SPEI' | 'STRIPE';
@@ -195,7 +202,10 @@ type BackendLoginUser = {
 
 type BackendEvidenciaPago = {
   idEvidencia: number;
-  idPago: number;
+  /** `null` cuando la evidencia aun espera conciliarse con un cargo. */
+  idPago: number | null;
+  /** Cargo al que cuelga la evidencia mientras la transferencia no se confirma. */
+  idCargo: number | null;
   idCondominio: number;
   nombreArchivo: string;
   urlArchivo: string;
@@ -1232,13 +1242,21 @@ export const backendApi = {
 
   async createEvidenciaPago(input: {
     idCondominio: number;
-    idPago: number;
+    /** Pago ya declarado. Excluyente con `idCargo`. */
+    idPago?: number;
+    /** Cargo en linea al que se cuelga el comprobante. Excluyente con `idPago`. */
+    idCargo?: number;
     archivo: File;
     nombreArchivo?: string;
   }) {
     const body = new FormData();
     body.append('idCondominio', String(input.idCondominio));
-    body.append('idPago', String(input.idPago));
+    if (input.idPago) {
+      body.append('idPago', String(input.idPago));
+    }
+    if (input.idCargo) {
+      body.append('idCargo', String(input.idCargo));
+    }
     body.append('nombreArchivo', input.nombreArchivo ?? input.archivo.name);
     body.append('archivo', input.archivo);
 
@@ -1248,10 +1266,13 @@ export const backendApi = {
     });
   },
 
-  async listEvidenciasPago(input: { idCondominio: number; idPago?: number }) {
+  async listEvidenciasPago(input: { idCondominio: number; idPago?: number; idCargo?: number }) {
     const params = new URLSearchParams({ idCondominio: String(input.idCondominio) });
     if (input.idPago) {
       params.set('idPago', String(input.idPago));
+    }
+    if (input.idCargo) {
+      params.set('idCargo', String(input.idCargo));
     }
 
     return requestJson<BackendEvidenciaPago[]>(`/evidencias-pago?${params.toString()}`);

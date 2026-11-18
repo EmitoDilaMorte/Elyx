@@ -365,14 +365,36 @@ export class PagosService {
       // entregada al condomino o una sesion de checkout abierta). Al validar el
       // comprobante hay que cancelarlo: si siguiera vivo, la referencia seguiria
       // aceptando una segunda transferencia por una cuota ya pagada.
-      await manager.query(
+      const cargosCanceladosRaw = await manager.query(
         `
         UPDATE cargos_cuota
         SET estado = 'CANCELADO', actualizado_en = NOW()
         WHERE id_cuota = $1 AND estado = 'PENDIENTE'
+        RETURNING id_cargo
         `,
         [Number(pago.id_cuota)],
       );
+
+      /*
+       * El condomino pudo subir la foto de la transferencia y ademas registrar
+       * el pago a mano. Esa evidencia cuelga del cargo: al cancelarlo se mueve
+       * al pago aprobado para no perderla.
+       */
+      const cargosCancelados = this.normalizeQueryRows(cargosCanceladosRaw);
+      const idsCargo = cargosCancelados
+        .map((fila) => Number(fila.id_cargo))
+        .filter((id) => Number.isInteger(id) && id > 0);
+
+      if (idsCargo.length > 0) {
+        await manager.query(
+          `
+          UPDATE evidencias_pago
+          SET id_pago = $1, id_cargo = NULL
+          WHERE id_cargo = ANY($2::int[])
+          `,
+          [input.idPago, idsCargo],
+        );
+      }
 
       return {
         idPago: input.idPago,

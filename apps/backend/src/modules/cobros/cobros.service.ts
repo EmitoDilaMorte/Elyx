@@ -894,6 +894,23 @@ export class CobrosService {
 
       await this.cuotasService.marcarPagadaEnTransaccion(manager, actual.idCuota);
 
+      /*
+       * El condomino pudo subir la foto de la transferencia ANTES de que el
+       * administrador la conciliara: esa evidencia cuelga del cargo, no de un
+       * pago. Al confirmar, se reancla al pago recien creado para que el
+       * comprobante siga visible en el historial en lugar de quedar huerfano.
+       */
+      await manager.query(
+        `
+        UPDATE evidencias_pago e
+        SET id_pago = p.id_pago,
+            id_cargo = NULL
+        FROM pagos p
+        WHERE p.id_cuota = $1 AND e.id_cargo = $2
+        `,
+        [actual.idCuota, actual.idCargo],
+      );
+
       return { ...actual, estado: 'PAGADO' as EstadoCargo, pagadoEn: new Date().toISOString() };
     });
 

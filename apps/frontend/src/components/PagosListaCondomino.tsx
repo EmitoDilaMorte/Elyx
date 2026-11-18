@@ -7,7 +7,8 @@ import { useListaParametros } from './useListaParametros';
 
 type EvidenciaPago = {
   idEvidencia: number;
-  idPago: number;
+  idPago: number | null;
+  idCargo: number | null;
   idCondominio: number;
   nombreArchivo: string;
   urlArchivo: string;
@@ -24,6 +25,8 @@ type PagosListaCondominoProps = {
   idUsuarioCondominio: number | null;
   pagoPorCuota: Record<number, PagoDeCuota>;
   evidenciasPorPago: Record<number, EvidenciaPago[]>;
+  /** Comprobantes colgados de una transferencia que aun no se concilia. */
+  evidenciasPorCargo: Record<number, EvidenciaPago[]>;
   formatShortDate: (isoDate: string) => string;
   /**
    * Contador que fuerza una recarga del listado.
@@ -35,7 +38,12 @@ type PagosListaCondominoProps = {
   refrescoPagos?: number;
   onRegistrarPago: (cuotaId: number) => void;
   onPagarEnLinea: (cuotaId: number) => void;
-  onSubirComprobante: (cuotaId: number, file: File) => void;
+  /**
+   * `idCargo` viene cuando la cuota ya tiene una referencia SPEI viva: el
+   * comprobante se cuelga de esa transferencia para que el administrador lo
+   * revise al conciliarla, sin crear un pago aparte.
+   */
+  onSubirComprobante: (cuotaId: number, file: File, idCargo?: number | null) => void;
   onDescargarReciboCuota: (cuotaId: number) => void;
   onEliminarEvidenciaPago: (idEvidencia: number) => void;
 };
@@ -85,6 +93,7 @@ export function PagosListaCondomino({
   idUsuarioCondominio,
   pagoPorCuota,
   evidenciasPorPago,
+  evidenciasPorCargo,
   formatShortDate,
   refrescoPagos = 0,
   onRegistrarPago,
@@ -225,7 +234,16 @@ export function PagosListaCondomino({
 
         {items.map((cuota) => {
           const pago = pagoPorCuota[cuota.idCuota];
-          const evidencias = pago ? (evidenciasPorPago[pago.id] ?? []) : [];
+          /*
+           * Una cuota con referencia SPEI puede tener el comprobante colgando
+           * del cargo (subido antes de conciliar) o del pago (declarado ya).
+           */
+          const cargoId = cuota.cargoId ?? null;
+          const evidencias = pago
+            ? (evidenciasPorPago[pago.id] ?? [])
+            : cargoId
+              ? (evidenciasPorCargo[cargoId] ?? [])
+              : [];
 
           /*
            * Acciones segun el estado REAL de la cuota:
@@ -321,7 +339,11 @@ export function PagosListaCondomino({
                       onChange={(evento) => {
                         const file = evento.target.files?.[0];
                         if (file) {
-                          onSubirComprobante(cuota.idCuota, file);
+                          /*
+                           * Con referencia SPEI el comprobante respalda la
+                           * transferencia; sin ella es la declaracion de pago.
+                           */
+                          onSubirComprobante(cuota.idCuota, file, referenciaSpei ? cargoId : null);
                         }
                         evento.currentTarget.value = '';
                       }}
@@ -352,15 +374,25 @@ export function PagosListaCondomino({
                           {evidencia.nombreArchivo}
                         </a>
                         <small>{formatShortDate(evidencia.fechaCarga)}</small>
-                        {pago && pago.status === 'PENDIENTE' && (
-                          <button
-                            className="soft-btn"
-                            style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
-                            onClick={() => onEliminarEvidenciaPago(evidencia.idEvidencia)}
-                          >
-                            Eliminar
-                          </button>
-                        )}
+                        {pago
+                          ? pago.status === 'PENDIENTE' && (
+                              <button
+                                className="soft-btn"
+                                style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
+                                onClick={() => onEliminarEvidenciaPago(evidencia.idEvidencia)}
+                              >
+                                Eliminar
+                              </button>
+                            )
+                          : cargoId && (
+                              <button
+                                className="soft-btn"
+                                style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
+                                onClick={() => onEliminarEvidenciaPago(evidencia.idEvidencia)}
+                              >
+                                Eliminar
+                              </button>
+                            )}
                       </li>
                     ))}
                   </ul>

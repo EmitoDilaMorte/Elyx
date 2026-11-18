@@ -27,3 +27,7 @@ Thumbs.db
 
 # Graphify
 graphify-out/
+
+# Archivos que suben los usuarios (comprobantes, evidencias, fotos). Son datos
+# de ejecucion: no se versionan y en produccion viven en un volumen.
+apps/backend/uploads/

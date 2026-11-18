@@ -25,6 +25,19 @@ import { SuscripcionPanel } from '../components/SuscripcionPanel';
 import { ValidacionesLista } from '../components/ValidacionesLista';
 import { backendApi, getApiHostUrl } from '../services/backendApi.service';
 
+/** Comprobante tal como lo devuelve el backend, indexado por pago o por cargo. */
+type EvidenciaPagoLista = {
+  idEvidencia: number;
+  /** `null` mientras la evidencia respalda una transferencia sin conciliar. */
+  idPago: number | null;
+  /** Cargo al que cuelga la evidencia hasta que se confirma la transferencia. */
+  idCargo: number | null;
+  idCondominio: number;
+  nombreArchivo: string;
+  urlArchivo: string;
+  fechaCarga: string;
+};
+
 type DashboardPageProps = {
   role: RoleKey;
   sessionUser: DemoUser | null;
@@ -54,17 +67,9 @@ type DashboardPageProps = {
   avisosRecientes: AppData['avisos'];
   votacionesActivas: AppData['votacionesActivas'];
   gastosRecientes: AppData['gastos'];
-  evidenciasPorPago: Record<
-    number,
-    Array<{
-      idEvidencia: number;
-      idPago: number;
-      idCondominio: number;
-      nombreArchivo: string;
-      urlArchivo: string;
-      fechaCarga: string;
-    }>
-  >;
+  evidenciasPorPago: Record<number, EvidenciaPagoLista[]>;
+  /** Comprobantes colgados de una transferencia aun sin conciliar. */
+  evidenciasPorCargo: Record<number, EvidenciaPagoLista[]>;
   fotosPorReporte: Record<number, FotoMantenimiento[]>;
   fotosReporte: File[];
   falla: string;
@@ -175,12 +180,14 @@ type DashboardPageProps = {
   onPagarEnLinea: (cuotaId: number) => void;
   /** Fuerza la recarga del listado paginado cuando se confirma un pago. */
   refrescoPagos: number;
-  onSubirComprobante: (cuotaId: number, file: File) => void;
+  onSubirComprobante: (cuotaId: number, file: File, idCargo?: number | null) => void;
   onEliminarEvidenciaPago: (idEvidencia: number) => void;
   onDescargarReciboCuota: (cuotaId: number) => void;
   onAprobarPago: (idPago: number) => void;
   onRechazarPago: (idPago: number) => void;
   onGenerarReciboPago: (idPago: number) => void;
+  /** Repide las evidencias: conciliar una transferencia las mueve de cargo a pago. */
+  onRefrescarEvidencias?: () => void;
   onVotar: (votacionId: number, choice: VoteChoice) => void;
   onCrearVotacion: () => void;
   onCerrarVotacion: (votacionId: number) => void;
@@ -295,6 +302,7 @@ export function DashboardPage({
   votacionesActivas,
   gastosRecientes,
   evidenciasPorPago,
+  evidenciasPorCargo,
   fotosPorReporte,
   fotosReporte,
   falla,
@@ -336,6 +344,7 @@ export function DashboardPage({
   refrescoPagos,
   onSubirComprobante,
   onEliminarEvidenciaPago,
+  onRefrescarEvidencias,
   onDescargarReciboCuota,
   onAprobarPago,
   onRechazarPago,
@@ -856,6 +865,7 @@ export function DashboardPage({
               idUsuarioCondominio={idUsuarioCondominioActivo}
               pagoPorCuota={pagoPorCuota}
               evidenciasPorPago={evidenciasPorPago}
+              evidenciasPorCargo={evidenciasPorCargo}
               refrescoPagos={refrescoPagos}
               formatShortDate={formatShortDate}
               onPagarEnLinea={onPagarEnLinea}
@@ -871,6 +881,8 @@ export function DashboardPage({
               idCondominio={activeCondominioId}
               nombrePorMembresia={condominoNameByMembership}
               evidenciasPorPago={evidenciasPorPago}
+              evidenciasPorCargo={evidenciasPorCargo}
+              onRefrescarEvidencias={onRefrescarEvidencias}
               formatShortDate={formatShortDate}
               refrescoPagos={refrescoPagos}
               onAprobarPago={onAprobarPago}

@@ -8,7 +8,8 @@ import { useListaParametros } from './useListaParametros';
 
 type EvidenciaPago = {
   idEvidencia: number;
-  idPago: number;
+  idPago: number | null;
+  idCargo: number | null;
   idCondominio: number;
   nombreArchivo: string;
   urlArchivo: string;
@@ -19,6 +20,8 @@ type ValidacionesListaProps = {
   idCondominio: number;
   nombrePorMembresia: Record<number, string>;
   evidenciasPorPago: Record<number, EvidenciaPago[]>;
+  /** Comprobantes colgados de una transferencia que aun no se concilia. */
+  evidenciasPorCargo: Record<number, EvidenciaPago[]>;
   formatShortDate: (isoDate: string) => string;
   /**
    * Contador que fuerza la recarga del listado paginado.
@@ -30,6 +33,14 @@ type ValidacionesListaProps = {
   onAprobarPago: (idPago: number) => void;
   onRechazarPago: (idPago: number) => void;
   onGenerarReciboPago: (idPago: number) => void;
+  /**
+   * Vuelve a pedir las evidencias al backend.
+   *
+   * Al confirmar una transferencia el comprobante pasa de colgar del cargo a
+   * colgar del pago; el cambio ocurre en el servidor y ningun evento de
+   * websocket lo anuncia.
+   */
+  onRefrescarEvidencias?: () => void;
 };
 
 /** Los valores enviados al backend son los del enum PagoEstado. */
@@ -89,11 +100,13 @@ export function ValidacionesLista({
   idCondominio,
   nombrePorMembresia,
   evidenciasPorPago,
+  evidenciasPorCargo,
   formatShortDate,
   refrescoPagos = 0,
   onAprobarPago,
   onRechazarPago,
   onGenerarReciboPago,
+  onRefrescarEvidencias,
 }: ValidacionesListaProps) {
   const {
     page,
@@ -227,6 +240,8 @@ export function ValidacionesLista({
       );
       setCargoPorConfirmar(null);
       setRecargaPagos((valor) => valor + 1);
+      // La evidencia del cargo ahora cuelga del pago recien creado.
+      onRefrescarEvidencias?.();
     } catch (err) {
       setErrorCargos(extraerMensaje(err, 'No se pudo confirmar la transferencia.'));
     } finally {
@@ -309,52 +324,83 @@ export function ValidacionesLista({
               aparezca en tu estado de cuenta. La cuota queda pagada y el condomino recibe el
               aviso.
             </p>
-            {cargos.map((cargo) => (
-              <article className="payment-item cuota-card" key={`cargo-${cargo.idCargo}`}>
-                <div>
-                  <h3 className="item-title" style={{ margin: 0 }}>
-                    {cargo.periodo} — Unidad {cargo.claveUnidad}
-                  </h3>
-                  <p className="helper-text" style={{ margin: '0.2rem 0' }}>
-                    Referencia:{' '}
-                    <code className="mono">{cargo.referenciaSpei ?? 'sin referencia'}</code>
-                  </p>
-                  <small>{textoVigencia(cargo.expiraEn)}</small>
-                </div>
-                <p className="item-amount">{MONEDA.format(cargo.montoTotal)}</p>
-                <span className="status-pill status-pendiente">Transferencia pendiente</span>
-                <div className="btn-row">
-                  {cargoPorConfirmar === cargo.idCargo ? (
-                    <>
-                      <button
-                        className="primary-btn"
-                        disabled={confirmandoCargo}
-                        onClick={() => void confirmarSpei(cargo)}
-                      >
-                        {confirmandoCargo ? 'Confirmando...' : 'Si, ya lo recibi'}
-                      </button>
+            {cargos.map((cargo) => {
+              /*
+               * El condomino puede haber subido la foto de la transferencia
+               * antes de que llegue el dinero. Se muestra aqui, junto a la
+               * referencia, porque es el momento en que el administrador la
+               * necesita para conciliar.
+               */
+              const evidenciasCargo = evidenciasPorCargo[cargo.idCargo] ?? [];
+
+              return (
+                <article className="payment-item cuota-card" key={`cargo-${cargo.idCargo}`}>
+                  <div>
+                    <h3 className="item-title" style={{ margin: 0 }}>
+                      {cargo.periodo} — Unidad {cargo.claveUnidad}
+                    </h3>
+                    <p className="helper-text" style={{ margin: '0.2rem 0' }}>
+                      Referencia:{' '}
+                      <code className="mono">{cargo.referenciaSpei ?? 'sin referencia'}</code>
+                    </p>
+                    <small>{textoVigencia(cargo.expiraEn)}</small>
+                  </div>
+                  <p className="item-amount">{MONEDA.format(cargo.montoTotal)}</p>
+                  <span className="status-pill status-pendiente">Transferencia pendiente</span>
+                  {evidenciasCargo.length > 0 && (
+                    <div style={{ marginBottom: '0.35rem' }}>
+                      <p className="helper-text" style={{ margin: '0 0 0.3rem' }}>
+                        Comprobante de la transferencia:
+                      </p>
+                      <ul className="clean-list" style={{ marginBottom: '0.3rem' }}>
+                        {evidenciasCargo.map((evidencia) => (
+                          <li key={evidencia.idEvidencia}>
+                            <a
+                              href={evidencia.urlArchivo}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              {evidencia.nombreArchivo}
+                            </a>
+                            <small>{formatShortDate(evidencia.fechaCarga)}</small>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  <div className="btn-row">
+                    {cargoPorConfirmar === cargo.idCargo ? (
+                      <>
+                        <button
+                          className="primary-btn"
+                          disabled={confirmandoCargo}
+                          onClick={() => void confirmarSpei(cargo)}
+                        >
+                          {confirmandoCargo ? 'Confirmando...' : 'Si, ya lo recibi'}
+                        </button>
+                        <button
+                          className="soft-btn"
+                          disabled={confirmandoCargo}
+                          onClick={() => setCargoPorConfirmar(null)}
+                        >
+                          Cancelar
+                        </button>
+                      </>
+                    ) : (
                       <button
                         className="soft-btn"
-                        disabled={confirmandoCargo}
-                        onClick={() => setCargoPorConfirmar(null)}
+                        onClick={() => {
+                          setCargoPorConfirmar(cargo.idCargo);
+                          setAvisoSpei(null);
+                        }}
                       >
-                        Cancelar
+                        Confirmar transferencia
                       </button>
-                    </>
-                  ) : (
-                    <button
-                      className="soft-btn"
-                      onClick={() => {
-                        setCargoPorConfirmar(cargo.idCargo);
-                        setAvisoSpei(null);
-                      }}
-                    >
-                      Confirmar transferencia
-                    </button>
-                  )}
-                </div>
-              </article>
-            ))}
+                    )}
+                  </div>
+                </article>
+              );
+            })}
           </>
         )}
 
