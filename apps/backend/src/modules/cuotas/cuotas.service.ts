@@ -16,6 +16,15 @@ type CuotaRecord = {
 
 export type CuotaPaginada = CuotaRecord & {
   claveUnidad: string | null;
+  /**
+   * Cargo en linea vigente de la cuota, si existe.
+   *
+   * Permite que la vista del condomino muestre los botones correctos sin
+   * adivinar: con un cargo SPEI pendiente ya hay referencia y lo que toca es
+   * subir el comprobante; con uno de tarjeta lo que toca es terminar el pago.
+   */
+  cargoMetodo: 'SPEI' | 'STRIPE' | null;
+  cargoReferencia: string | null;
 };
 
 export type MetaPaginacion = {
@@ -114,6 +123,8 @@ export class CuotasService {
           c.estado AS cuota_estado,
           p.estado AS pago_estado,
           u.clave_unidad,
+          cargo.metodo AS cargo_metodo,
+          cargo.referencia_spei AS cargo_referencia,
           CASE
             WHEN c.estado = 'PAGADA' THEN 'PAGADA'
             WHEN p.estado = 'CAPTURADO' THEN 'EN_VALIDACION'
@@ -122,6 +133,14 @@ export class CuotasService {
         FROM cuotas c
         LEFT JOIN pagos p ON p.id_cuota = c.id_cuota
         LEFT JOIN unidades u ON u.id_unidad = c.id_unidad
+        -- Cargo en linea vigente: el indice unico parcial garantiza que haya
+        -- como maximo uno PENDIENTE por cuota.
+        LEFT JOIN LATERAL (
+          SELECT metodo, referencia_spei
+          FROM cargos_cuota
+          WHERE id_cuota = c.id_cuota AND estado = 'PENDIENTE'
+          LIMIT 1
+        ) cargo ON TRUE
         WHERE c.id_condominio = $1
           AND ($2::int IS NULL OR EXISTS (
             SELECT 1 FROM unidades_ocupantes uo
@@ -160,6 +179,10 @@ export class CuotasService {
       items: rows.map((row) => ({
         ...this.toCuotaRecord(row),
         claveUnidad: row.clave_unidad ? String(row.clave_unidad) : null,
+        cargoMetodo: row.cargo_metodo
+          ? (String(row.cargo_metodo) as 'SPEI' | 'STRIPE')
+          : null,
+        cargoReferencia: row.cargo_referencia ? String(row.cargo_referencia) : null,
       })),
       meta: {
         page,

@@ -27,6 +27,13 @@ export function useListaParametros(ordenInicial = 'reciente') {
     () => (claveEstados ? claveEstados.split('|') : []),
     [claveEstados],
   );
+  // Filtro por canal de pago (`SPEI`, `STRIPE`, `COMPROBANTE`), repetible en la
+  // URL igual que `estado`.
+  const claveOrigenes = params.getAll('origen').join('|');
+  const origenes = useMemo(
+    () => (claveOrigenes ? claveOrigenes.split('|') : []),
+    [claveOrigenes],
+  );
 
   const aplicarCambios = (cambios: CambiosLista) => {
     const siguiente = new URLSearchParams(params);
@@ -65,6 +72,8 @@ export function useListaParametros(ordenInicial = 'reciente') {
     orden,
     estados,
     claveEstados,
+    origenes,
+    claveOrigenes,
     version,
     aplicarCambios,
     urlPagina,

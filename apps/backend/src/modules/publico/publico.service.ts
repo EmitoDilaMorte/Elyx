@@ -236,7 +236,10 @@ export class PublicoService {
           WHERE s.id_unidad_propuesta = u.id_unidad
             AND s.estado IN ('PENDIENTE', 'VERIFICADA')
         )
-      ORDER BY u.clave_unidad ASC
+      ORDER BY
+        substring(u.clave_unidad from '^[^0-9]*') ASC,
+        NULLIF(substring(u.clave_unidad from '[0-9]+'), '')::int ASC NULLS LAST,
+        u.clave_unidad ASC
       `,
       [idCondominio],
     );

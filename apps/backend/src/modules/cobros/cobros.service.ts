@@ -20,7 +20,7 @@ import type {
   DatosPagoCuota,
   EstadoCargo,
   MetodoCargo,
-  MetodoCobro,
+  OpcionesPagoCuota,
 } from './cobros.types';
 
 /** Dias de vigencia de un cargo SPEI antes de marcarlo EXPIRADO. */
@@ -70,7 +70,8 @@ export class CobrosService {
         c.telefono_contacto,
         c.pagina_publica_activa,
         cc.id_cuenta_cobro,
-        cc.metodo,
+        cc.spei_activo,
+        cc.stripe_activo,
         cc.clabe,
         cc.banco,
         cc.beneficiario,
@@ -109,18 +110,40 @@ export class CobrosService {
       telefonoContacto,
     });
 
+    /*
+     * SPEI y tarjeta son independientes. `*Activo` es lo que decidio el
+     * administrador; `puedeUsar*` agrega la condicion tecnica (CLABE valida,
+     * cuenta verificada). Asi un metodo se puede ofrecer aunque el otro tambien
+     * lo este.
+     */
+    const speiActivo = Boolean(row.spei_activo);
+    const stripeActivo = Boolean(row.stripe_activo);
+    const puedeUsarSpei = speiActivo && Boolean(clabe);
+    const puedeUsarStripe = stripeActivo && Boolean(row.stripe_account_id) && Boolean(row.stripe_charges_enabled);
+    const metodosDisponibles: MetodoCargo[] = [];
+    if (puedeUsarSpei) {
+      metodosDisponibles.push('SPEI');
+    }
+    if (puedeUsarStripe) {
+      metodosDisponibles.push('STRIPE');
+    }
+
     return {
       idCondominio: Number(row.id_condominio),
-      metodo: (String(row.metodo ?? 'NINGUNO') as MetodoCobro) ?? 'NINGUNO',
+      speiActivo,
+      puedeUsarSpei,
       clabe,
       banco: row.banco ? String(row.banco) : null,
       beneficiario: row.beneficiario ? String(row.beneficiario) : null,
       referenciaPrefijo: row.referencia_prefijo ? String(row.referencia_prefijo) : null,
+      stripeActivo,
+      puedeUsarStripe,
       stripeAccountId: row.stripe_account_id ? String(row.stripe_account_id) : null,
       stripeChargesEnabled: Boolean(row.stripe_charges_enabled),
       stripeConectadoEn: row.stripe_conectado_en
         ? new Date(String(row.stripe_conectado_en)).toISOString()
         : null,
+      metodosDisponibles,
       permitirMsi: Boolean(row.permitir_msi),
       comisionTasa: Number(row.comision_tasa ?? 3.6),
       comisionFijo: Number(row.comision_fijo ?? 3),
@@ -133,8 +156,22 @@ export class CobrosService {
       requisitosConnectFaltantes: requisitosFaltantes,
       puedeUsarConnect: requisitosFaltantes.length === 0,
       motivoNoConnect: this.motivoNoConnect(requisitosFaltantes),
-      puedeUsarSpei: Boolean(clabe),
     };
+  }
+
+  /**
+   * Metodos de pago que ofrece el condominio. **Solo lectura.**
+   *
+   * Existe aparte de `obtenerConfiguracion` porque esa es solo para el
+   * administrador (CLABE, comisiones, datos de Stripe) y el condomino solo
+   * necesita saber que botones mostrar. Devolver la configuracion completa al
+   * condomino filtraria datos del negocio sin motivo.
+   */
+  async metodosDeCondominio(idCondominio: number): Promise<{
+    metodosDisponibles: MetodoCargo[];
+  }> {
+    const configuracion = await this.obtenerConfiguracion(idCondominio);
+    return { metodosDisponibles: configuracion.metodosDisponibles };
   }
 
   /**
@@ -255,7 +292,7 @@ export class CobrosService {
       );
     }
 
-    if (dto.metodo === 'STRIPE_CONNECT') {
+    if (dto.stripeActivo === true) {
       // Se comprueban los cuatro campos que Stripe necesita, no solo el RFC:
       // una cuenta creada con la pagina incompleta queda restringida y hay que
       // rehacer el tramite.
@@ -303,7 +340,7 @@ export class CobrosService {
       }
     }
 
-    if (dto.metodo === 'SPEI') {
+    if (dto.speiActivo === true) {
       const clabe = dto.clabe ?? (await this.clabeActual(idCondominio));
       if (!clabe) {
         throw new BadRequestException(
@@ -321,24 +358,29 @@ export class CobrosService {
     await this.dataSource.query(
       `
       INSERT INTO cuentas_cobro_condominio (
-        id_condominio, metodo, clabe, banco, beneficiario, referencia_prefijo,
-        permitir_msi, comision_tasa, comision_fijo
+        id_condominio, spei_activo, stripe_activo, clabe, banco, beneficiario,
+        referencia_prefijo, permitir_msi, comision_tasa, comision_fijo
       )
-      VALUES ($1, COALESCE($2, 'NINGUNO'), $3, $4, $5, COALESCE($6, $7), COALESCE($8, FALSE), COALESCE($9, 3.60), COALESCE($10, 3.00))
+      VALUES (
+        $1, COALESCE($2, FALSE), COALESCE($3, FALSE), $4, $5, $6,
+        COALESCE($7, $8), COALESCE($9, FALSE), COALESCE($10, 3.60), COALESCE($11, 3.00)
+      )
       ON CONFLICT (id_condominio) DO UPDATE SET
-        metodo = COALESCE($2, cuentas_cobro_condominio.metodo),
-        clabe = COALESCE($3, cuentas_cobro_condominio.clabe),
-        banco = COALESCE($4, cuentas_cobro_condominio.banco),
-        beneficiario = COALESCE($5, cuentas_cobro_condominio.beneficiario),
-        referencia_prefijo = COALESCE($6, cuentas_cobro_condominio.referencia_prefijo),
-        permitir_msi = COALESCE($8, cuentas_cobro_condominio.permitir_msi),
-        comision_tasa = COALESCE($9, cuentas_cobro_condominio.comision_tasa),
-        comision_fijo = COALESCE($10, cuentas_cobro_condominio.comision_fijo),
+        spei_activo = COALESCE($2, cuentas_cobro_condominio.spei_activo),
+        stripe_activo = COALESCE($3, cuentas_cobro_condominio.stripe_activo),
+        clabe = COALESCE($4, cuentas_cobro_condominio.clabe),
+        banco = COALESCE($5, cuentas_cobro_condominio.banco),
+        beneficiario = COALESCE($6, cuentas_cobro_condominio.beneficiario),
+        referencia_prefijo = COALESCE($7, cuentas_cobro_condominio.referencia_prefijo),
+        permitir_msi = COALESCE($9, cuentas_cobro_condominio.permitir_msi),
+        comision_tasa = COALESCE($10, cuentas_cobro_condominio.comision_tasa),
+        comision_fijo = COALESCE($11, cuentas_cobro_condominio.comision_fijo),
         actualizado_en = NOW()
       `,
       [
         idCondominio,
-        dto.metodo ?? null,
+        dto.speiActivo ?? null,
+        dto.stripeActivo ?? null,
         dto.clabe ?? null,
         dto.banco?.trim() || null,
         dto.beneficiario?.trim() || null,
@@ -521,64 +563,61 @@ export class CobrosService {
   }
 
   /**
-   * Datos para que el condomino pague una cuota.
+   * Opciones de pago de una cuota. **No crea cargos**.
    *
-   * Si ya hay un cargo vigente lo reutiliza: regenerarlo en cada visita haria
-   * que el condomino viera una referencia distinta cada vez y pagara dos veces.
-   *
-   * `idUsuarioCondominio` es la MEMBRESIA de quien paga (no el `sub` del JWT):
-   * con ella se guarda y se vuelve a mostrar la tarjeta.
+   * Con SPEI y tarjeta activos a la vez, crear un cargo al abrir el modal
+   * bloquearia el otro metodo: el indice unico parcial
+   * `uq_cargos_cuota_pendiente` solo permite un cargo vigente por cuota. Por eso
+   * el modal primero pregunta "como quieres pagar" y el cargo se crea cuando el
+   * condomino elige.
    */
-  async datosPagoCuota(
+  async opcionesPagoCuota(idCondominio: number, idCuota: number): Promise<OpcionesPagoCuota> {
+    const cuota = await this.cuotaParaCobro(idCondominio, idCuota);
+    const configuracion = await this.obtenerConfiguracion(idCondominio);
+    const vigente = await this.cargoVigente(idCuota);
+
+    return {
+      idCuota,
+      montoTotal: cuota.monto,
+      moneda: 'MXN',
+      metodosDisponibles: configuracion.metodosDisponibles,
+      metodoEnProceso: vigente?.metodo ?? null,
+      idCargoEnProceso: vigente?.idCargo ?? null,
+      motivo:
+        configuracion.metodosDisponibles.length > 0
+          ? null
+          : 'El condominio aun no configuro como cobrar en linea. Sube tu comprobante o contacta al administrador.',
+    };
+  }
+
+  /**
+   * Crea el cargo del metodo que eligio el condomino.
+   *
+   * Si ya habia un cargo PENDIENTE del otro metodo se reemplaza en el mismo
+   * renglon (ver `crearCargoSpei` y `reemplazarSesionDeCargo`): cambiar de
+   * opinion no debe dejar dos cobros vivos de la misma cuota.
+   */
+  async crearCargoPorMetodo(
     idCondominio: number,
     idCuota: number,
+    metodo: MetodoCargo,
     idUsuarioCondominio?: number | null,
   ): Promise<DatosPagoCuota> {
+    const configuracion = await this.obtenerConfiguracion(idCondominio);
+
+    if (!configuracion.metodosDisponibles.includes(metodo)) {
+      throw new BadRequestException(
+        metodo === 'SPEI'
+          ? 'El condominio no tiene activa la transferencia SPEI.'
+          : 'El condominio no tiene activo el pago con tarjeta.',
+      );
+    }
+
     const cuota = await this.cuotaParaCobro(idCondominio, idCuota);
 
-    const existente = await this.cargoVigente(idCuota);
-    if (existente && existente.estado === 'PENDIENTE') {
-      // Un cargo con tarjeta necesita su `clientSecret` para montar el
-      // checkout. Devolver los datos "planos" dejaba el modal VACIO al
-      // reabrirlo, porque el cargo sigue PENDIENTE mientras la sesion de
-      // Stripe este viva. `crearCobroTarjeta` reutiliza la sesion existente
-      // (o crea otra) y siempre devuelve el secreto.
-      if (existente.metodo === 'STRIPE') {
-        return this.cobrosStripe.crearCobroTarjeta(idCondominio, idCuota, idUsuarioCondominio);
-      }
-      return this.armarDatosPago(existente, idCondominio);
-    }
-
-    const configuracion = await this.obtenerConfiguracion(idCondominio);
-    if (configuracion.metodo === 'NINGUNO') {
-      return {
-        idCargo: 0,
-        idCuota,
-        metodo: 'SPEI',
-        estado: 'PENDIENTE',
-        montoTotal: cuota.monto,
-        moneda: 'MXN',
-        motivo:
-          'El condominio aun no configuro como cobrar en linea. Sube tu comprobante o contacta al administrador.',
-      };
-    }
-
-    if (configuracion.metodo === 'STRIPE_CONNECT') {
+    if (metodo === 'STRIPE') {
       // El cobro con tarjeta lo crea `CobrosStripeService`: aqui se delega para
       // que el condomino reciba el `clientSecret` del checkout embebido.
-      if (!configuracion.stripeChargesEnabled) {
-        return {
-          idCargo: 0,
-          idCuota,
-          metodo: 'STRIPE',
-          estado: 'PENDIENTE',
-          montoTotal: cuota.monto,
-          moneda: 'MXN',
-          motivo:
-            'La cuenta de Stripe del condominio aun no esta verificada. Usa transferencia SPEI.',
-        };
-      }
-
       return this.cobrosStripe.crearCobroTarjeta(idCondominio, idCuota, idUsuarioCondominio);
     }
 
@@ -641,6 +680,38 @@ export class CobrosService {
     const referencia = this.construirReferencia(prefijo, cuota.periodo, cuota.claveUnidad);
     const expira = new Date(Date.now() + DIAS_VIGENCIA_SPEI * 24 * 60 * 60 * 1000);
 
+    // Cambio de metodo: si el condomino habia empezado con tarjeta, la fila
+    // PENDIENTE se reutiliza como cargo SPEI. El indice unico parcial impide
+    // insertar una segunda, y dos cobros vivos serian un riesgo de doble pago.
+    const vigente = await this.cargoVigente(cuota.idCuota);
+    if (vigente && vigente.metodo !== 'SPEI') {
+      const reemplazados = await this.dataSource.query(
+        `
+        UPDATE cargos_cuota
+        SET metodo = 'SPEI',
+            monto_cuota = $2,
+            monto_total = $2,
+            monto_comision = 0,
+            referencia_spei = $3,
+            stripe_checkout_session_id = NULL,
+            stripe_payment_intent_id = NULL,
+            stripe_balance_transaction_id = NULL,
+            stripe_account_id = NULL,
+            expira_en = $4,
+            actualizado_en = NOW()
+        WHERE id_cargo = $1 AND estado = 'PENDIENTE'
+        RETURNING id_cargo, id_cuota, id_condominio, metodo, estado, monto_cuota,
+                  monto_comision, monto_total, moneda, referencia_spei, expira_en, pagado_en
+        `,
+        [vigente.idCargo, cuota.monto, referencia, expira.toISOString()],
+      );
+
+      const filas = this.normalizarFilas(reemplazados);
+      if (filas.length > 0) {
+        return this.toCargo(filas[0]);
+      }
+    }
+
     // `ON CONFLICT` sobre el indice parcial: si dos peticiones simultaneas
     // intentan crear el cargo, solo una gana y la otra reutiliza el vigente.
     const insertados = await this.dataSource.query(
@@ -658,16 +729,17 @@ export class CobrosService {
       [cuota.idCuota, idCondominio, cuota.monto, referencia, expira.toISOString()],
     );
 
-    if (Array.isArray(insertados) && insertados.length > 0) {
-      return this.toCargo(insertados[0] as Record<string, unknown>);
+    const insertadas = this.normalizarFilas(insertados);
+    if (insertadas.length > 0) {
+      return this.toCargo(insertadas[0]);
     }
 
     // Perdio la carrera: otro proceso ya creo el cargo.
-    const vigente = await this.cargoVigente(cuota.idCuota);
-    if (!vigente) {
+    const vigenteFinal = await this.cargoVigente(cuota.idCuota);
+    if (!vigenteFinal) {
       throw new BadRequestException('No fue posible crear el cargo de la cuota.');
     }
-    return vigente;
+    return vigenteFinal;
   }
 
   /** `<prefijo>-<periodo>-<unidad>`, en mayusculas y sin caracteres raros. */
@@ -703,6 +775,7 @@ export class CobrosService {
       beneficiario: configuracion.beneficiario,
       referencia: cargo.referenciaSpei,
       clientSecret: null,
+      metodosDisponibles: configuracion.metodosDisponibles,
     };
   }
 
@@ -762,6 +835,11 @@ export class CobrosService {
 
       // Pago VALIDADO directo: el administrador esta afirmando que el dinero
       // llego. No pasa por CAPTURADO porque no hay comprobante que revisar.
+      //
+      // `pagos.id_cuota` es UNIQUE, asi que una cuota con un pago rechazado
+      // conserva esa fila. Con `DO NOTHING` la cuota quedaba pagada pero el
+      // pago seguia apareciendo como RECHAZADO para el administrador; el
+      // conflicto ahora resuelve la fila pendiente o rechazada.
       const idUsuario = await this.idMembresiaAdmin(manager, input.idCondominio);
       await manager.query(
         `
@@ -769,8 +847,41 @@ export class CobrosService {
           monto, fecha_pago, estado, referencia, origen, id_cuota,
           id_usuario_condominio_paga, id_usuario_condominio_admin, id_cargo
         )
-        VALUES ($1, NOW(), 'VALIDADO', $2, 'SPEI', $3, NULL, $4, $5)
-        ON CONFLICT (id_cuota) DO NOTHING
+        SELECT
+          $1, NOW(), 'VALIDADO', $2, 'SPEI', $3,
+          -- Quien paga es el ocupante vigente de la unidad de la cuota. Antes
+          -- se guardaba NULL y, como "Mis pagos" filtra por esta columna, el
+          -- condomino no veia la transferencia confirmada por el administrador.
+          (
+            SELECT uo.id_usuario_condominio
+            FROM cuotas c
+            INNER JOIN unidades_ocupantes uo ON uo.id_unidad = c.id_unidad
+            WHERE c.id_cuota = $3
+              AND (uo.fecha_fin IS NULL OR uo.fecha_fin >= CURRENT_DATE)
+            ORDER BY
+              CASE uo.tipo_ocupacion
+                WHEN 'PROPIETARIO' THEN 0
+                WHEN 'INQUILINO' THEN 1
+                ELSE 2
+              END,
+              uo.fecha_inicio DESC
+            LIMIT 1
+          ),
+          $4, $5
+        ON CONFLICT (id_cuota) DO UPDATE SET
+          monto = EXCLUDED.monto,
+          fecha_pago = EXCLUDED.fecha_pago,
+          estado = 'VALIDADO',
+          referencia = EXCLUDED.referencia,
+          origen = EXCLUDED.origen,
+          motivo_rechazo = NULL,
+          id_usuario_condominio_paga = COALESCE(
+            EXCLUDED.id_usuario_condominio_paga,
+            pagos.id_usuario_condominio_paga
+          ),
+          id_usuario_condominio_admin = EXCLUDED.id_usuario_condominio_admin,
+          id_cargo = EXCLUDED.id_cargo
+        WHERE pagos.estado IN ('RECHAZADO', 'CAPTURADO')
         `,
         [
           actual.montoTotal,
@@ -919,6 +1030,26 @@ export class CobrosService {
         `No fue posible notificar el pago del cargo ${cargo.idCargo}: ${(error as Error).message}`,
       );
     }
+  }
+
+  /**
+   * Normaliza el resultado de un `UPDATE/INSERT ... RETURNING`.
+   *
+   * TypeORM puede devolver las filas directamente o como `[filas, conteo]`
+   * segun el driver. Sin normalizar, `filas[0]` es un arreglo y todos los
+   * campos terminan en `NaN` / `undefined` (que en JSON se ve como `null`).
+   */
+  private normalizarFilas(raw: unknown): Array<Record<string, unknown>> {
+    if (!Array.isArray(raw)) {
+      return [];
+    }
+    if (raw.length === 2 && Array.isArray(raw[0]) && typeof raw[1] === 'number') {
+      return raw[0] as Array<Record<string, unknown>>;
+    }
+    if (raw.length > 0 && Array.isArray(raw[0])) {
+      return raw[0] as Array<Record<string, unknown>>;
+    }
+    return raw as Array<Record<string, unknown>>;
   }
 
   private toCargo(row: Record<string, unknown>): CargoRecord {

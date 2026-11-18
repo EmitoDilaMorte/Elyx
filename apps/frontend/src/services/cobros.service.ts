@@ -1,18 +1,25 @@
 import { apiRequest } from './backendApi.service';
 
-/** Metodo con el que el condominio cobra sus cuotas. */
-export type MetodoCobro = 'NINGUNO' | 'SPEI' | 'STRIPE_CONNECT';
+/** Metodo con el que se paga un cargo. */
+export type MetodoCargo = 'SPEI' | 'STRIPE';
 
 export type ConfiguracionCobro = {
   idCondominio: number;
-  metodo: MetodoCobro;
+  /** SPEI. `speiActivo` es la decision del admin; `puedeUsarSpei` el resultado. */
+  speiActivo: boolean;
+  puedeUsarSpei: boolean;
   clabe: string | null;
   banco: string | null;
   beneficiario: string | null;
   referenciaPrefijo: string | null;
+  /** Stripe. Independiente de SPEI: los dos pueden estar activos. */
+  stripeActivo: boolean;
+  puedeUsarStripe: boolean;
   stripeAccountId: string | null;
   stripeChargesEnabled: boolean;
   stripeConectadoEn: string | null;
+  /** Metodos que el condomino puede elegir hoy. */
+  metodosDisponibles: MetodoCargo[];
   permitirMsi: boolean;
   comisionTasa: number;
   comisionFijo: number;
@@ -29,7 +36,6 @@ export type ConfiguracionCobro = {
   /** `false` si falta algun requisito: la UI deshabilita Connect antes de intentar. */
   puedeUsarConnect: boolean;
   motivoNoConnect: string | null;
-  puedeUsarSpei: boolean;
 };
 
 export type EstadoConnect = {
@@ -44,10 +50,50 @@ export type EstadoConnect = {
   dashboard: string | null;
 };
 
+/** Administrador activo y su Person en la cuenta conectada. */
+export type AdministradorStripe = {
+  idUsuarioCondominio: number;
+  nombre: string;
+  correo: string;
+  stripePersonId: string | null;
+  /** Marcado como propietario de la cuenta en Stripe. */
+  propietario: boolean;
+  representante: boolean;
+};
+
+/** Persona de Stripe que ya no corresponde a un administrador activo. */
+export type PersonaHuerfanaStripe = {
+  stripePersonId: string;
+  nombre: string;
+  correo: string | null;
+  motivo: 'inactivo' | 'condomino' | 'inexistente';
+};
+
+export type EstadoAdministradoresStripe = {
+  tieneCuenta: boolean;
+  stripeAccountId: string | null;
+  administradores: AdministradorStripe[];
+  huerfanos: PersonaHuerfanaStripe[];
+  advertencias: string[];
+};
+
+export type OpcionesPagoCuota = {
+  idCuota: number;
+  montoTotal: number;
+  moneda: string;
+  /** Metodos que el condominio ofrece hoy. */
+  metodosDisponibles: MetodoCargo[];
+  /** Metodo del cargo vigente, si ya hay uno en proceso. */
+  metodoEnProceso: MetodoCargo | null;
+  idCargoEnProceso: number | null;
+  /** Mensaje cuando no hay ningun metodo disponible. */
+  motivo: string | null;
+};
+
 export type DatosPagoCuota = {
   idCargo: number;
   idCuota: number;
-  metodo: 'SPEI' | 'STRIPE';
+  metodo: MetodoCargo;
   estado: 'PENDIENTE' | 'PAGADO' | 'EXPIRADO' | 'CANCELADO';
   montoTotal: number;
   moneda: string;
@@ -61,6 +107,8 @@ export type DatosPagoCuota = {
   tarjetaGuardada?: boolean;
   /** `true` si esta compra puede guardar la tarjeta (siempre `on_session`). */
   guardarTarjeta?: boolean;
+  /** Metodos que el condominio ofrece, para cambiar sin cerrar el modal. */
+  metodosDisponibles?: MetodoCargo[];
   motivo?: string | null;
 };
 
@@ -117,7 +165,10 @@ export type EstadoCargoCuota = {
 };
 
 export type ActualizarConfiguracionCobro = {
-  metodo?: MetodoCobro;
+  /** Ofrecer transferencia SPEI (exige CLABE). */
+  speiActivo?: boolean;
+  /** Ofrecer pago con tarjeta (exige cuenta Connect y requisitos). */
+  stripeActivo?: boolean;
   clabe?: string;
   banco?: string;
   beneficiario?: string;
@@ -142,6 +193,19 @@ export const cobrosApi = {
     return apiRequest<ConfiguracionCobro>(`/cobros/configuracion?idCondominio=${idCondominio}`);
   },
 
+  /**
+   * Metodos de pago que ofrece el condominio.
+   *
+   * Disponible tambien para el condomino (a diferencia de `configuracion`, que
+   * es solo del administrador). Lo usa la lista de cuotas para decidir si
+   * muestra "Pagar en linea".
+   */
+  metodosPago(idCondominio: number) {
+    return apiRequest<{ metodosDisponibles: MetodoCargo[] }>(
+      `/cobros/metodos?idCondominio=${idCondominio}`,
+    );
+  },
+
   actualizarConfiguracion(idCondominio: number, cambios: ActualizarConfiguracionCobro) {
     return apiRequest<ConfiguracionCobro>(`/cobros/configuracion?idCondominio=${idCondominio}`, {
       method: 'PATCH',
@@ -149,9 +213,24 @@ export const cobrosApi = {
     });
   },
 
-  /** Datos para pagar una cuota (SPEI o tarjeta, segun el metodo configurado). */
-  datosPagoCuota(idCondominio: number, idCuota: number) {
-    return apiRequest<DatosPagoCuota>(`/cobros/cuota/${idCuota}?idCondominio=${idCondominio}`);
+  /** Opciones de pago de una cuota. No crea cargos: solo dice que hay. */
+  opcionesPagoCuota(idCondominio: number, idCuota: number) {
+    return apiRequest<OpcionesPagoCuota>(
+      `/cobros/cuota/${idCuota}?idCondominio=${idCondominio}`,
+    );
+  },
+
+  /**
+   * Crea el cargo del metodo elegido por el condomino.
+   *
+   * Reemplaza al antiguo "datos de pago" en el GET: con SPEI y tarjeta activos
+   * a la vez, el cargo se crea hasta que el condomino elige.
+   */
+  crearCargo(idCondominio: number, idCuota: number, metodo: MetodoCargo) {
+    return apiRequest<DatosPagoCuota>('/cobros/cargo', {
+      method: 'POST',
+      body: JSON.stringify({ idCondominio, idCuota, metodo }),
+    });
   },
 
   /**
@@ -221,6 +300,31 @@ export const cobrosApi = {
     return apiRequest<{ clientSecret: string }>(
       `/cobros/connect/sesion?idCondominio=${idCondominio}`,
       { method: 'POST' },
+    );
+  },
+
+  /** Administrador: quién está como propietario en la cuenta de Stripe. */
+  administradoresStripe(idCondominio: number) {
+    return apiRequest<EstadoAdministradoresStripe>(
+      `/cobros/connect/administradores?idCondominio=${idCondominio}`,
+    );
+  },
+
+  /** Administrador: crea o adopta la Person de cada administrador activo. */
+  sincronizarAdministradoresStripe(idCondominio: number) {
+    return apiRequest<EstadoAdministradoresStripe>(
+      `/cobros/connect/administradores/sincronizar?idCondominio=${idCondominio}`,
+      { method: 'POST' },
+    );
+  },
+
+  /** Administrador: quita una Person de la cuenta (con confirmación previa). */
+  quitarAdministradorStripe(idCondominio: number, idPersonaStripe: string) {
+    return apiRequest<{ eliminado: boolean; motivo: string | null }>(
+      `/cobros/connect/administradores/${encodeURIComponent(
+        idPersonaStripe,
+      )}?idCondominio=${idCondominio}`,
+      { method: 'DELETE' },
     );
   },
 

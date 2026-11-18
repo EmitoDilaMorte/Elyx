@@ -956,7 +956,13 @@ export class VotacionesService implements OnModuleInit {
         uc.rol,
         u.correo,
         TRIM(CONCAT_WS(' ', u.nombre, u.primer_apellido, u.segundo_apellido)) AS nombre,
-        ARRAY_AGG(un.clave_unidad ORDER BY un.clave_unidad) AS unidades
+        ARRAY_AGG(
+          un.clave_unidad
+          ORDER BY
+            substring(un.clave_unidad from '^[^0-9]*'),
+            NULLIF(substring(un.clave_unidad from '[0-9]+'), '')::int NULLS LAST,
+            un.clave_unidad
+        ) AS unidades
       FROM usuarios_condominios uc
       JOIN usuarios u ON u.id_usuario = uc.id_usuario
       JOIN unidades_ocupantes uo ON uo.id_usuario_condominio = uc.id_usuario_condominio

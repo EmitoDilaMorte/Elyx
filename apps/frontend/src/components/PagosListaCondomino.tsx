@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { backendApi, type CuotaPaginada, type MetaPaginacion } from '../services/backendApi.service';
+import { cobrosApi } from '../services/cobros.service';
 import { BarraFiltrosLista, type OpcionLista } from './BarraFiltrosLista';
 import { PaginacionLista } from './PaginacionLista';
 import { useListaParametros } from './useListaParametros';
@@ -66,7 +67,18 @@ function etiquetaEstado(estado: CuotaPaginada['estado']): string {
 
 /**
  * Vista de "Pagos" del condomino: sus cuotas con busqueda, filtro, orden y
- * paginacion en servidor. Conserva las acciones de pago de cada tarjeta.
+ * paginacion en servidor.
+ *
+ * **Que botones se muestran depende del estado real de la cuota**, no de una
+ * suposicion. El listado trae `cargoMetodo`/`cargoReferencia` del cargo en
+ * linea vigente, y `metodosPago` dice si el condominio ofrece pago en linea:
+ *
+ *  - Sin cargo: "Pagar en linea" (si hay metodos) y "Registrar pago".
+ *  - Cargo SPEI: ya existe una referencia que el condomino debe usar, asi que
+ *    se ofrecen comprobante y recibo, no un segundo registro de pago.
+ *  - Cargo tarjeta: el checkout quedo a medias; se reabre con "Pagar en linea".
+ *  - En validacion: comprobante y recibo, sin volver a registrar.
+ *  - Pagada: solo el recibo.
  */
 export function PagosListaCondomino({
   idCondominio,
@@ -98,6 +110,33 @@ export function PagosListaCondomino({
   const [meta, setMeta] = useState<MetaPaginacion | null>(null);
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** `false` mientras el condominio no tenga ningun metodo de pago en linea. */
+  const [hayMetodosEnLinea, setHayMetodosEnLinea] = useState(false);
+
+  useEffect(() => {
+    if (!idCondominio) {
+      return;
+    }
+
+    let cancelado = false;
+    void cobrosApi
+      .metodosPago(idCondominio)
+      .then((datos) => {
+        if (!cancelado) {
+          setHayMetodosEnLinea(datos.metodosDisponibles.length > 0);
+        }
+      })
+      .catch(() => {
+        // Sin el dato se cae al flujo manual: es el que siempre funciona.
+        if (!cancelado) {
+          setHayMetodosEnLinea(false);
+        }
+      });
+
+    return () => {
+      cancelado = true;
+    };
+  }, [idCondominio]);
 
   useEffect(() => {
     // Sin membresia activa no se consulta: pedir el listado sin filtrar
@@ -143,8 +182,10 @@ export function PagosListaCondomino({
     return () => {
       cancelado = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps, refrescoPagos
-  }, [idCondominio, idUsuarioCondominio, page, q, claveEstados, orden]);
+    // `refrescoPagos` SI va en las dependencias: es el contador que fuerza la
+    // recarga cuando se confirma un pago (WebSocket, Stripe o registro viejo).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idCondominio, idUsuarioCondominio, page, q, claveEstados, orden, refrescoPagos]);
 
   const alternarEstado = (valor: string, activo: boolean) => {
     const nuevos = activo
@@ -186,6 +227,27 @@ export function PagosListaCondomino({
           const pago = pagoPorCuota[cuota.idCuota];
           const evidencias = pago ? (evidenciasPorPago[pago.id] ?? []) : [];
 
+          /*
+           * Acciones segun el estado REAL de la cuota:
+           *  - `referenciaSpei`: ya se genero una referencia; el condomino debe
+           *    transferir a esa cuenta, no registrar otro pago.
+           *  - `cargoMetodo === 'STRIPE'`: hay un checkout sin terminar.
+           *  - `EN_VALIDACION`: ya hay un pago esperando revision.
+           */
+          const referenciaSpei =
+            cuota.cargoMetodo === 'SPEI' ? cuota.cargoReferencia : null;
+          const checkoutPendiente = cuota.cargoMetodo === 'STRIPE';
+          const enValidacion = cuota.estado === 'EN_VALIDACION';
+          const pagada = cuota.estado === 'PAGADA';
+          const puedePagarEnLinea = !pagada && !enValidacion && !referenciaSpei;
+          const puedeRegistrarPago = !pagada && !enValidacion && !referenciaSpei;
+          // Con una referencia SPEI viva o un pago en revision, el comprobante
+          // sigue siendo util (respaldo del deposito).
+          const puedeSubirComprobante = !pagada && (enValidacion || Boolean(referenciaSpei));
+          // El recibo solo tiene sentido cuando ya hay algo pagado o declarado:
+          // una cuota pendiente sin pago no tiene comprobante que descargar.
+          const puedeDescargarRecibo = pagada || enValidacion || Boolean(referenciaSpei);
+
           return (
             <article className="payment-item cuota-card" key={`${cuota.idCuota}-${version}`}>
               <div>
@@ -203,54 +265,77 @@ export function PagosListaCondomino({
                   </time>
                   {cuota.recargo > 0 ? ` | Recargo: ${MONEDA.format(cuota.recargo)}` : ''}
                 </small>
+                {referenciaSpei && (
+                  <p className="helper-text" style={{ margin: '0.35rem 0 0' }}>
+                    Transferencia en proceso con la referencia{' '}
+                    <code className="mono">{referenciaSpei}</code>. Sube tu comprobante si ya la
+                    hiciste.
+                  </p>
+                )}
               </div>
               <p className="item-amount">{MONEDA.format(cuota.monto)}</p>
               <span
-                className={`status-pill ${cuota.estado === 'PAGADA' ? 'status-pagada' : 'status-pendiente'}`}
+                className={`status-pill ${pagada ? 'status-pagada' : 'status-pendiente'}`}
               >
                 {etiquetaEstado(cuota.estado)}
               </span>
               <div className="btn-row">
-                {/* Pago en linea: SPEI o tarjeta segun lo que configuro el
-                    administrador. Si no hay metodo configurado, el modal lo
-                    explica y remite a subir el comprobante. */}
-                <button
-                  className="primary-btn"
-                  onClick={() => onPagarEnLinea(cuota.idCuota)}
-                  disabled={cuota.estado !== 'PENDIENTE'}
-                >
-                  Pagar en linea
-                </button>
-                <button
-                  className="soft-btn"
-                  onClick={() => onRegistrarPago(cuota.idCuota)}
-                  disabled={cuota.estado !== 'PENDIENTE'}
-                >
-                  Registrar pago
-                </button>
-                <label
-                  className="soft-btn"
-                  htmlFor={`comprobante-${cuota.idCuota}`}
-                  style={{ cursor: 'pointer' }}
-                >
-                  Subir comprobante
-                </label>
-                <input
-                  id={`comprobante-${cuota.idCuota}`}
-                  type="file"
-                  accept="image/*,application/pdf"
-                  style={{ display: 'none' }}
-                  onChange={(evento) => {
-                    const file = evento.target.files?.[0];
-                    if (file) {
-                      onSubirComprobante(cuota.idCuota, file);
-                    }
-                    evento.currentTarget.value = '';
-                  }}
-                />
-                <button className="soft-btn" onClick={() => onDescargarReciboCuota(cuota.idCuota)}>
-                  Descargar recibo
-                </button>
+                {/* Pago en linea: el modal deja elegir SPEI o tarjeta. Con una
+                    referencia SPEI ya generada tambien se abre: el condomino
+                    puede volver a verla o cambiar a tarjeta. */}
+                {(puedePagarEnLinea || checkoutPendiente || Boolean(referenciaSpei)) &&
+                  hayMetodosEnLinea && (
+                    <button
+                      className="primary-btn"
+                      onClick={() => onPagarEnLinea(cuota.idCuota)}
+                      disabled={pagada}
+                    >
+                      {referenciaSpei ? 'Ver referencia SPEI' : 'Pagar en linea'}
+                    </button>
+                  )}
+                {puedeRegistrarPago && (
+                  <button
+                    className="soft-btn"
+                    onClick={() => onRegistrarPago(cuota.idCuota)}
+                    disabled={pago?.status === 'PENDIENTE'}
+                  >
+                    Registrar pago
+                  </button>
+                )}
+                {puedeSubirComprobante && (
+                  <>
+                    {/* El estilo de `label.soft-btn` se iguala al de los
+                        <button> en styles.css: un <label> no hereda el cursor
+                        ni la tipografia de boton del navegador. */}
+                    <label
+                      className="soft-btn"
+                      htmlFor={`comprobante-${cuota.idCuota}`}
+                    >
+                      Subir comprobante
+                    </label>
+                    <input
+                      id={`comprobante-${cuota.idCuota}`}
+                      type="file"
+                      accept="image/*,application/pdf"
+                      style={{ display: 'none' }}
+                      onChange={(evento) => {
+                        const file = evento.target.files?.[0];
+                        if (file) {
+                          onSubirComprobante(cuota.idCuota, file);
+                        }
+                        evento.currentTarget.value = '';
+                      }}
+                    />
+                  </>
+                )}
+                {puedeDescargarRecibo && (
+                  <button
+                    className="soft-btn"
+                    onClick={() => onDescargarReciboCuota(cuota.idCuota)}
+                  >
+                    Descargar recibo
+                  </button>
+                )}
               </div>
               {evidencias.length > 0 && (
                 <div style={{ marginTop: '0.5rem' }}>

@@ -1,22 +1,26 @@
 /** Tipos compartidos del modulo de cobro de cuotas. */
 
-export type MetodoCobro = 'NINGUNO' | 'SPEI' | 'STRIPE_CONNECT';
 export type MetodoCargo = 'SPEI' | 'STRIPE';
 export type EstadoCargo = 'PENDIENTE' | 'PAGADO' | 'EXPIRADO' | 'CANCELADO';
 
 /** Configuracion de cobro tal como la ve el administrador. */
 export type ConfiguracionCobro = {
   idCondominio: number;
-  metodo: MetodoCobro;
-  /** SPEI */
+  /** SPEI. `speiActivo` es la decision del admin; `puedeUsarSpei` el resultado. */
+  speiActivo: boolean;
+  puedeUsarSpei: boolean;
   clabe: string | null;
   banco: string | null;
   beneficiario: string | null;
   referenciaPrefijo: string | null;
-  /** Stripe Connect */
+  /** Stripe Connect. Independiente de SPEI: pueden estar los dos activos. */
+  stripeActivo: boolean;
+  puedeUsarStripe: boolean;
   stripeAccountId: string | null;
   stripeChargesEnabled: boolean;
   stripeConectadoEn: string | null;
+  /** Metodos que el condomino puede elegir hoy, en orden de presentacion. */
+  metodosDisponibles: MetodoCargo[];
   /** Interruptores */
   permitirMsi: boolean;
   comisionTasa: number;
@@ -44,8 +48,25 @@ export type ConfiguracionCobro = {
   puedeUsarConnect: boolean;
   /** Motivo legible cuando `puedeUsarConnect` es false. */
   motivoNoConnect: string | null;
-  /** `true` si ya hay CLABE capturada, es decir, SPEI esta listo. */
-  puedeUsarSpei: boolean;
+};
+
+/**
+ * Opciones de pago de una cuota. Es de SOLO LECTURA: no crea cargos.
+ *
+ * El cargo se crea cuando el condomino elige un metodo, porque con dos metodos
+ * activos crear el de uno al abrir el modal bloquearia el otro (el indice
+ * unico parcial permite un solo cargo PENDIENTE por cuota).
+ */
+export type OpcionesPagoCuota = {
+  idCuota: number;
+  montoTotal: number;
+  moneda: string;
+  metodosDisponibles: MetodoCargo[];
+  /** Metodo del cargo vigente, si ya hay uno en proceso. */
+  metodoEnProceso: MetodoCargo | null;
+  idCargoEnProceso: number | null;
+  /** Mensaje cuando no hay ningun metodo disponible. */
+  motivo: string | null;
 };
 
 /** Datos que el condomino necesita para pagar una cuota. */
@@ -54,7 +75,6 @@ export type DatosPagoCuota = {
   idCuota: number;
   metodo: MetodoCargo;
   estado: EstadoCargo;
-  /** Lo que paga el condomino: siempre igual al monto de la cuota. */
   montoTotal: number;
   moneda: string;
   /** Solo SPEI */
@@ -76,6 +96,8 @@ export type DatosPagoCuota = {
    * `on_session`: nunca se cobra sin que el condomino este presente.
    */
   guardarTarjeta?: boolean;
+  /** Metodos que el condominio ofrece, para cambiar sin cerrar el modal. */
+  metodosDisponibles?: MetodoCargo[];
   /** Mensaje cuando el cobro no se puede iniciar. */
   motivo?: string | null;
 };

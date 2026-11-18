@@ -18,15 +18,20 @@ import {
  * Actualizacion de la configuracion de cobro del condominio.
  *
  * Todo es opcional: el administrador puede cambiar solo la CLABE o solo el
- * interruptor de MSI. `metodo` es lo que decide que campos se exigen, y esa
- * validacion cruzada vive en el servicio (aqui no se puede expresar bien con
- * class-validator sin duplicar reglas).
+ * interruptor de MSI. Los metodos son banderas independientes: activar SPEI no
+ * apaga la tarjeta ni al reves. La validacion cruzada (la CLABE para SPEI, el
+ * RFC y la pagina publica para Stripe) vive en el servicio.
  */
 export class ActualizarConfiguracionCobroDto {
+  /** Ofrecer transferencia SPEI. Exige una CLABE valida. */
   @IsOptional()
-  @IsString()
-  @IsIn(['NINGUNO', 'SPEI', 'STRIPE_CONNECT'])
-  metodo?: 'NINGUNO' | 'SPEI' | 'STRIPE_CONNECT';
+  @IsBoolean()
+  speiActivo?: boolean;
+
+  /** Ofrecer pago con tarjeta. Exige la cuenta Connect y sus requisitos. */
+  @IsOptional()
+  @IsBoolean()
+  stripeActivo?: boolean;
 
   /** CLABE de 18 digitos. El digito verificador se valida en el servicio. */
   @IsOptional()
@@ -121,6 +126,19 @@ export class CrearCargoDto {
   @IsInt()
   @Min(1)
   idCuota!: number;
+}
+
+/**
+ * Eleccion del metodo con el que se paga una cuota.
+ *
+ * El cargo se crea aqui y no al abrir el modal: con SPEI y tarjeta activos, un
+ * solo cargo PENDIENTE por cuota (indice unico parcial) impediria ofrecer el
+ * otro metodo si se creara uno de entrada.
+ */
+export class CrearCargoMetodoDto extends CrearCargoDto {
+  @IsString()
+  @IsIn(['SPEI', 'STRIPE'])
+  metodo!: 'SPEI' | 'STRIPE';
 }
 
 /** Conciliacion manual de un cargo SPEI (el administrador lo marca pagado). */

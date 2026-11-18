@@ -934,6 +934,31 @@ nav {
   box-shadow: 0 0 0 3px rgba(245, 159, 90, 0.18);
 }
 
+/*
+ * Todos los desplegables comparten el estilo del selector de condominio.
+ * Antes solo lo tenian los que llevaban la clase: los formularios publicos y
+ * los paneles nuevos seguian mostrando el select nativo del navegador.
+ * Se define aqui, antes de las reglas de layout, para que `.form-grid` y
+ * `.condo-bloque` solo tengan que ajustar el ancho.
+ */
+select {
+  width: 100%;
+  min-height: 44px;
+  border-radius: 12px;
+  border: 1px solid #d9ccb6;
+  padding: 0.55rem 0.7rem;
+  font: inherit;
+  font-weight: 700;
+  color: var(--ink-strong);
+  background: #fffdfa;
+}
+
+select:focus {
+  outline: none;
+  border-color: #f0ab65;
+  box-shadow: 0 0 0 3px rgba(245, 159, 90, 0.18);
+}
+
 .solicitud-select {
   margin-bottom: 0.7rem;
 }
@@ -1084,6 +1109,14 @@ nav {
 
 button {
   cursor: pointer;
+  /*
+   * Sin esto, el <button> usa la fuente por defecto del navegador (Arial 13.3px)
+   * en lugar de Manrope, mientras el resto de la app hereda del <body>. El
+   * sintoma visible: "Subir comprobante" (un <label class="soft-btn">) se veia
+   * mas grande que "Pagar en linea" o "Descargar recibo", que son <button>.
+   */
+  font: inherit;
+  font-weight: 700;
 }
 
 .primary-btn,
@@ -1120,6 +1153,19 @@ button {
   color: #784f20;
 }
 
+/*
+ * `soft-btn` tambien se usa en <label> (por ejemplo "Subir comprobante", que
+ * abre el selector de archivos). El <label> no trae el cursor ni el centrado
+ * de un boton; la tipografia ya la iguala `button { font: inherit }` de arriba,
+ * asi que aqui solo queda lo que depende de la etiqueta.
+ */
+label.soft-btn {
+  cursor: pointer;
+  user-select: none;
+  text-align: center;
+  justify-content: center;
+}
+
 .primary-btn,
 .soft-btn,
 .nav-item,
@@ -1127,6 +1173,7 @@ button {
 .panel,
 .welcome-card,
 input,
+select,
 textarea {
   transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease, background-color 180ms ease;
 }
@@ -1152,6 +1199,7 @@ textarea {
 
 button:focus-visible,
 input:focus-visible,
+select:focus-visible,
 textarea:focus-visible {
   outline: 3px solid rgba(10, 138, 124, 0.28);
   outline-offset: 2px;

@@ -20,6 +20,13 @@ type ValidacionesListaProps = {
   nombrePorMembresia: Record<number, string>;
   evidenciasPorPago: Record<number, EvidenciaPago[]>;
   formatShortDate: (isoDate: string) => string;
+  /**
+   * Contador que fuerza la recarga del listado paginado.
+   *
+   * Se pagina en el servidor, asi que actualizar `appData` al aprobar o
+   * rechazar no cambia las tarjetas: hay que pedir otra consulta.
+   */
+  refrescoPagos?: number;
   onAprobarPago: (idPago: number) => void;
   onRechazarPago: (idPago: number) => void;
   onGenerarReciboPago: (idPago: number) => void;
@@ -30,6 +37,13 @@ const ESTADOS: OpcionLista[] = [
   { value: 'CAPTURADO', label: 'Pendiente' },
   { value: 'VALIDADO', label: 'Aprobado' },
   { value: 'RECHAZADO', label: 'Rechazado' },
+];
+
+/** Canales por los que puede entrar un pago. */
+const ORIGENES: OpcionLista[] = [
+  { value: 'SPEI', label: 'Transferencia' },
+  { value: 'STRIPE', label: 'Tarjeta' },
+  { value: 'COMPROBANTE', label: 'Manual' },
 ];
 
 const ORDENES: OpcionLista[] = [
@@ -51,21 +65,32 @@ const ETIQUETA_ESTADO: Record<PagoPaginado['estadoBackend'], string> = {
   RECHAZADO: 'Rechazado',
 };
 
+/** Etiqueta del canal de pago, para distinguirlos dentro de una sola lista. */
+const ETIQUETA_ORIGEN: Record<PagoPaginado['origen'], string> = {
+  SPEI: 'Transferencia',
+  STRIPE: 'Tarjeta',
+  COMPROBANTE: 'Manual',
+};
+
 /**
- * Vista de "Validacion de pagos" del administrador: pagos del condominio con
- * busqueda, filtro, orden y paginacion en servidor.
+ * Vista de "Validacion de pagos" del administrador.
  *
- * Incluye arriba las **transferencias SPEI por conciliar**. Viven aqui y no en
- * una vista aparte porque es la misma tarea: el condomino transfiere a la CLABE
- * del condominio (o registra su pago y sube el comprobante) y el administrador
- * confirma que el dinero entro. Tenerlo en dos pantallas obligaba a revisar dos
- * lugares para saber que pagos faltan por validar.
+ * Es **una sola lista**: transferencias por conciliar y pagos ya registrados
+ * conviven en el mismo lugar, distinguidos por una etiqueta de origen. Antes
+ * habia dos bloques separados ("Transferencias SPEI por conciliar" arriba y
+ * "pagos" abajo) y el administrador veia el mismo movimiento dos veces: la
+ * referencia pendiente y el pago que el condomino habia registrado.
+ *
+ * El filtro **Origen** (Transferencia / Tarjeta / Manual) se aplica en el
+ * servidor sobre `pagos.origen`, y ademas oculta las transferencias sin
+ * conciliar cuando no incluye `SPEI`.
  */
 export function ValidacionesLista({
   idCondominio,
   nombrePorMembresia,
   evidenciasPorPago,
   formatShortDate,
+  refrescoPagos = 0,
   onAprobarPago,
   onRechazarPago,
   onGenerarReciboPago,
@@ -76,6 +101,8 @@ export function ValidacionesLista({
     orden,
     estados,
     claveEstados,
+    origenes,
+    claveOrigenes,
     version,
     aplicarCambios,
     urlPagina,
@@ -114,6 +141,7 @@ export function ValidacionesLista({
         pageSize: 12,
         q,
         estados,
+        origenes: origenes as PagoPaginado['origen'][],
         orden,
       })
       .then((data) => {
@@ -138,7 +166,7 @@ export function ValidacionesLista({
       cancelado = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [idCondominio, page, q, claveEstados, orden, recargaPagos]);
+  }, [idCondominio, page, q, claveEstados, claveOrigenes, orden, recargaPagos, refrescoPagos]);
 
   /**
    * Carga las transferencias SPEI pendientes.
@@ -180,7 +208,10 @@ export function ValidacionesLista({
       cancelado = true;
       window.clearInterval(temporizador);
     };
-  }, [idCondominio]);
+    // `refrescoPagos` tambien recarga las transferencias: aprobar un pago
+    // cancela su cargo pendiente en el backend, y el panel debe reflejarlo sin
+    // esperar al sondeo de 20 s.
+  }, [idCondominio, refrescoPagos]);
 
   const confirmarSpei = async (cargo: CargoPendiente) => {
     setConfirmandoCargo(true);
@@ -220,17 +251,28 @@ export function ValidacionesLista({
     aplicarCambios({ estado: nuevos });
   };
 
+  const alternarOrigen = (valor: string, activo: boolean) => {
+    const nuevos = activo
+      ? [...origenes.filter((origen) => origen !== valor), valor]
+      : origenes.filter((origen) => origen !== valor);
+    aplicarCambios({ origen: nuevos });
+  };
+
+  // Una transferencia sin conciliar solo tiene sentido cuando el filtro no
+  // excluye SPEI: si el administrador esta viendo "solo tarjeta", mostrarlas
+  // seria ruido.
+  const mostrarPendientes =
+    cargos.length > 0 && (origenes.length === 0 || origenes.includes('SPEI'));
+  const listaVacia = !cargando && !mostrarPendientes && items.length === 0 && !error;
+
   return (
     <section className="panel animate-in">
       <h4>Validacion de pagos</h4>
       <p className="helper-text">
-        Confirma las transferencias SPEI cuando el dinero aparezca en tu cuenta y valida los
-        comprobantes que subieron los condominos. Busca por periodo, unidad o referencia.
+        Todo en una sola lista: confirma las transferencias que ya llegaron a tu cuenta y valida
+        los comprobantes que subieron los condominos. Cada movimiento indica su origen.
       </p>
 
-      {/* Transferencias SPEI: el condomino transfiere a la CLABE del condominio
-          con la referencia que le da Elyx. El dinero llega al condominio, no a
-          Elyx, asi que solo el administrador puede confirmarlo. */}
       {avisoSpei && (
         <div className="reminder-box">
           <strong className="reminder-title">{avisoSpei}</strong>
@@ -238,24 +280,37 @@ export function ValidacionesLista({
       )}
       {errorCargos && <p className="login-error">{errorCargos}</p>}
 
-      {cargos.length > 0 && (
-        <div className="spei-pendientes">
-          <div className="super-block-header">
-            <div>
-              <h5>Transferencias SPEI por conciliar</h5>
-              <p className="helper-text" style={{ margin: '0.2rem 0 0' }}>
-                Confirma una transferencia solo cuando el deposito aparezca en el estado de cuenta
-                del condominio. La cuota queda pagada y el condomino recibe el aviso.
-              </p>
-            </div>
-            <span className="status-pill status-pendiente">
-              {cargos.length} pendiente{cargos.length === 1 ? '' : 's'}
-            </span>
-          </div>
+      <BarraFiltrosLista
+        idPrefijo="pagos"
+        q={q}
+        estados={estados}
+        orden={orden}
+        origenes={origenes}
+        opcionesEstado={ESTADOS}
+        opcionesOrigen={ORIGENES}
+        opcionesOrden={ORDENES}
+        placeholderBusqueda="Buscar por periodo, unidad o referencia"
+        onBuscar={(valor) => aplicarCambios({ q: valor || null })}
+        onAlternarEstado={alternarEstado}
+        onAlternarOrigen={alternarOrigen}
+        onCambiarOrden={(valor) => aplicarCambios({ orden: valor })}
+      />
 
-          <div className="payment-list" style={{ marginTop: '0.7rem' }}>
+      {error && <p className="login-error">{error}</p>}
+
+      <div className="payment-list" style={{ marginTop: '0.85rem' }}>
+        {/* Transferencias que el condomino ya genero y que aun no se reflejan
+            en el estado de cuenta. No son pagos: son referencias esperando el
+            deposito, por eso se marcan como tales dentro de la misma lista. */}
+        {mostrarPendientes && (
+          <>
+            <p className="helper-text" style={{ margin: '0 0 0.4rem' }}>
+              <strong>Transferencias por conciliar</strong> — confirmalas cuando el deposito
+              aparezca en tu estado de cuenta. La cuota queda pagada y el condomino recibe el
+              aviso.
+            </p>
             {cargos.map((cargo) => (
-              <article className="payment-item cuota-card" key={cargo.idCargo}>
+              <article className="payment-item cuota-card" key={`cargo-${cargo.idCargo}`}>
                 <div>
                   <h3 className="item-title" style={{ margin: 0 }}>
                     {cargo.periodo} — Unidad {cargo.claveUnidad}
@@ -267,7 +322,7 @@ export function ValidacionesLista({
                   <small>{textoVigencia(cargo.expiraEn)}</small>
                 </div>
                 <p className="item-amount">{MONEDA.format(cargo.montoTotal)}</p>
-                <span className="status-pill status-pendiente">Esperando deposito</span>
+                <span className="status-pill status-pendiente">Transferencia pendiente</span>
                 <div className="btn-row">
                   {cargoPorConfirmar === cargo.idCargo ? (
                     <>
@@ -300,28 +355,11 @@ export function ValidacionesLista({
                 </div>
               </article>
             ))}
-          </div>
-        </div>
-      )}
+          </>
+        )}
 
-      <BarraFiltrosLista
-        idPrefijo="pagos"
-        q={q}
-        estados={estados}
-        orden={orden}
-        opcionesEstado={ESTADOS}
-        opcionesOrden={ORDENES}
-        placeholderBusqueda="Buscar por periodo, unidad o referencia"
-        onBuscar={(valor) => aplicarCambios({ q: valor || null })}
-        onAlternarEstado={alternarEstado}
-        onCambiarOrden={(valor) => aplicarCambios({ orden: valor })}
-      />
-
-      {error && <p className="login-error">{error}</p>}
-
-      <div className="payment-list" style={{ marginTop: '0.85rem' }}>
         {cargando && <p className="helper-text">Cargando pagos...</p>}
-        {!cargando && items.length === 0 && !error && (
+        {listaVacia && (
           <p className="empty-state">No hay pagos que coincidan con la busqueda.</p>
         )}
 
@@ -341,6 +379,7 @@ export function ValidacionesLista({
                   {pago.periodo}
                   {nombreCondomino ? ` · Condomino: ${nombreCondomino}` : ''}
                   {pago.claveUnidad ? ` · Unidad: ${pago.claveUnidad}` : ''}
+                  {` · Origen: ${ETIQUETA_ORIGEN[pago.origen]}`}
                   {pago.referencia ? ` · Ref: ${pago.referencia}` : ''}
                 </p>
                 <small>

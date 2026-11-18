@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { extraerMensaje } from '../lib/errores';
 import { CheckoutEmbebido } from './CheckoutEmbebido';
-import { cobrosApi, type DatosPagoCuota } from '../services/cobros.service';
+import {
+  cobrosApi,
+  type DatosPagoCuota,
+  type MetodoCargo,
+  type OpcionesPagoCuota,
+} from '../services/cobros.service';
 
 type PagoCuotaModalProps = {
   idCondominio: number;
@@ -19,10 +24,19 @@ const MONEDA = new Intl.NumberFormat('es-MX', {
   maximumFractionDigits: 2,
 });
 
+const ETIQUETA_METODO: Record<MetodoCargo, string> = {
+  SPEI: 'Transferencia SPEI',
+  STRIPE: 'Tarjeta',
+};
+
 /**
  * Modal para que el condomino pague una cuota.
  *
- * Muestra lo que corresponda segun el metodo que configuro el administrador:
+ * El condominio puede tener SPEI y tarjeta activos AL MISMO TIEMPO. El modal
+ * primero muestra que opciones hay y crea el cargo hasta que el condomino elige:
+ * solo se permite un cargo PENDIENTE por cuota, asi que crearlo al abrir
+ * bloquearia el otro metodo.
+ *
  *  - SPEI: CLABE, referencia y monto, con boton de copiar.
  *  - Tarjeta: checkout de Stripe embebido.
  *
@@ -39,8 +53,13 @@ export function PagoCuotaModal({
   onPagado,
   onCerrar,
 }: PagoCuotaModalProps) {
+  const [opciones, setOpciones] = useState<OpcionesPagoCuota | null>(null);
+  /** Metodo elegido por el condomino (o el del cargo ya en proceso). */
+  const [seleccionado, setSeleccionado] = useState<MetodoCargo | null>(null);
   const [datos, setDatos] = useState<DatosPagoCuota | null>(null);
   const [cargando, setCargando] = useState(true);
+  /** Se esta creando el cargo del metodo elegido. */
+  const [preparando, setPreparando] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copiado, setCopiado] = useState<string | null>(null);
   /** El iframe aviso que el pago termino y se esta esperando al webhook. */
@@ -48,13 +67,18 @@ export function PagoCuotaModal({
   /** Mensaje del enlace de auxilio "¿Ya pagaste?". */
   const [mensaje, setMensaje] = useState<string | null>(null);
 
+  /**
+   * Carga las opciones. Es de solo lectura: no crea ningun cargo.
+   * Si ya hay un cargo vigente, el modal abre directo en ese metodo para no
+   * perder la referencia SPEI que el condomino pudo haber copiado.
+   */
   const cargar = useCallback(async () => {
     setCargando(true);
     setError(null);
     try {
-      setDatos(await cobrosApi.datosPagoCuota(idCondominio, idCuota));
+      setOpciones(await cobrosApi.opcionesPagoCuota(idCondominio, idCuota));
     } catch (err) {
-      setError(extraerMensaje(err, 'No se pudieron obtener los datos de pago.'));
+      setError(extraerMensaje(err, 'No se pudieron obtener las opciones de pago.'));
     } finally {
       setCargando(false);
     }
@@ -63,6 +87,45 @@ export function PagoCuotaModal({
   useEffect(() => {
     void cargar();
   }, [cargar]);
+
+  /**
+   * Crea el cargo del metodo elegido.
+   *
+   * Si el condomino cambia de opinion, el backend reutiliza la fila PENDIENTE
+   * y la pasa al otro metodo: no quedan dos cobros vivos de la misma cuota.
+   */
+  const elegir = useCallback(
+    async (metodo: MetodoCargo) => {
+      setSeleccionado(metodo);
+      setPreparando(true);
+      setDatos(null);
+      setError(null);
+      setMensaje(null);
+      setConfirmando(false);
+      try {
+        setDatos(await cobrosApi.crearCargo(idCondominio, idCuota, metodo));
+      } catch (err) {
+        setError(extraerMensaje(err, 'No se pudo iniciar el pago con ese metodo.'));
+      } finally {
+        setPreparando(false);
+      }
+    },
+    [idCondominio, idCuota],
+  );
+
+  // Preseleccion: el metodo que ya esta en proceso o, si solo hay uno
+  // disponible, ese. Con dos opciones y sin cargo se espera a que elija.
+  useEffect(() => {
+    if (!opciones || seleccionado) {
+      return;
+    }
+    const inicial =
+      opciones.metodoEnProceso ??
+      (opciones.metodosDisponibles.length === 1 ? opciones.metodosDisponibles[0] : null);
+    if (inicial) {
+      void elegir(inicial);
+    }
+  }, [elegir, opciones, seleccionado]);
 
   /**
    * Se ejecuta cuando el iframe de Stripe confirma el pago.
@@ -149,18 +212,59 @@ export function PagoCuotaModal({
           </button>
         </header>
 
-        {cargando && <p className="muted-text">Cargando datos de pago...</p>}
+        {cargando && <p className="muted-text">Cargando opciones de pago...</p>}
         {error && <div className="login-error">{error}</div>}
 
-        {/* Sin metodo configurado o cuenta sin verificar: se explica y se sale. */}
-        {datos?.motivo && (
+        {/* Sin ningun metodo activo: se explica y se ofrece el comprobante. */}
+        {opciones?.motivo && (
           <div className="reminder-box">
             <strong className="reminder-title">Pago en linea no disponible</strong>
             <p className="muted-text" style={{ margin: '0.35rem 0 0' }}>
-              {datos.motivo}
+              {opciones.motivo}
             </p>
             <p className="muted-text" style={{ margin: '0.35rem 0 0' }}>
               Puedes subir tu comprobante desde la lista de cuotas y el administrador lo validara.
+            </p>
+          </div>
+        )}
+
+        {/*
+          Selector de metodo. Solo aparece cuando hay mas de uno: con un solo
+          metodo se preselecciona solo y se muestra directo.
+        */}
+        {opciones && opciones.metodosDisponibles.length > 1 && (
+          <div style={{ marginBottom: '0.9rem' }}>
+            <p className="helper-text" style={{ margin: '0 0 0.45rem' }}>
+              Elige como quieres pagar. Puedes cambiar de opcion antes de completar el pago.
+            </p>
+            <div className="btn-row">
+              {opciones.metodosDisponibles.map((metodo) => (
+                <button
+                  key={metodo}
+                  type="button"
+                  className={seleccionado === metodo ? 'primary-btn' : 'soft-btn'}
+                  disabled={preparando}
+                  onClick={() => void elegir(metodo)}
+                >
+                  {ETIQUETA_METODO[metodo]}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {preparando && (
+          <p className="muted-text">
+            Preparando {seleccionado ? ETIQUETA_METODO[seleccionado].toLowerCase() : 'el pago'}...
+          </p>
+        )}
+
+        {/* El metodo elegido no se pudo preparar (cuenta sin verificar, etc.). */}
+        {datos?.motivo && !opciones?.motivo && (
+          <div className="reminder-box">
+            <strong className="reminder-title">Ese metodo no esta disponible</strong>
+            <p className="muted-text" style={{ margin: '0.35rem 0 0' }}>
+              {datos.motivo}
             </p>
           </div>
         )}

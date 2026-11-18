@@ -7,7 +7,7 @@ import { RolesGuard } from '../../common/auth/roles.guard';
 import { PagoEstado } from '../../common/enums/pago-estado.enum';
 import { AprobarPagoDto, RechazarPagoDto } from './dto/actualizar-pago.dto';
 import { CapturarPagoDto } from './dto/capturar-pago.dto';
-import { PagosService } from './pagos.service';
+import { ORIGENES_PAGO, OrigenPago, PagosService } from './pagos.service';
 
 @Controller('pagos')
 @UseGuards(JwtAuthGuard, CondominioAccessGuard)
@@ -30,6 +30,7 @@ export class PagosController {
     @Query('pageSize', new DefaultValuePipe(12), ParseIntPipe) pageSize: number,
     @Query('q') q?: string,
     @Query('estado') estado?: string,
+    @Query('origen') origen?: string | string[],
     @Query('orden') orden?: string,
     @Query('idUsuarioCondominio') idUsuarioCondominio?: string,
   ) {
@@ -39,6 +40,14 @@ export class PagosController {
       : null;
     const usuario = Number(idUsuarioCondominio);
 
+    // `origen` es un filtro repetible (?origen=SPEI&origen=STRIPE). Lo que no
+    // este en la whitelist se descarta: el valor viaja al SQL como parametro,
+    // pero se prefiere no aceptar canales inventados.
+    const crudos = Array.isArray(origen) ? origen : origen ? [origen] : [];
+    const origenes = crudos
+      .map((valor) => String(valor).trim().toUpperCase())
+      .filter((valor): valor is OrigenPago => ORIGENES_PAGO.includes(valor as OrigenPago));
+
     return this.pagosService.listarPaginado({
       idCondominio,
       idUsuarioCondominio: Number.isInteger(usuario) && usuario > 0 ? usuario : null,
@@ -46,6 +55,7 @@ export class PagosController {
       pageSize,
       q: q?.slice(0, 80),
       estado: estadoFiltrado,
+      origenes: origenes.length > 0 ? origenes : null,
       orden,
     });
   }

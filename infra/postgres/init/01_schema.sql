@@ -179,9 +179,10 @@ CREATE TABLE IF NOT EXISTS cuotas (
 CREATE TABLE IF NOT EXISTS cuentas_cobro_condominio (
   id_cuenta_cobro SERIAL PRIMARY KEY,
   id_condominio INT NOT NULL UNIQUE,
-  -- NINGUNO = aun no configurado (solo comprobante).
-  metodo VARCHAR(20) NOT NULL DEFAULT 'NINGUNO'
-    CHECK (metodo IN ('NINGUNO', 'SPEI', 'STRIPE_CONNECT')),
+  -- Metodos que ofrece el condominio. Son INDEPENDIENTES: se pueden tener los
+  -- dos activos a la vez y el condomino elige al pagar.
+  spei_activo BOOLEAN NOT NULL DEFAULT FALSE,
+  stripe_activo BOOLEAN NOT NULL DEFAULT FALSE,
   -- SPEI: transferencia directa a la CLABE del condominio.
   clabe VARCHAR(18),
   banco VARCHAR(80),

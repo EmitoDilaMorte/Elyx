@@ -419,7 +419,14 @@ export class UsuariosService {
         u.correo,
         TRIM(CONCAT_WS(' ', u.nombre, u.primer_apellido, u.segundo_apellido)) AS nombre,
         (
-          SELECT STRING_AGG(un.clave_unidad, ', ' ORDER BY un.clave_unidad)
+          SELECT STRING_AGG(
+            un.clave_unidad,
+            ', '
+            ORDER BY
+              substring(un.clave_unidad from '^[^0-9]*'),
+              NULLIF(substring(un.clave_unidad from '[0-9]+'), '')::int NULLS LAST,
+              un.clave_unidad
+          )
           FROM unidades_ocupantes uo
           JOIN unidades un ON un.id_unidad = uo.id_unidad
           WHERE uo.id_usuario_condominio = uc.id_usuario_condominio

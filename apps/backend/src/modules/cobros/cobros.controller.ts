@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
@@ -23,6 +24,7 @@ import {
   ActualizarConfiguracionCobroDto,
   ConfirmarCargoSpeiDto,
   CrearCargoDto,
+  CrearCargoMetodoDto,
 } from './dto/cobros.dto';
 
 /**
@@ -62,6 +64,18 @@ export class CobrosController {
   }
 
   /**
+   * Condomino o administrador: metodos de pago que ofrece el condominio.
+   *
+   * Sin `RolesGuard` a proposito: quien debe saber que botones mostrar es el
+   * condomino, y `GET /cobros/configuracion` es solo para el administrador
+   * porque incluye CLABE, comisiones y datos de la cuenta de Stripe.
+   */
+  @Get('metodos')
+  metodos(@Query('idCondominio', ParseIntPipe) idCondominio: number) {
+    return this.cobrosService.metodosDeCondominio(idCondominio);
+  }
+
+  /**
    * Administrador: guarda la configuracion.
    *
    * Si pide `STRIPE_CONNECT` sin RFC responde 403 `RFC_REQUERIDO_PARA_CONNECT`
@@ -78,30 +92,27 @@ export class CobrosController {
   }
 
   /**
-   * Condomino o administrador: datos para pagar una cuota.
+   * Condomino o administrador: opciones de pago de una cuota.
    *
-   * Reutiliza el cargo vigente si existe, para que la referencia SPEI no cambie
-   * entre visitas y el condomino no pague dos veces.
+   * Devuelve que metodos estan activos **sin crear cargos**. El cargo se crea
+   * al elegir, para que tener SPEI y tarjeta a la vez no se estorbe (un solo
+   * cargo PENDIENTE por cuota).
    */
   @Get('cuota/:idCuota')
-  datosPagoCuota(
-    @Req() req: AuthRequest,
+  opcionesPagoCuota(
     @Query('idCondominio', ParseIntPipe) idCondominio: number,
     @Param('idCuota', ParseIntPipe) idCuota: number,
   ) {
-    return this.cobrosService.datosPagoCuota(
-      idCondominio,
-      idCuota,
-      this.idMembresia(req, idCondominio),
-    );
+    return this.cobrosService.opcionesPagoCuota(idCondominio, idCuota);
   }
 
-  /** Alias explicito para crear el cargo (misma logica que el GET). */
+  /** Alias explicito para crear el cargo del metodo elegido. */
   @Post('cargo')
-  crearCargo(@Req() req: AuthRequest, @Body() dto: CrearCargoDto) {
-    return this.cobrosService.datosPagoCuota(
+  crearCargo(@Req() req: AuthRequest, @Body() dto: CrearCargoMetodoDto) {
+    return this.cobrosService.crearCargoPorMetodo(
       dto.idCondominio,
       dto.idCuota,
+      dto.metodo,
       this.idMembresia(req, dto.idCondominio),
     );
   }
@@ -190,8 +201,14 @@ export class CobrosController {
   @Post('connect/cuenta')
   @UseGuards(RolesGuard)
   @Roles(Role.ADMINISTRADOR, Role.SUPERUSER)
-  crearCuentaConnect(@Query('idCondominio', ParseIntPipe) idCondominio: number) {
-    return this.connectService.crearOReutilizarCuenta(idCondominio);
+  crearCuentaConnect(
+    @Req() req: AuthRequest,
+    @Query('idCondominio', ParseIntPipe) idCondominio: number,
+  ) {
+    return this.connectService.crearOReutilizarCuenta(
+      idCondominio,
+      this.idMembresia(req, idCondominio),
+    );
   }
 
   /**
@@ -205,8 +222,14 @@ export class CobrosController {
   @Post('connect/enlace')
   @UseGuards(RolesGuard)
   @Roles(Role.ADMINISTRADOR, Role.SUPERUSER)
-  crearEnlaceConnect(@Query('idCondominio', ParseIntPipe) idCondominio: number) {
-    return this.connectService.crearEnlaceOnboarding(idCondominio);
+  crearEnlaceConnect(
+    @Req() req: AuthRequest,
+    @Query('idCondominio', ParseIntPipe) idCondominio: number,
+  ) {
+    return this.connectService.crearEnlaceOnboarding(
+      idCondominio,
+      this.idMembresia(req, idCondominio),
+    );
   }
 
   /**
@@ -218,8 +241,62 @@ export class CobrosController {
   @Post('connect/sesion')
   @UseGuards(RolesGuard)
   @Roles(Role.ADMINISTRADOR, Role.SUPERUSER)
-  crearSesionConnect(@Query('idCondominio', ParseIntPipe) idCondominio: number) {
-    return this.connectService.crearSesionOnboarding(idCondominio);
+  crearSesionConnect(
+    @Req() req: AuthRequest,
+    @Query('idCondominio', ParseIntPipe) idCondominio: number,
+  ) {
+    return this.connectService.crearSesionOnboarding(
+      idCondominio,
+      this.idMembresia(req, idCondominio),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Administradores como propietarios de la cuenta
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Administrador: administradores activos y su Person en Stripe.
+   *
+   * La cuenta pertenece al condominio. Este listado dice quién ya está como
+   * propietario y quién quedó pendiente, además de las Personas huérfanas
+   * (administradores degradados o dados de baja).
+   */
+  @Get('connect/administradores')
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMINISTRADOR, Role.SUPERUSER)
+  administradoresConnect(@Query('idCondominio', ParseIntPipe) idCondominio: number) {
+    return this.connectService.listarAdministradores(idCondominio);
+  }
+
+  /** Administrador: crea o adopta la Person de cada administrador activo. */
+  @Post('connect/administradores/sincronizar')
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMINISTRADOR, Role.SUPERUSER)
+  sincronizarAdministradoresConnect(
+    @Req() req: AuthRequest,
+    @Query('idCondominio', ParseIntPipe) idCondominio: number,
+  ) {
+    return this.connectService.sincronizarAdministradores(
+      idCondominio,
+      this.idMembresia(req, idCondominio),
+    );
+  }
+
+  /**
+   * Administrador: quita una Person de la cuenta.
+   *
+   * Se confirma explícitamente porque Stripe puede rechazarlo si es el último
+   * representante: en ese caso el motivo se devuelve en lugar de un 500.
+   */
+  @Delete('connect/administradores/:idPersonaStripe')
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMINISTRADOR, Role.SUPERUSER)
+  quitarAdministradorConnect(
+    @Query('idCondominio', ParseIntPipe) idCondominio: number,
+    @Param('idPersonaStripe') idPersonaStripe: string,
+  ) {
+    return this.connectService.quitarAdministrador(idCondominio, idPersonaStripe);
   }
 
   // ---------------------------------------------------------------------------

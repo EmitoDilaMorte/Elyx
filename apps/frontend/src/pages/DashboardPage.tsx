@@ -44,7 +44,11 @@ type DashboardPageProps = {
   cobranzaTotal: number;
   panelReminders: string[];
   saldoActual: number;
-  balanceMensual: number;
+  /** Saldo del condominio: cobrado - gastos - comisiones de Stripe. */
+  saldoCondominio: number;
+  cobradoCondominio: number;
+  gastadoCondominio: number;
+  comisionesCondominio: number;
   pagosPendientesAdminCount: number;
   avisosRecientes: AppData['avisos'];
   votacionesActivas: AppData['votacionesActivas'];
@@ -268,7 +272,10 @@ export function DashboardPage({
   cobranzaTotal,
   panelReminders,
   saldoActual,
-  balanceMensual,
+  saldoCondominio,
+  cobradoCondominio,
+  gastadoCondominio,
+  comisionesCondominio,
   pagosPendientesAdminCount,
   avisosRecientes,
   votacionesActivas,
@@ -398,24 +405,46 @@ export function DashboardPage({
     };
   }, [role, sessionUser, activeCondominioId]);
 
-  const quickViewButtons =
+  // Membresia activa del usuario en el condominio seleccionado. Se calcula
+  // antes de los accesos rapidos porque de ella depende si el administrador
+  // tambien es residente y puede ver "Mis pagos".
+  const idUsuarioCondominioActivo =
+    sessionUser?.membresias.find(
+      (item) => item.idCondominio === activeCondominioId && item.estado === 'ACTIVO',
+    )?.idUsuarioCondominio ?? null;
+
+  /**
+   * El administrador tambien vive en el condominio cuando su membresia activa
+   * aparece como ocupante de una unidad. Es lo que habilita "Mis pagos" y
+   * "Reportar falla": sin ocupacion no tiene cuotas propias.
+   */
+  const esResidente = Boolean(
+    idUsuarioCondominioActivo &&
+      unidadesConOcupantes.some(
+        (unidad) => unidad.ocupante?.idUsuarioCondominio === idUsuarioCondominioActivo,
+      ),
+  );
+
+  const quickViewButtons: Array<{ key: ViewKey; label: string }> =
     role === 'condomino'
-      ? ([
-          { key: 'pagos' as ViewKey, label: 'Pagos' },
-          { key: 'perfil' as ViewKey, label: 'Datos personales' },
-          { key: 'avisos' as ViewKey, label: 'Avisos' },
-          { key: 'votaciones' as ViewKey, label: 'Votaciones' },
-          { key: 'mantenimiento' as ViewKey, label: 'Mantenimiento' },
-          { key: 'reportes' as ViewKey, label: 'Reportes' },
-        ] as const)
-      : ([
-          { key: 'validaciones' as ViewKey, label: 'Validaciones' },
-          { key: 'perfil' as ViewKey, label: 'Datos personales' },
-          { key: 'solicitudes' as ViewKey, label: 'Altas, bajas y cambios' },
-          { key: 'avisos' as ViewKey, label: 'Avisos' },
-          { key: 'votaciones' as ViewKey, label: 'Votaciones' },
-          { key: 'finanzas' as ViewKey, label: 'Reportes' },
-        ] as const);
+      ? [
+          { key: 'pagos', label: 'Pagos' },
+          { key: 'perfil', label: 'Datos personales' },
+          { key: 'avisos', label: 'Avisos' },
+          { key: 'votaciones', label: 'Votaciones' },
+          { key: 'mantenimiento', label: 'Mantenimiento' },
+          { key: 'reportes', label: 'Reportes' },
+        ]
+      : [
+          { key: 'validaciones', label: 'Validaciones' },
+          ...(esResidente ? [{ key: 'pagos' as ViewKey, label: 'Mis pagos' }] : []),
+          { key: 'perfil', label: 'Datos personales' },
+          { key: 'solicitudes', label: 'Altas, bajas y cambios' },
+          { key: 'avisos', label: 'Avisos' },
+          { key: 'votaciones', label: 'Votaciones' },
+          { key: 'mantenimiento', label: 'Mantenimiento' },
+          { key: 'finanzas', label: 'Gastos y reportes' },
+        ];
 
   const solicitudTipoLabel = (tipo: string) => {
     if (tipo === 'BAJA_CONDOMINO') {
@@ -470,13 +499,6 @@ export function DashboardPage({
       condominoNameByMembership[mem.idUsuarioCondominio] = user.nombre;
     }
   }
-
-  // Membresia activa del usuario en el condominio seleccionado (limita el
-  // listado de cuotas del condomino a sus propias unidades).
-  const idUsuarioCondominioActivo =
-    sessionUser?.membresias.find(
-      (item) => item.idCondominio === activeCondominioId && item.estado === 'ACTIVO',
-    )?.idUsuarioCondominio ?? null;
 
   // El derecho a voto viene de ocupar una unidad, no del rol: el backend lo
   // resuelve y aqui solo se refleja para no ofrecer un boton que fallara.
@@ -551,12 +573,13 @@ export function DashboardPage({
       .join(' | ');
   };
 
-  const membresiasActivas = (sessionUser?.membresias ?? []).filter((item) => item.estado === 'ACTIVO');
-
+  // Solo los reportes de la membresia ACTIVA: antes se sumaban los de todas
+  // las membresias del usuario, asi que un admin que vive en dos condominios
+  // veia fallas del otro.
   const misReportesMantenimiento =
-    role === 'condomino'
-      ? appData.mantenimientos.filter((item) =>
-          membresiasActivas.some((membresia) => membresia.idUsuarioCondominio === item.idUsuarioCondominioReporta),
+    role === 'condomino' || esResidente
+      ? appData.mantenimientos.filter(
+          (item) => item.idUsuarioCondominioReporta === idUsuarioCondominioActivo,
         )
       : [];
 
@@ -609,6 +632,7 @@ export function DashboardPage({
             <h3>{role === 'condomino' ? 'Panel de Condominio' : 'Panel de Administrador'}</h3>
             <CondominioSwitcher
               condominios={condominiosDisponibles}
+              membresias={sessionUser?.membresias ?? []}
               activeCondominioId={activeCondominioId}
               onChange={onChangeCondominio}
             />
@@ -781,7 +805,9 @@ export function DashboardPage({
             </section>
           )}
 
-          {role === 'condomino' && activeView === 'pagos' && (
+          {/* El guard de rutas ya limita "pagos" a condominos y a administradores
+              residentes; aqui solo se renderiza la vista. */}
+          {activeView === 'pagos' && (
             <PagosListaCondomino
               idCondominio={activeCondominioId}
               idUsuarioCondominio={idUsuarioCondominioActivo}
@@ -803,6 +829,7 @@ export function DashboardPage({
               nombrePorMembresia={condominoNameByMembership}
               evidenciasPorPago={evidenciasPorPago}
               formatShortDate={formatShortDate}
+              refrescoPagos={refrescoPagos}
               onAprobarPago={onAprobarPago}
               onRechazarPago={onRechazarPago}
               onGenerarReciboPago={onGenerarReciboPago}
@@ -1427,10 +1454,11 @@ export function DashboardPage({
           )}
 
           {activeView === 'mantenimiento' && (
-            <section className="panel animate-in">
-              <h4>{role === 'condomino' ? 'Reportar falla' : 'Seguimiento de mantenimiento'}</h4>
-              {role === 'condomino' ? (
-                <div className="mantenimiento-condomino-grid">
+            <>
+              {(role === 'condomino' || esResidente) && (
+                <section className="panel animate-in">
+                  <h4>Reportar falla</h4>
+                  <div className="mantenimiento-condomino-grid">
                   <article className="panel-subsection">
                     <h5>Redactar incidencia</h5>
                     <label className="field-label" htmlFor="falla-descripcion">
@@ -1577,7 +1605,12 @@ export function DashboardPage({
                     </div>
                   </article>
                 </div>
-              ) : (
+                </section>
+              )}
+
+              {role !== 'condomino' && (
+                <section className="panel animate-in">
+                  <h4>Seguimiento de mantenimiento</h4>
                 <div className="payment-list">
                   {appData.mantenimientos.map((reporte) => {
                     const fotos = fotosPorReporte[reporte.id] ?? [];
@@ -1686,8 +1719,9 @@ export function DashboardPage({
                     );
                   })}
                 </div>
+                </section>
               )}
-            </section>
+            </>
           )}
 
           {role === 'condomino' && activeView === 'reportes' && (
@@ -2167,20 +2201,25 @@ export function DashboardPage({
               </article>
 
               <article className="panel animate-in stagger-1">
-                <h4>Gastos recientes</h4>
-                <ul className="clean-list">
-                  {gastosRecientes.map((gasto) => (
-                    <li key={gasto.id}>
-                      <div>
-                        <strong>{gasto.concepto}</strong>
-                        <p className="helper-text">{gasto.categoria}</p>
-                      </div>
-                      <small>${gasto.monto.toLocaleString('es-MX')}</small>
-                    </li>
-                  ))}
+                <h4>Saldo actual</h4>
+                <p className="big-number">${saldoCondominio.toLocaleString('es-MX')}</p>
+                <small className="muted-text">
+                  Cuotas cobradas menos gastos y comisiones de Stripe.
+                </small>
+                <ul className="datos-lista" style={{ marginTop: '0.6rem' }}>
+                  <li>
+                    <span>Cuotas cobradas</span>
+                    <strong>${cobradoCondominio.toLocaleString('es-MX')}</strong>
+                  </li>
+                  <li>
+                    <span>Gastos reportados</span>
+                    <strong>${gastadoCondominio.toLocaleString('es-MX')}</strong>
+                  </li>
+                  <li>
+                    <span>Comisiones de Stripe</span>
+                    <strong>${comisionesCondominio.toLocaleString('es-MX')}</strong>
+                  </li>
                 </ul>
-                <p className="big-number">${balanceMensual.toLocaleString('es-MX')}</p>
-                <small className="muted-text">Balance estimado del ultimo reporte</small>
                 <div className="btn-row" style={{ marginTop: '0.7rem' }}>
                   <button className="soft-btn" onClick={onGenerarReporteFinanzas}>
                     Generar reporte
@@ -2190,6 +2229,25 @@ export function DashboardPage({
                     Exportar Excel
                   </button>
                 </div>
+              </article>
+
+              <article className="panel animate-in stagger-2">
+                <h4>Gastos recientes</h4>
+                {gastosRecientes.length === 0 ? (
+                  <p className="empty-state">Aun no has registrado gastos.</p>
+                ) : (
+                  <ul className="clean-list">
+                    {gastosRecientes.map((gasto) => (
+                      <li key={gasto.id}>
+                        <div>
+                          <strong>{gasto.concepto}</strong>
+                          <p className="helper-text">{gasto.categoria}</p>
+                        </div>
+                        <small>${gasto.monto.toLocaleString('es-MX')}</small>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </article>
 
               {/* Depositos de Stripe. Con `dashboard: 'none'` el condominio no

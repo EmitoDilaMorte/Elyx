@@ -28,7 +28,14 @@ export type PagoPaginado = PagoRecord & {
   periodo: string;
   tipo: string;
   referencia: string | null;
+  /** Canal con el que entro el dinero: transferencia, tarjeta o manual. */
+  origen: OrigenPago;
 };
+
+/** Origen del pago tal como lo guarda `pagos.origen`. */
+export type OrigenPago = 'COMPROBANTE' | 'SPEI' | 'STRIPE';
+
+export const ORIGENES_PAGO: OrigenPago[] = ['SPEI', 'STRIPE', 'COMPROBANTE'];
 
 export type MetaPaginacion = {
   page: number;
@@ -44,6 +51,8 @@ export type OpcionesListadoPagos = {
   pageSize: number;
   q?: string;
   estado?: PagoEstado | null;
+  /** Canales a mostrar: `SPEI` (transferencia), `STRIPE` (tarjeta), `COMPROBANTE` (manual). */
+  origenes?: OrigenPago[] | null;
   orden?: string;
 };
 
@@ -87,8 +96,11 @@ export class PagosService {
         u.clave_unidad
       FROM pagos p
       INNER JOIN cuotas c ON c.id_cuota = p.id_cuota
-      LEFT JOIN unidades_ocupantes uo ON uo.id_usuario_condominio = p.id_usuario_condominio_paga AND (uo.fecha_fin IS NULL OR uo.fecha_fin >= CURRENT_DATE)
-      LEFT JOIN unidades u ON u.id_unidad = uo.id_unidad
+      -- La unidad del pago es la de su cuota (cuotas.id_unidad, NOT NULL).
+      -- Antes se derivaba del ocupante actual de id_usuario_condominio_paga,
+      -- pero esa columna es nullable (los cobros de Stripe no la llenan) y el
+      -- ocupante puede haberse mudado, lo que dejaba el pago sin unidad.
+      LEFT JOIN unidades u ON u.id_unidad = c.id_unidad
       WHERE c.id_condominio = $1${estadoClause}
       ORDER BY p.fecha_pago DESC
       `,
@@ -123,8 +135,17 @@ export class PagosService {
         : null;
     const claveOrden = String(opciones.orden ?? '');
     const orden = ORDENES[claveOrden] ? claveOrden : 'reciente';
+    const origenes = (opciones.origenes ?? []).filter((valor) =>
+      ORIGENES_PAGO.includes(valor),
+    );
 
-    const filtros = [opciones.idCondominio, idUsuarioCondominio, busqueda, estado];
+    const filtros = [
+      opciones.idCondominio,
+      idUsuarioCondominio,
+      busqueda,
+      estado,
+      origenes.length > 0 ? origenes : null,
+    ];
 
     const base = `
       WITH base AS (
@@ -138,16 +159,15 @@ export class PagosService {
           p.fecha_pago,
           p.estado,
           p.referencia,
+          COALESCE(p.origen, 'COMPROBANTE') AS origen,
           p.id_usuario_condominio_paga,
           p.id_usuario_condominio_admin,
           p.motivo_rechazo,
           u.clave_unidad
         FROM pagos p
         INNER JOIN cuotas c ON c.id_cuota = p.id_cuota
-        LEFT JOIN unidades_ocupantes uo
-          ON uo.id_usuario_condominio = p.id_usuario_condominio_paga
-         AND (uo.fecha_fin IS NULL OR uo.fecha_fin >= CURRENT_DATE)
-        LEFT JOIN unidades u ON u.id_unidad = uo.id_unidad
+        /* Unidad de la cuota: siempre existe, a diferencia del ocupante actual. */
+        LEFT JOIN unidades u ON u.id_unidad = c.id_unidad
         WHERE c.id_condominio = $1
           AND ($2::int IS NULL OR p.id_usuario_condominio_paga = $2)
           AND ($3::text IS NULL
@@ -162,7 +182,8 @@ export class PagosService {
       `${base}
        SELECT COUNT(*)::int AS total
        FROM base
-       WHERE ($4::text IS NULL OR estado = $4)`,
+       WHERE ($4::text IS NULL OR estado = $4)
+         AND ($5::text[] IS NULL OR origen = ANY($5))`,
       filtros,
     );
     const totalRows = this.normalizeQueryRows(totalRaw);
@@ -173,8 +194,9 @@ export class PagosService {
        SELECT *
        FROM base
        WHERE ($4::text IS NULL OR estado = $4)
+         AND ($5::text[] IS NULL OR origen = ANY($5))
        ORDER BY ${ORDENES[orden]}
-       LIMIT $5 OFFSET $6`,
+       LIMIT $6 OFFSET $7`,
       [...filtros, pageSize, (page - 1) * pageSize],
     );
     const rows = this.normalizeQueryRows(rowsRaw);
@@ -185,6 +207,7 @@ export class PagosService {
         periodo: row.periodo ? String(row.periodo) : '',
         tipo: row.tipo ? String(row.tipo) : 'Cuota de mantenimiento',
         referencia: row.referencia ? String(row.referencia) : null,
+        origen: (row.origen ? String(row.origen) : 'COMPROBANTE') as OrigenPago,
       })),
       meta: {
         page,
@@ -294,8 +317,7 @@ export class PagosService {
           u.clave_unidad
         FROM pagos p
         INNER JOIN cuotas c ON c.id_cuota = p.id_cuota
-        LEFT JOIN unidades_ocupantes uo ON uo.id_usuario_condominio = p.id_usuario_condominio_paga AND (uo.fecha_fin IS NULL OR uo.fecha_fin >= CURRENT_DATE)
-        LEFT JOIN unidades u ON u.id_unidad = uo.id_unidad
+        LEFT JOIN unidades u ON u.id_unidad = c.id_unidad
         WHERE p.id_pago = $1 AND c.id_condominio = $2
         LIMIT 1
         FOR UPDATE OF p
@@ -391,8 +413,7 @@ export class PagosService {
           u.clave_unidad
         FROM pagos p
         INNER JOIN cuotas c ON c.id_cuota = p.id_cuota
-        LEFT JOIN unidades_ocupantes uo ON uo.id_usuario_condominio = p.id_usuario_condominio_paga AND (uo.fecha_fin IS NULL OR uo.fecha_fin >= CURRENT_DATE)
-        LEFT JOIN unidades u ON u.id_unidad = uo.id_unidad
+        LEFT JOIN unidades u ON u.id_unidad = c.id_unidad
         WHERE p.id_pago = $1 AND c.id_condominio = $2
         LIMIT 1
         FOR UPDATE OF p
@@ -481,8 +502,7 @@ export class PagosService {
         u.clave_unidad
       FROM pagos p
       INNER JOIN cuotas c ON c.id_cuota = p.id_cuota
-      LEFT JOIN unidades_ocupantes uo ON uo.id_usuario_condominio = p.id_usuario_condominio_paga AND (uo.fecha_fin IS NULL OR uo.fecha_fin >= CURRENT_DATE)
-      LEFT JOIN unidades u ON u.id_unidad = uo.id_unidad
+      LEFT JOIN unidades u ON u.id_unidad = c.id_unidad
       WHERE p.id_cuota = $1 AND c.id_condominio = $2
       LIMIT 1
       `,

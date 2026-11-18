@@ -13,7 +13,18 @@ export type CuotaPaginada = {
   recargo: number;
   estado: CuotaStatus;
   claveUnidad: string | null;
+  /**
+   * Cargo en linea vigente. `null` si la cuota no tiene ningun cobro abierto.
+   *
+   * Con `SPEI` ya existe una referencia y la accion util es subir el
+   * comprobante; con `STRIPE` el checkout quedo a medias y lo que toca es
+   * terminarlo.
+   */
+  cargoMetodo: 'SPEI' | 'STRIPE' | null;
+  cargoReferencia: string | null;
 };
+
+export type OrigenPago = 'COMPROBANTE' | 'SPEI' | 'STRIPE';
 
 export type MetaPaginacion = {
   page: number;
@@ -29,6 +40,8 @@ export type PagoPaginado = {
   tipo: string;
   claveUnidad: string | null;
   referencia: string | null;
+  /** Canal con el que entro el dinero. */
+  origen: OrigenPago;
   monto: number;
   fechaPago: string;
   status: PagoStatus;
@@ -942,6 +955,8 @@ export const backendApi = {
     pageSize?: number;
     q?: string;
     estados?: string[];
+    /** Canales a mostrar (`SPEI`, `STRIPE`, `COMPROBANTE`). Vacio = todos. */
+    origenes?: OrigenPago[];
     orden?: string;
   }): Promise<{ items: PagoPaginado[]; meta: MetaPaginacion }> {
     const query = new URLSearchParams();
@@ -959,12 +974,24 @@ export const backendApi = {
         query.append('estado', estado);
       }
     }
+    for (const origen of params.origenes ?? []) {
+      if (origen) {
+        query.append('origen', origen);
+      }
+    }
     if (params.orden) {
       query.set('orden', params.orden);
     }
 
     const data = await requestJson<{
-      items: Array<BackendPago & { periodo: string; tipo: string; referencia: string | null }>;
+      items: Array<
+        BackendPago & {
+          periodo: string;
+          tipo: string;
+          referencia: string | null;
+          origen?: OrigenPago;
+        }
+      >;
       meta: MetaPaginacion;
     }>(`/pagos/paginado?${query.toString()}`);
 
@@ -976,6 +1003,7 @@ export const backendApi = {
         tipo: item.tipo ?? 'Cuota de mantenimiento',
         claveUnidad: item.claveUnidad,
         referencia: item.referencia ?? null,
+        origen: item.origen ?? 'COMPROBANTE',
         monto: item.monto,
         fechaPago: item.fechaPago,
         status: mapPagoStatus(item.estado),

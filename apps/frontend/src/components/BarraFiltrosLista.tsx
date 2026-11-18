@@ -15,9 +15,17 @@ type BarraFiltrosListaProps = {
   opcionesOrden: OpcionLista[];
   placeholderBusqueda: string;
   etiquetaOrden?: string;
+  /**
+   * Filtro opcional por canal de pago. Solo se muestra si se pasan opciones:
+   * los listados que no distinguen origen (cuotas del condomino) lo omiten.
+   */
+  origenes?: string[];
+  opcionesOrigen?: OpcionLista[];
+  etiquetaOrigen?: string;
   onBuscar: (valor: string) => void;
   onAlternarEstado: (valor: string, activo: boolean) => void;
   onCambiarOrden: (valor: string) => void;
+  onAlternarOrigen?: (valor: string, activo: boolean) => void;
 };
 
 /**
@@ -35,9 +43,13 @@ export function BarraFiltrosLista({
   opcionesOrden,
   placeholderBusqueda,
   etiquetaOrden = 'Ordenar',
+  origenes = [],
+  opcionesOrigen = [],
+  etiquetaOrigen = 'Origen',
   onBuscar,
   onAlternarEstado,
   onCambiarOrden,
+  onAlternarOrigen,
 }: BarraFiltrosListaProps) {
   const [busqueda, setBusqueda] = useState(q);
 
@@ -102,6 +114,32 @@ export function BarraFiltrosLista({
             {opcion.label}
           </label>
         ))}
+
+        {opcionesOrigen.length > 0 && (
+          <>
+            <span className="field-label" style={{ margin: 0, marginLeft: '0.6rem' }}>
+              {etiquetaOrigen}
+            </span>
+            {opcionesOrigen.map((opcion) => (
+              <label
+                key={opcion.value}
+                className="helper-text"
+                style={{ display: 'inline-flex', gap: '0.35rem', alignItems: 'center' }}
+              >
+                <input
+                  type="checkbox"
+                  name="origen"
+                  value={opcion.value}
+                  checked={origenes.includes(opcion.value)}
+                  onChange={(evento) =>
+                    onAlternarOrigen?.(opcion.value, evento.target.checked)
+                  }
+                />
+                {opcion.label}
+              </label>
+            ))}
+          </>
+        )}
 
         <label className="field-label" htmlFor={`${idPrefijo}-orden`} style={{ margin: 0, marginLeft: 'auto' }}>
           {etiquetaOrden}

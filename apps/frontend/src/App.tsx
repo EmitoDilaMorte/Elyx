@@ -429,7 +429,6 @@ function AppContent() {
   const [appData, setAppData] = useState<AppData>(() => seedData());
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [requiereCambio, setRequiereCambio] = useState(false);
-  const [role, setRole] = useState<RoleKey>('condomino');
   const [sessionUser, setSessionUser] = useState<DemoUser | null>(null);
   const [correo, setCorreo] = useState('');
   const [password, setPassword] = useState('');
@@ -532,31 +531,6 @@ function AppContent() {
     };
   }, []);
 
-  const navItems = role === 'condomino' ? navCondomino : navAdministrador;
-
-  // La URL no es un mecanismo de autorizacion, pero si de navegacion: una ruta
-  // desconocida o una vista que no existe para el rol vuelve al inicio.
-  useEffect(() => {
-    // Las paginas publicas (registro, invitacion) no dependen de la sesion.
-    if (esRutaPublica(location.pathname)) {
-      return;
-    }
-
-    const rutasValidas = Object.values(RUTA_POR_VISTA);
-    if (!rutasValidas.includes(location.pathname)) {
-      navigate(RUTA_POR_VISTA.inicio, { replace: true });
-      return;
-    }
-
-    if (!isAuthenticated) {
-      return;
-    }
-
-    if (!navItems.some((item) => item.key === activeView)) {
-      navigate(RUTA_POR_VISTA.inicio, { replace: true });
-    }
-  }, [location.pathname, isAuthenticated, activeView, navItems, navigate]);
-
   const memberships = useMemo(() => {
     if (!sessionUser) {
       return [] as UserMembership[];
@@ -600,6 +574,67 @@ function AppContent() {
 
     return memberships.find((item: UserMembership) => item.idCondominio === effectiveActiveCondominioId);
   }, [effectiveActiveCondominioId, memberships]);
+
+  /**
+   * Rol EFECTIVO del condominio activo.
+   *
+   * Antes era un estado global que se fijaba al iniciar sesion y no cambiaba
+   * al mover el selector: un administrador en el condominio A seguia viendo el
+   * panel de administrador en el condominio B, donde solo era condomino.
+   * Ahora se deriva de la membresia activa; el superusuario conserva el suyo.
+   */
+  const role: RoleKey = useMemo(() => {
+    if (sessionUser?.role === 'superusuario') {
+      return 'superusuario';
+    }
+    return activeMembership?.rol ?? 'condomino';
+  }, [activeMembership?.rol, sessionUser?.role]);
+
+  /**
+   * `true` si el administrador tambien ocupa una unidad en este condominio.
+   *
+   * "Mis pagos" y "Reportar falla" solo tienen sentido para quien vive ahi:
+   * un administrador externo no tiene cuotas propias que pagar.
+   */
+  const esAdminResidente = useMemo(() => {
+    if (role !== 'administrador' || !activeMembership) {
+      return false;
+    }
+    return unidadesConOcupantes.some(
+      (unidad) => unidad.ocupante?.idUsuarioCondominio === activeMembership.idUsuarioCondominio,
+    );
+  }, [activeMembership, role, unidadesConOcupantes]);
+
+  const navItems = useMemo(
+    () =>
+      role === 'condomino'
+        ? navCondomino
+        : navAdministrador.filter((item) => item.key !== 'pagos' || esAdminResidente),
+    [esAdminResidente, role],
+  );
+
+  // La URL no es un mecanismo de autorizacion, pero si de navegacion: una ruta
+  // desconocida o una vista que no existe para el rol vuelve al inicio.
+  useEffect(() => {
+    // Las paginas publicas (registro, invitacion) no dependen de la sesion.
+    if (esRutaPublica(location.pathname)) {
+      return;
+    }
+
+    const rutasValidas = Object.values(RUTA_POR_VISTA);
+    if (!rutasValidas.includes(location.pathname)) {
+      navigate(RUTA_POR_VISTA.inicio, { replace: true });
+      return;
+    }
+
+    if (!isAuthenticated) {
+      return;
+    }
+
+    if (!navItems.some((item) => item.key === activeView)) {
+      navigate(RUTA_POR_VISTA.inicio, { replace: true });
+    }
+  }, [location.pathname, isAuthenticated, activeView, navItems, navigate]);
 
   const condominioScope = useMemo(() => {
     if (!effectiveActiveCondominioId) {
@@ -761,15 +796,33 @@ function AppContent() {
     }, 0);
   }, [estadoCuenta, cuotasPendientes]);
 
-  const balanceMensual = useMemo(() => {
-    if (reportesScoped.length > 0) {
-      const ultimoReporte = reportesScoped[0];
-      return ultimoReporte.ingresos - ultimoReporte.gastos;
-    }
+  /**
+   * Saldo real del condominio: lo cobrado menos lo gastado y las comisiones
+   * que Stripe desconto de los depositos.
+   *
+   * Antes se mostraba `ingresos - gastos` del ULTIMO periodo dentro de la
+   * tarjeta "Gastos recientes": con cero gastos el numero era exactamente las
+   * cuotas cobradas y se leia como si fueran gastos. Ademas ignoraba el
+   * historial, asi que un gasto de un mes anterior no lo movia.
+   */
+  const finanzasCondominio = useMemo(() => {
+    const cobrado = pagosScoped.reduce(
+      (sum: number, pago: Pago) => (pago.status === 'APROBADO' ? sum + pago.monto : sum),
+      0,
+    );
+    const gastado = gastosScoped.reduce((sum: number, gasto: Gasto) => sum + gasto.monto, 0);
+    const comisiones = reportesScoped.reduce(
+      (sum: number, reporte: ReporteFinanciero) => sum + (reporte.comisiones ?? 0),
+      0,
+    );
 
-    const totalGastos = gastosScoped.reduce((sum: number, gasto: Gasto) => sum + gasto.monto, 0);
-    return -totalGastos;
-  }, [gastosScoped, reportesScoped]);
+    return {
+      cobrado,
+      gastado,
+      comisiones,
+      saldo: cobrado - gastado - comisiones,
+    };
+  }, [gastosScoped, pagosScoped, reportesScoped]);
 
   const periodosDisponibles = useMemo(
     () => Array.from(new Set(reportesScoped.map((item: ReporteFinanciero) => item.periodo))),
@@ -1405,7 +1458,17 @@ function AppContent() {
     persistActiveCondominio(sessionUser.correo, condominioId);
 
     const condominioName = appData.condominios.find((item: Condominio) => item.idCondominio === condominioId)?.nombre;
-    runAction('Cambiando condominio...', `Mostrando ${condominioName ?? 'condominio seleccionado'}`);
+    const rolDestino = sessionUser.membresias.find(
+      (item: UserMembership) => item.idCondominio === condominioId && item.estado === 'ACTIVO',
+    )?.rol;
+    const etiquetaRol =
+      rolDestino === 'administrador' ? 'Administrador' : rolDestino ? 'Condómino' : '';
+    runAction(
+      'Cambiando condominio...',
+      `Mostrando ${condominioName ?? 'condominio seleccionado'}${
+        etiquetaRol ? ` (${etiquetaRol})` : ''
+      }`,
+    );
   };
 
   const aplicarSesion = (response: BackendLoginResponse): boolean => {
@@ -1459,7 +1522,6 @@ function AppContent() {
       0;
 
     window.setTimeout(() => {
-      setRole(matchedUser.role);
       setSessionUser(matchedUser);
       setPerfil({
         correo: matchedUser.correo,
@@ -1648,6 +1710,11 @@ function AppContent() {
         ),
       }));
 
+      // El listado de cuotas se pagina en el servidor y no lee `appData`:
+      // sin este incremento la tarjeta seguia diciendo "Pendiente" y el boton
+      // se podia volver a pulsar hasta cambiar de vista.
+      setRefrescoPagos((valor) => valor + 1);
+
       runAction('Registrando pago...', 'Pago enviado para validacion');
     } catch (error) {
       console.error(error);
@@ -1676,22 +1743,48 @@ function AppContent() {
   };
 
   const subirComprobante = async (cuotaId: number, file: File) => {
-    if (!effectiveActiveCondominioId) {
+    if (!effectiveActiveCondominioId || !activeMembership) {
       return;
     }
 
-    const pago = pagosScoped.find((item: Pago) => item.cuotaId === cuotaId && item.status !== 'RECHAZADO');
-    if (!pago) {
-      setFeedback('Primero registra el pago para poder subir comprobante');
+    if (file.size > 5 * 1024 * 1024) {
+      setFeedback('El comprobante supera el limite de 5 MB');
       window.setTimeout(() => setFeedback(null), 2200);
       return;
     }
 
     try {
-      if (file.size > 5 * 1024 * 1024) {
-        setFeedback('El comprobante supera el limite de 5 MB');
-        window.setTimeout(() => setFeedback(null), 2200);
-        return;
+      /*
+       * Un comprobante siempre cuelga de un pago (`evidencias_pago.id_pago` es
+       * FK obligatoria). Antes habia que pulsar "Registrar pago" primero, lo
+       * que dejaba el boton inutil tras pagar por SPEI en linea.
+       *
+       * Ahora el comprobante ES la declaracion de pago: si no existe, se crea
+       * el pago CAPTURADO aqui mismo y la cuota pasa a "En validacion".
+       */
+      let pago = pagosScoped.find(
+        (item: Pago) => item.cuotaId === cuotaId && item.status !== 'RECHAZADO',
+      );
+
+      if (!pago) {
+        const creado = await backendApi.capturarPago({
+          idCondominio: effectiveActiveCondominioId,
+          idCuota: cuotaId,
+          idUsuarioCondominioPaga: activeMembership.idUsuarioCondominio,
+        });
+
+        patchAppData((prev) => ({
+          ...prev,
+          pagos: [creado, ...prev.pagos],
+          cuotas: prev.cuotas.map((item: Cuota) =>
+            item.id === cuotaId && item.idCondominio === effectiveActiveCondominioId
+              ? { ...item, status: 'EN_VALIDACION' as CuotaStatus }
+              : item,
+          ),
+        }));
+
+        pago = creado;
+        setRefrescoPagos((valor) => valor + 1);
       }
 
       const evidencia = await backendApi.createEvidenciaPago({
@@ -1709,8 +1802,8 @@ function AppContent() {
       runAction('Subiendo comprobante...', 'Comprobante cargado correctamente');
     } catch (error) {
       console.error(error);
-      setFeedback('No se pudo subir el comprobante al backend');
-      window.setTimeout(() => setFeedback(null), 2200);
+      setFeedback(extractApiErrorMessage(error));
+      window.setTimeout(() => setFeedback(null), 2600);
     }
   };
 
@@ -1858,6 +1951,8 @@ function AppContent() {
         ),
       }));
 
+      setRefrescoPagos((valor) => valor + 1);
+
       runAction('Validando pago...', 'Pago validado con exito');
     } catch (error) {
       console.error(error);
@@ -1886,6 +1981,8 @@ function AppContent() {
           item.id === pagoActualizado.cuotaId ? { ...item, status: 'PENDIENTE' as CuotaStatus } : item,
         ),
       }));
+
+      setRefrescoPagos((valor) => valor + 1);
 
       runAction('Actualizando estado...', 'Pago rechazado y notificado');
     } catch (error) {
@@ -2120,6 +2217,14 @@ function AppContent() {
         if (renovada) {
           aplicarSesion(renovada);
         }
+
+        // Stripe debe reflejar quién sigue siendo administrador. Es
+        // best-effort: si Stripe pide más datos o quien cerró la votación ya
+        // no es admin, el panel de cobro lo muestra y la votación no se
+        // revierte por un fallo de sincronización.
+        void cobrosApi
+          .sincronizarAdministradoresStripe(effectiveActiveCondominioId)
+          .catch(() => null);
 
         const resultado = cerrada.cambioRol;
         if (resultado) {
@@ -2621,9 +2726,6 @@ function AppContent() {
       setPerfil((prev) => ({ ...prev, passwordActual: '', passwordNueva: '' }));
       setRequiereCambio(false);
       setCambioFeedback(null);
-
-      const loadedRole = sessionUser?.role ?? 'condomino';
-      setRole(loadedRole);
 
       const activeMembresias = sessionUser?.membresias?.filter(
         (item: UserMembership) => item.estado === 'ACTIVO',
@@ -3399,7 +3501,10 @@ function AppContent() {
       cobranzaTotal={cobranzaResumen.total}
       panelReminders={panelReminders}
       saldoActual={saldoActual}
-      balanceMensual={balanceMensual}
+      saldoCondominio={finanzasCondominio.saldo}
+      cobradoCondominio={finanzasCondominio.cobrado}
+      gastadoCondominio={finanzasCondominio.gastado}
+      comisionesCondominio={finanzasCondominio.comisiones}
       pagosPendientesAdminCount={pagosPendientesAdmin.length}
       avisosRecientes={avisosScoped}
       votacionesActivas={votacionesScoped}
@@ -3514,7 +3619,13 @@ function AppContent() {
           setFeedback('Pago confirmado: tu cuota ya esta pagada.');
           window.setTimeout(() => setFeedback(null), 4000);
         }}
-        onCerrar={() => setPagoCuota(null)}
+        onCerrar={() => {
+          setPagoCuota(null);
+          // Al cerrar se refresca el listado: si el condomino genero una
+          // referencia SPEI, la tarjeta debe cambiar sus botones (comprobante
+          // y recibo en lugar de "Registrar pago") sin recargar la pagina.
+          setRefrescoPagos((valor) => valor + 1);
+        }}
       />
     )}
     </>

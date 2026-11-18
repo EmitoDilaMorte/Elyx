@@ -813,7 +813,18 @@ export class CobrosStripeService {
     }
   }
 
-  /** Crea el pago VALIDADO y marca la cuota. Igual que la confirmacion SPEI. */
+  /**
+   * Crea el pago VALIDADO y marca la cuota. Igual que la confirmacion SPEI.
+   *
+   * **`pagos.id_cuota` es UNIQUE**: una cuota solo tiene una fila de pago. Si el
+   * condomino habia registrado un pago con el flujo viejo y el admin lo
+   * rechazo, esa fila sigue ahi. Un `ON CONFLICT DO NOTHING` dejaba la cuota
+   * PAGADA (el condomino la veia pagada) pero la fila RECHAZADA intacta, asi
+   * que el administrador seguia viendo el pago rechazado.
+   *
+   * Por eso el conflicto RESUELVE la fila existente cuando estaba pendiente o
+   * rechazada. Si ya estuviera VALIDADA no se toca: el webhook es idempotente.
+   */
   private async registrarPago(
     idCondominio: number,
     idCuota: number,
@@ -830,8 +841,41 @@ export class CobrosStripeService {
           monto, fecha_pago, estado, referencia, origen, id_cuota,
           id_usuario_condominio_paga, id_usuario_condominio_admin, id_cargo
         )
-        VALUES ($1, NOW(), 'VALIDADO', $2, 'STRIPE', $3, NULL, $4, $5)
-        ON CONFLICT (id_cuota) DO NOTHING
+        SELECT
+          $1, NOW(), 'VALIDADO', $2, 'STRIPE', $3,
+          -- Quien paga es el ocupante vigente de la unidad de la cuota. Antes
+          -- se guardaba NULL y, como "Mis pagos" filtra por esta columna, el
+          -- condomino no veia los cargos hechos con tarjeta.
+          (
+            SELECT uo.id_usuario_condominio
+            FROM cuotas c
+            INNER JOIN unidades_ocupantes uo ON uo.id_unidad = c.id_unidad
+            WHERE c.id_cuota = $3
+              AND (uo.fecha_fin IS NULL OR uo.fecha_fin >= CURRENT_DATE)
+            ORDER BY
+              CASE uo.tipo_ocupacion
+                WHEN 'PROPIETARIO' THEN 0
+                WHEN 'INQUILINO' THEN 1
+                ELSE 2
+              END,
+              uo.fecha_inicio DESC
+            LIMIT 1
+          ),
+          $4, $5
+        ON CONFLICT (id_cuota) DO UPDATE SET
+          monto = EXCLUDED.monto,
+          fecha_pago = EXCLUDED.fecha_pago,
+          estado = 'VALIDADO',
+          referencia = EXCLUDED.referencia,
+          origen = EXCLUDED.origen,
+          motivo_rechazo = NULL,
+          id_usuario_condominio_paga = COALESCE(
+            EXCLUDED.id_usuario_condominio_paga,
+            pagos.id_usuario_condominio_paga
+          ),
+          id_usuario_condominio_admin = EXCLUDED.id_usuario_condominio_admin,
+          id_cargo = EXCLUDED.id_cargo
+        WHERE pagos.estado IN ('RECHAZADO', 'CAPTURADO')
         `,
         [monto, sessionId, idCuota, idUsuario, idCargo],
       );

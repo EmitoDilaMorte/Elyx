@@ -183,7 +183,10 @@ export class CondominosService {
           WHERE uo.id_unidad = u.id_unidad
             AND (uo.fecha_fin IS NULL OR uo.fecha_fin >= CURRENT_DATE)
         )
-      ORDER BY u.clave_unidad ASC
+      ORDER BY
+        substring(u.clave_unidad from '^[^0-9]*') ASC,
+        NULLIF(substring(u.clave_unidad from '[0-9]+'), '')::int ASC NULLS LAST,
+        u.clave_unidad ASC
       `,
       [idCondominio],
     );
@@ -214,7 +217,10 @@ export class CondominosService {
       LEFT JOIN usuarios_condominios uc ON uc.id_usuario_condominio = uo.id_usuario_condominio
       LEFT JOIN usuarios us ON us.id_usuario = uc.id_usuario
       WHERE u.id_condominio = $1
-      ORDER BY u.clave_unidad ASC
+      ORDER BY
+        substring(u.clave_unidad from '^[^0-9]*') ASC,
+        NULLIF(substring(u.clave_unidad from '[0-9]+'), '')::int ASC NULLS LAST,
+        u.clave_unidad ASC
       `,
       [idCondominio],
     );
