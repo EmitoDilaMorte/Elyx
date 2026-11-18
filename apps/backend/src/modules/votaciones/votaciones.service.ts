@@ -10,6 +10,7 @@ import { DataSource } from 'typeorm';
 import { VotacionesGateway } from './votaciones.gateway';
 import { AvisosGateway } from '../avisos/avisos.gateway';
 import { MembresiasService, UltimoAdministradorException } from '../membresias/membresias.service';
+import { NotificacionesService } from '../notificaciones/notificaciones.service';
 
 type VotacionTipo = 'GENERAL' | 'CAMBIO_CUOTA' | 'CAMBIO_ROL';
 type EstadoCambioCuota = 'PENDIENTE' | 'APROBADA' | 'RECHAZADA' | 'EJECUTADA';
@@ -64,6 +65,7 @@ export class VotacionesService implements OnModuleInit {
     private readonly votacionesGateway: VotacionesGateway,
     private readonly avisosGateway: AvisosGateway,
     private readonly membresias: MembresiasService,
+    private readonly notificaciones: NotificacionesService,
   ) {}
 
   async onModuleInit() {
@@ -258,22 +260,16 @@ export class VotacionesService implements OnModuleInit {
         [idVotacion, input.idUsuarioCondominioObjetivo, input.rolPropuesto, input.motivo.trim()],
       );
 
-      for (const habilitado of habilitados) {
-        await manager.query(
-          `
-          INSERT INTO notificaciones (
-            tipo, canal, asunto, mensaje, fecha_programada, fecha_envio, estado,
-            id_usuario_condominio, id_config
-          )
-          VALUES ('VOTACION_ROL_CREADA', 'INTERNA', $1, $2, NOW(), NOW(), 'ENVIADA', $3, NULL)
-          `,
-          [
-            'Votacion de rol abierta',
-            `${pregunta} Se requieren ${votosRequeridos} de ${totalHabilitados} votos a favor.`,
-            habilitado.idUsuarioCondominio,
-          ],
-        );
-      }
+      await this.notificaciones.crearParaUsuarios(
+        input.idCondominio,
+        habilitados.map((habilitado) => habilitado.idUsuarioCondominio),
+        {
+          tipo: 'VOTACION_ROL_CREADA',
+          asunto: 'Votacion de rol abierta',
+          mensaje: `${pregunta} Se requieren ${votosRequeridos} de ${totalHabilitados} votos a favor.`,
+        },
+        manager,
+      );
 
       // El resumen se arma FUERA de la transaccion: `getResumenByVotacion` usa
       // otra conexion del pool y no veria la fila sin confirmar.
@@ -1048,18 +1044,11 @@ export class VotacionesService implements OnModuleInit {
             comentario ?? ''
           }`;
 
-    await this.dataSource.query(
-      `
-      INSERT INTO notificaciones (
-        tipo, canal, asunto, mensaje, fecha_programada, fecha_envio, estado,
-        id_usuario_condominio, id_config
-      )
-      SELECT $1, 'INTERNA', $2, $3, NOW(), NOW(), 'ENVIADA', uc.id_usuario_condominio, NULL
-      FROM usuarios_condominios uc
-      WHERE uc.id_condominio = $4 AND uc.estado = 'ACTIVO' AND uc.rol = 'ADMINISTRADOR'
-      `,
-      ['VOTACION_ROL_RESUELTA', 'Resultado de la votacion de rol', mensaje.trim(), idCondominio],
-    );
+    await this.notificaciones.crearParaAdmins(idCondominio, {
+      tipo: 'VOTACION_ROL_RESUELTA',
+      asunto: 'Resultado de la votacion de rol',
+      mensaje: mensaje.trim(),
+    });
   }
 
   private async ensureCambioCuotaTable() {

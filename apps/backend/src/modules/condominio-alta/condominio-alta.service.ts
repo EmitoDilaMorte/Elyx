@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
-import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
+import { NotificacionesService } from '../notificaciones/notificaciones.service';
 
 /** Minimal surface de EntityManager que necesita este servicio. */
 export type QueryManager = {
@@ -53,7 +53,7 @@ export type NuevoCondominio = {
  */
 @Injectable()
 export class CondominioAltaService {
-  constructor(private readonly notificacionesGateway: NotificacionesGateway) {}
+  constructor(private readonly notificaciones: NotificacionesService) {}
 
   async crearCondominio(manager: QueryManager, input: NuevoCondominio): Promise<number> {
     const rows = await manager.query(
@@ -364,7 +364,7 @@ export class CondominioAltaService {
     return createdCount;
   }
 
-  /** Inserta la notificacion interna y avisa por websocket. */
+  /** Crea la notificacion y encola las entregas por correo y push. */
   async notificarAlta(
     manager: QueryManager,
     input: {
@@ -377,29 +377,15 @@ export class CondominioAltaService {
   ): Promise<void> {
     const tipo = input.tipo ?? 'ALTA_INICIAL_USUARIO';
 
-    await manager.query(
-      `
-      INSERT INTO notificaciones (
+    await this.notificaciones.crearEnTransaccion(manager, [
+      {
+        idCondominio: input.idCondominio,
+        idUsuarioCondominio: input.idUsuarioCondominio,
         tipo,
-        canal,
-        asunto,
-        mensaje,
-        fecha_programada,
-        fecha_envio,
-        estado,
-        id_usuario_condominio,
-        id_config
-      )
-      VALUES ($1, 'INTERNA', $2, $3, NOW(), NOW(), 'ENVIADA', $4, NULL)
-      `,
-      [tipo, input.asunto, input.mensaje, input.idUsuarioCondominio],
-    );
-
-    this.notificacionesGateway.emitNotificacionChanged(
-      input.idCondominio,
-      input.idUsuarioCondominio,
-      { tipo },
-    );
+        asunto: input.asunto,
+        mensaje: input.mensaje,
+      },
+    ]);
   }
 
   buildFechaLimite(periodoAplicacionInicial: string, diaLimitePago: number): Date {

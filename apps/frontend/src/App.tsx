@@ -19,6 +19,7 @@ import { VerificarCorreoPage } from './pages/public/VerificarCorreoPage';
 import { backendApi, esDesafioMfa, getApiHostUrl, type BackendLoginResponse, type ElectoradoMiembro, type LoginOutcome, type LoginPayload } from './services/backendApi.service';
 import { cobrosApi } from './services/cobros.service';
 import { iniciarTelemetria } from './services/behavior.service';
+import { pushService, type EstadoPush } from './services/push.service';
 import {
   closeVotacionInCondominio,
   getCobranzaProgreso,
@@ -215,15 +216,18 @@ type ConfigNotificacionesState = {
   diasDespues: number;
   usarEmail: boolean;
   usarInterna: boolean;
+  usarPush: boolean;
   activo: boolean;
 };
 
 type NotificacionItem = {
   idNotificacion: number;
   asunto: string;
+  mensaje: string;
   canal: string;
   estado: string;
   fechaProgramada: string;
+  canales: string[];
 };
 
 type OnboardingFormState = {
@@ -350,6 +354,7 @@ const DEFAULT_CONFIG_NOTIFICACIONES: ConfigNotificacionesState = {
   diasDespues: 2,
   usarEmail: true,
   usarInterna: true,
+  usarPush: true,
   activo: true,
 };
 
@@ -459,6 +464,10 @@ function AppContent() {
   const [configNotificaciones, setConfigNotificaciones] =
     useState<ConfigNotificacionesState>(DEFAULT_CONFIG_NOTIFICACIONES);
   const [notificacionesRecientes, setNotificacionesRecientes] = useState<NotificacionItem[]>([]);
+  const [notificacionesNoLeidas, setNotificacionesNoLeidas] = useState(0);
+  const [pushEstado, setPushEstado] = useState<EstadoPush>('inactivo');
+  const [pushMensaje, setPushMensaje] = useState<string | null>(null);
+  const [pushOcupado, setPushOcupado] = useState(false);
   const [onboardingForm, setOnboardingForm] = useState<OnboardingFormState>(DEFAULT_ONBOARDING_FORM);
   const [superOnboarding, setSuperOnboarding] = useState<SuperOnboardingState>(DEFAULT_SUPER_ONBOARDING);
   const [superOnboardingResult, setSuperOnboardingResult] = useState<SuperOnboardingResult | null>(null);
@@ -1142,18 +1151,16 @@ function AppContent() {
     }
 
     let cancelled = false;
-    const syncConfigYNotificaciones = async () => {
+
+    // La configuracion y la bandeja se cargan por separado: antes iban en un
+    // `Promise.all` y un 404 de configuracion (usuario sin fila) dejaba la
+    // bandeja vacia aunque tuviera notificaciones.
+    const cargarConfig = async () => {
       try {
-        const [config, notificaciones] = await Promise.all([
-          backendApi.getConfigNotificaciones({
-            idCondominio: effectiveActiveCondominioId,
-            idUsuarioCondominio: activeMembership.idUsuarioCondominio,
-          }),
-          backendApi.listNotificaciones({
-            idCondominio: effectiveActiveCondominioId,
-            idUsuarioCondominio: activeMembership.idUsuarioCondominio,
-          }),
-        ]);
+        const config = await backendApi.getConfigNotificaciones({
+          idCondominio: effectiveActiveCondominioId,
+          idUsuarioCondominio: activeMembership.idUsuarioCondominio,
+        });
 
         if (cancelled) {
           return;
@@ -1164,34 +1171,82 @@ function AppContent() {
           diasDespues: config.diasDespues,
           usarEmail: config.usarEmail,
           usarInterna: config.usarInterna,
+          usarPush: config.usarPush ?? true,
           activo: config.activo,
         });
-
-        setNotificacionesRecientes(
-          notificaciones.slice(0, 6).map((item) => ({
-            idNotificacion: item.idNotificacion,
-            asunto: item.asunto,
-            canal: item.canal,
-            estado: item.estado,
-            fechaProgramada: item.fechaProgramada,
-          })),
-        );
       } catch (error) {
         const message = extractApiErrorMessage(error).toLowerCase();
         if (message.includes('no se encontro configuracion')) {
-          setConfigNotificaciones(DEFAULT_CONFIG_NOTIFICACIONES);
+          if (!cancelled) {
+            setConfigNotificaciones(DEFAULT_CONFIG_NOTIFICACIONES);
+          }
           return;
         }
-        console.error('No se pudo sincronizar preferencias/notificaciones:', error);
+        console.error('No se pudo cargar la configuracion de notificaciones:', error);
       }
     };
 
-    void syncConfigYNotificaciones();
+    const cargarResumen = async () => {
+      try {
+        const resumen = await backendApi.notificacionesResumen(effectiveActiveCondominioId);
+
+        if (cancelled) {
+          return;
+        }
+
+        setNotificacionesNoLeidas(resumen.noLeidas);
+        setNotificacionesRecientes(
+          resumen.items.map((item) => ({
+            idNotificacion: item.idNotificacion,
+            asunto: item.asunto,
+            mensaje: item.mensaje,
+            canal: item.canal,
+            estado: item.estado,
+            fechaProgramada: item.fechaProgramada,
+            canales: item.canales ?? [],
+          })),
+        );
+      } catch (error) {
+        console.error('No se pudo cargar el resumen de notificaciones:', error);
+      }
+    };
+
+    void cargarConfig();
+    void cargarResumen();
 
     return () => {
       cancelled = true;
     };
   }, [activeMembership, effectiveActiveCondominioId, isAuthenticated]);
+
+  /**
+   * Estado de las notificaciones del navegador.
+   *
+   * `sincronizar()` vuelve a registrar la suscripcion existente: si el usuario
+   * entro con otra cuenta en el mismo equipo, el endpoint debe apuntar a la
+   * cuenta actual. No pide permisos ni muestra nada.
+   */
+  useEffect(() => {
+    if (!isAuthenticated || !effectiveActiveCondominioId) {
+      return;
+    }
+
+    let cancelado = false;
+
+    const revisarPush = async () => {
+      await pushService.sincronizar(effectiveActiveCondominioId);
+      const estadoActual = await pushService.estado();
+      if (!cancelado) {
+        setPushEstado(estadoActual);
+      }
+    };
+
+    void revisarPush();
+
+    return () => {
+      cancelado = true;
+    };
+  }, [effectiveActiveCondominioId, isAuthenticated]);
 
   useEffect(() => {
     if (!isAuthenticated || !effectiveActiveCondominioId) {
@@ -1200,6 +1255,7 @@ function AppContent() {
 
     const socket = io(`${getApiHostUrl()}/ws/evidencias`, {
       transports: ['websocket'],
+      auth: { token: backendApi.getAccessToken() ?? undefined },
     });
 
     socket.on('connect', () => {
@@ -1235,6 +1291,7 @@ function AppContent() {
 
     const socket = io(`${getApiHostUrl()}/ws/pagos`, {
       transports: ['websocket'],
+      auth: { token: backendApi.getAccessToken() ?? undefined },
     });
 
     socket.on('connect', () => {
@@ -1273,6 +1330,7 @@ function AppContent() {
 
     const socket = io(`${getApiHostUrl()}/ws/mantenimientos`, {
       transports: ['websocket'],
+      auth: { token: backendApi.getAccessToken() ?? undefined },
     });
 
     socket.on('connect', () => {
@@ -1306,6 +1364,7 @@ function AppContent() {
 
     const socket = io(`${getApiHostUrl()}/ws/avisos`, {
       transports: ['websocket'],
+      auth: { token: backendApi.getAccessToken() ?? undefined },
     });
 
     socket.on('connect', () => {
@@ -1336,6 +1395,7 @@ function AppContent() {
 
     const socket = io(`${getApiHostUrl()}/ws/votaciones`, {
       transports: ['websocket'],
+      auth: { token: backendApi.getAccessToken() ?? undefined },
     });
 
     socket.on('connect', () => {
@@ -1390,21 +1450,24 @@ function AppContent() {
 
     const socket = io(`${getApiHostUrl()}/ws/notificaciones`, {
       transports: ['websocket'],
+      // El gateway valida el JWT en el handshake: sin token no se entra a las
+      // rooms y no se recibe ningun evento.
+      auth: { token: backendApi.getAccessToken() ?? undefined },
     });
 
     const refreshNotificaciones = async () => {
       try {
-        const notificaciones = await backendApi.listNotificaciones({
-          idCondominio: effectiveActiveCondominioId,
-          idUsuarioCondominio: activeMembership.idUsuarioCondominio,
-        });
+        const resumen = await backendApi.notificacionesResumen(effectiveActiveCondominioId);
+        setNotificacionesNoLeidas(resumen.noLeidas);
         setNotificacionesRecientes(
-          notificaciones.slice(0, 6).map((item) => ({
+          resumen.items.map((item) => ({
             idNotificacion: item.idNotificacion,
             asunto: item.asunto,
+            mensaje: item.mensaje,
             canal: item.canal,
             estado: item.estado,
             fechaProgramada: item.fechaProgramada,
+            canales: item.canales ?? [],
           })),
         );
       } catch (error) {
@@ -1435,6 +1498,7 @@ function AppContent() {
           diasDespues: config.diasDespues,
           usarEmail: config.usarEmail,
           usarInterna: config.usarInterna,
+          usarPush: config.usarPush ?? true,
           activo: config.activo,
         });
       } catch (error) {
@@ -1663,6 +1727,9 @@ function AppContent() {
   };
 
   const cerrarSesion = () => {
+    // La suscripcion push es del dispositivo, no de la sesion. Si otra persona
+    // entra en este mismo equipo no debe recibir las notificaciones anteriores.
+    void pushService.desactivar();
     void backendApi.logout();
     setIsAuthenticated(false);
     setSessionUser(null);
@@ -1992,7 +2059,7 @@ function AppContent() {
     }
   };
 
-  const publicarAviso = async () => {
+  const publicarAviso = async (enviarPorCorreo = false) => {
     if (!effectiveActiveCondominioId || !activeMembership) {
       return;
     }
@@ -2018,6 +2085,7 @@ function AppContent() {
         idUsuarioCondominioAdmin: activeMembership.idUsuarioCondominio,
         titulo,
         contenido: mensaje,
+        enviarPorCorreo,
       });
 
       patchAppData((prev) => ({
@@ -2635,6 +2703,7 @@ function AppContent() {
         diasDespues: configNotificaciones.diasDespues,
         usarEmail: configNotificaciones.usarEmail,
         usarInterna: configNotificaciones.usarInterna,
+        usarPush: configNotificaciones.usarPush,
         activo: configNotificaciones.activo,
       });
 
@@ -2643,6 +2712,7 @@ function AppContent() {
         diasDespues: config.diasDespues,
         usarEmail: config.usarEmail,
         usarInterna: config.usarInterna,
+        usarPush: config.usarPush ?? true,
         activo: config.activo,
       });
 
@@ -2675,11 +2745,75 @@ function AppContent() {
             : item,
         ),
       );
+      setNotificacionesNoLeidas((prev) => Math.max(0, prev - 1));
       runAction('Marcando notificacion...', 'Notificacion marcada como leida');
     } catch (error) {
       console.error(error);
       setFeedback(extractApiErrorMessage(error));
       window.setTimeout(() => setFeedback(null), 2200);
+    }
+  };
+
+  const marcarTodasNotificaciones = async () => {
+    if (!effectiveActiveCondominioId) {
+      return;
+    }
+
+    try {
+      await backendApi.marcarTodasNotificacionesLeidas(effectiveActiveCondominioId);
+      setNotificacionesNoLeidas(0);
+      setNotificacionesRecientes((prev) => prev.map((item) => ({ ...item, estado: 'LEIDA' })));
+      runAction('Marcando notificaciones...', 'Todas las notificaciones quedaron leidas');
+    } catch (error) {
+      console.error(error);
+      setFeedback(extractApiErrorMessage(error));
+      window.setTimeout(() => setFeedback(null), 2200);
+    }
+  };
+
+  /**
+   * Activa las notificaciones del navegador.
+   *
+   * El permiso se pide solo aqui, cuando el usuario lo decide. Pedirlo al
+   * entrar hace que muchos lo bloqueen para siempre.
+   */
+  const activarNotificacionesPush = async () => {
+    if (!effectiveActiveCondominioId) {
+      return;
+    }
+
+    setPushOcupado(true);
+    try {
+      const resultado = await pushService.activar(effectiveActiveCondominioId);
+      setPushEstado(resultado.estado);
+      setPushMensaje(resultado.mensaje);
+
+      if (resultado.ok) {
+        // Si el usuario activo push desde el panel, tambien se marca la
+        // preferencia para que el despachador cree las entregas.
+        setConfigNotificaciones((prev) => ({ ...prev, usarPush: true }));
+        runAction('Activando notificaciones...', 'Notificaciones del navegador activadas');
+      }
+    } catch (error) {
+      console.error(error);
+      setPushMensaje('No fue posible activar las notificaciones del navegador.');
+    } finally {
+      setPushOcupado(false);
+    }
+  };
+
+  const desactivarNotificacionesPush = async () => {
+    setPushOcupado(true);
+    try {
+      await pushService.desactivar(effectiveActiveCondominioId ?? undefined);
+      setPushEstado('inactivo');
+      setPushMensaje('Este dispositivo ya no recibira notificaciones.');
+      runAction('Desactivando notificaciones...', 'Notificaciones del navegador desactivadas');
+    } catch (error) {
+      console.error(error);
+      setPushMensaje('No fue posible desactivar las notificaciones del navegador.');
+    } finally {
+      setPushOcupado(false);
     }
   };
 
@@ -3527,6 +3661,12 @@ function AppContent() {
       gastoMonto={gastoMonto}
       configNotificaciones={configNotificaciones}
       notificacionesRecientes={notificacionesRecientes}
+      notificacionesNoLeidas={notificacionesNoLeidas}
+      pushEstado={pushEstado}
+      pushMensaje={pushMensaje}
+      pushSoportado={pushService.soportado()}
+      pushIosSinInstalar={pushService.esIosSinInstalar()}
+      pushOcupado={pushOcupado}
       onboardingForm={onboardingForm}
       perfil={perfil}
       solicitudForm={solicitudForm}
@@ -3581,6 +3721,9 @@ function AppContent() {
       }
       onCrearOnboardingInicial={crearOnboardingInicial}
       onMarcarNotificacionLeida={marcarNotificacionLeida}
+      onMarcarTodasNotificaciones={marcarTodasNotificaciones}
+      onActivarPush={activarNotificacionesPush}
+      onDesactivarPush={desactivarNotificacionesPush}
       onPerfilChange={setPerfil}
       onActualizarCorreoPerfil={actualizarCorreoPerfil}
       onActualizarPasswordPerfil={actualizarPasswordPerfil}

@@ -448,12 +448,34 @@ Todas las variables viven en `.env`. Las más relevantes:
 | `BEHAVIOR_ENFORCE` | `soft` | `soft` solo mide; `strict` rechaza sesiones automatizadas |
 | `TURNSTILE_ENABLED` / `TURNSTILE_SECRET_KEY` | `false` / — | Cloudflare Turnstile |
 
-### Correo
+### Correo y notificaciones
 
 | Variable | Para qué |
 |---|---|
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | Envío por SMTP (recuperación de contraseña, OTP) |
-| `RESEND_API_KEY` | Alternativa a SMTP vía Resend |
+| `MAIL_PROVIDER` | `auto` (por defecto) usa Resend y cae a SMTP; también `resend`, `smtp` o `console` |
+| `RESEND_API_KEY` | Envío vía Resend. Exige un remitente de un dominio verificado en su panel |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | Envío por SMTP (respaldo y pruebas locales) |
+| `MAIL_MAX_DIARIO` | Tope diario de correos de notificación. Al agotarse se omite el correo y se conservan bandeja y push. `0` = sin límite |
+| `MAIL_OVERRIDE_TO` | Solo desarrollo: redirige todos los correos a un buzón, con `[para: correo-real]` en el asunto |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | Web Push (notificaciones del navegador) |
+| `VAPID_SUBJECT` | Contacto VAPID, normalmente `mailto:no-reply@elyx-app.com` |
+| `RECORDATORIOS_ENABLED` | `false` desactiva el cron diario de recordatorios de cuotas |
+
+Para habilitar las notificaciones del navegador genera el par de llaves VAPID y
+cárgalo en `.env` antes de reconstruir el backend:
+
+```bash
+npx web-push generate-vapid-keys
+```
+
+`MAIL_PROVIDER=auto` **solo** elige Resend cuando el remitente de `SMTP_FROM`
+pertenece a un dominio verificable (no Gmail/Hotmail/Outlook). Con un remitente
+personal cae a SMTP en lugar de fallar con 422.
+
+Las notificaciones internas, el correo y el push se registran por separado en
+`notificacion_entregas`, así que un fallo de Resend no afecta a los otros
+canales. La migración está en
+`apps/backend/src/database/migrations/20261117_notificaciones_entregas_push.sql`.
 
 ### Registro público e invitaciones
 

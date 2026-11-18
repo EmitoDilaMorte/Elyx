@@ -5,6 +5,7 @@ import { SolicitudCambioTipo } from '../../common/enums/solicitud-cambio-tipo.en
 import { CondominioAltaService } from '../condominio-alta/condominio-alta.service';
 import { CupoService } from '../cupo/cupo.service';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
+import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import {
   CreateAltaCondominoAdminDto,
   CreateSolicitudCambioDto,
@@ -61,6 +62,7 @@ export class CondominosService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly notificacionesGateway: NotificacionesGateway,
+    private readonly notificaciones: NotificacionesService,
     private readonly alta: CondominioAltaService,
     private readonly cupo: CupoService,
   ) {}
@@ -666,29 +668,12 @@ export class CondominosService {
     asunto: string,
     mensaje: string,
   ) {
-    await manager.query(
-      `
-      INSERT INTO notificaciones (
-        tipo,
-        canal,
-        asunto,
-        mensaje,
-        fecha_programada,
-        fecha_envio,
-        estado,
-        id_usuario_condominio,
-        id_config
-      )
-      VALUES ($1, 'INTERNA', $2, $3, NOW(), NOW(), 'ENVIADA', $4, NULL)
-      `,
-      [tipo, asunto, mensaje, idUsuarioCondominio],
-    );
-
-    this.notificacionesGateway.emitNotificacionChanged(idCondominio, idUsuarioCondominio, {
-      tipo,
-      asunto,
-      idUsuarioCondominio,
-    });
+    // El servicio decide canales segun la configuracion del usuario y encola
+    // las entregas de correo y push. El aviso por websocket sale solo cuando la
+    // notificacion es inmediata y visible en la bandeja.
+    await this.notificaciones.crearEnTransaccion(manager, [
+      { idCondominio, idUsuarioCondominio, tipo, asunto, mensaje },
+    ]);
   }
 
   private async getDestinatariosSolicitud(manager: EntityManager, idSolicitud: number) {

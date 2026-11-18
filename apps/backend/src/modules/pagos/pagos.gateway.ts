@@ -1,26 +1,48 @@
-import { ConnectedSocket, MessageBody, SubscribeMessage, WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
+import { Logger } from '@nestjs/common';
+import {
+  ConnectedSocket,
+  MessageBody,
+  OnGatewayInit,
+  SubscribeMessage,
+  WebSocketGateway,
+  WebSocketServer,
+} from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
+import {
+  aplicarAutenticacionSocket,
+  corsSockets,
+  puedeVerCondominio,
+} from '../../common/auth/socket-auth';
 
 @WebSocketGateway({
   namespace: '/ws/pagos',
-  cors: {
-    origin: '*',
-  },
+  cors: corsSockets(),
 })
-export class PagosGateway {
+export class PagosGateway implements OnGatewayInit {
+  private readonly logger = new Logger(PagosGateway.name);
+
   @WebSocketServer()
   server!: Server;
+
+  afterInit(server: Server) {
+    aplicarAutenticacionSocket(server, this.logger);
+  }
 
   @SubscribeMessage('joinCondominio')
   handleJoinCondominio(
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: { idCondominio?: number },
   ) {
-    if (!payload?.idCondominio || payload.idCondominio <= 0) {
+    const idCondominio = Number(payload?.idCondominio ?? 0);
+    if (!Number.isInteger(idCondominio) || idCondominio <= 0) {
       return;
     }
 
-    client.join(this.getCondominioRoom(payload.idCondominio));
+    if (!puedeVerCondominio(client, idCondominio)) {
+      return;
+    }
+
+    client.join(this.getCondominioRoom(idCondominio));
   }
 
   emitPagoChanged(idCondominio: number, payload: unknown) {

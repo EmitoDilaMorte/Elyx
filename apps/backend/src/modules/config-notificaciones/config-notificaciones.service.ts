@@ -11,6 +11,7 @@ type ConfigNotificacionRecord = {
   diasDespues: number;
   usarEmail: boolean;
   usarInterna: boolean;
+  usarPush: boolean;
   activo: boolean;
 };
 
@@ -32,6 +33,7 @@ export class ConfigNotificacionesService {
         c.dias_despues,
         c.usar_email,
         c.usar_interna,
+        c.usar_push,
         c.activo
       FROM config_notificaciones c
       INNER JOIN usuarios_condominios uc ON uc.id_usuario_condominio = c.id_usuario_condominio
@@ -71,24 +73,27 @@ export class ConfigNotificacionesService {
           dias_despues,
           usar_email,
           usar_interna,
+          usar_push,
           activo,
           id_usuario_condominio
         )
-        VALUES ($1, $2, $3, $4, $5, $6)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         ON CONFLICT (id_usuario_condominio)
         DO UPDATE SET
           dias_antes = EXCLUDED.dias_antes,
           dias_despues = EXCLUDED.dias_despues,
           usar_email = EXCLUDED.usar_email,
           usar_interna = EXCLUDED.usar_interna,
+          usar_push = EXCLUDED.usar_push,
           activo = EXCLUDED.activo
-        RETURNING id_config, id_usuario_condominio, dias_antes, dias_despues, usar_email, usar_interna, activo
+        RETURNING id_config, id_usuario_condominio, dias_antes, dias_despues, usar_email, usar_interna, usar_push, activo
         `,
         [
           input.diasAntes,
           input.diasDespues,
           input.usarEmail,
           input.usarInterna,
+          input.usarPush,
           input.activo,
           input.idUsuarioCondominio,
         ],
@@ -107,6 +112,7 @@ export class ConfigNotificacionesService {
         diasDespues: Number(row.dias_despues),
         usarEmail: Boolean(row.usar_email),
         usarInterna: Boolean(row.usar_interna),
+        usarPush: Boolean(row.usar_push),
         activo: Boolean(row.activo),
       };
 
@@ -128,6 +134,7 @@ export class ConfigNotificacionesService {
       diasDespues: Number(row.dias_despues),
       usarEmail: Boolean(row.usar_email),
       usarInterna: Boolean(row.usar_interna),
+      usarPush: Boolean(row.usar_push),
       activo: Boolean(row.activo),
     };
   }

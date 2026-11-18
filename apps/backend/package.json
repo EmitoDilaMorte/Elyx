@@ -33,7 +33,8 @@
     "rxjs": "^7.8.1",
     "socket.io": "^4.7.5",
     "stripe": "^23.1.0",
-    "typeorm": "^0.3.20"
+    "typeorm": "^0.3.20",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.4.2",
@@ -44,6 +45,7 @@
     "@types/node": "^20.12.12",
     "@types/nodemailer": "^6.4.17",
     "@types/qrcode": "^1.5.5",
+    "@types/web-push": "^3.6.4",
     "ts-loader": "^9.5.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.4.5"

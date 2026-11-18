@@ -9,6 +9,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import type Stripe from 'stripe';
 import { DataSource } from 'typeorm';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
+import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import {
   ConfirmarPagoSuscripcionDto,
 } from './dto/suscripciones.dto';
@@ -41,6 +42,7 @@ export class SuscripcionesService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly notificacionesGateway: NotificacionesGateway,
+    private readonly notificaciones: NotificacionesService,
     private readonly stripeClient: StripeClientService,
     @Inject(SUSCRIPCION_PROVIDER) private readonly provider: SuscripcionProvider,
   ) {}
@@ -371,29 +373,21 @@ export class SuscripcionesService {
         [idCondominioValue],
       );
 
-      for (const admin of admins as Array<Record<string, unknown>>) {
-        const idUsuarioCondominio = Number(admin.id_usuario_condominio);
-        await manager.query(
-          `
-          INSERT INTO notificaciones (
-            tipo, canal, asunto, mensaje, fecha_programada, fecha_envio, estado,
-            id_usuario_condominio, id_config
-          )
-          VALUES ('SUSCRIPCION_ACTIVA', 'INTERNA', $1, $2, NOW(), NOW(), 'ENVIADA', $3, NULL)
-          `,
-          [
-            'Suscripcion activada',
-            'El pago de la suscripcion fue confirmado. Ya puedes generar el enlace de invitacion.',
-            idUsuarioCondominio,
-          ],
-        );
+      const idsAdmins = (admins as Array<Record<string, unknown>>)
+        .map((admin) => Number(admin.id_usuario_condominio))
+        .filter((id) => Number.isInteger(id) && id > 0);
 
-        this.notificacionesGateway.emitNotificacionChanged(
-          idCondominioValue,
-          idUsuarioCondominio,
-          { tipo: 'SUSCRIPCION_ACTIVA' },
-        );
-      }
+      await this.notificaciones.crearParaUsuarios(
+        idCondominioValue,
+        idsAdmins,
+        {
+          tipo: 'SUSCRIPCION_ACTIVA',
+          asunto: 'Suscripcion activada',
+          mensaje:
+            'El pago de la suscripcion fue confirmado. Ya puedes generar el enlace de invitacion.',
+        },
+        manager,
+      );
 
       return idCondominioValue;
     });
@@ -895,23 +889,11 @@ export class SuscripcionesService {
           [idCondominio],
         );
 
-        await this.dataSource.query(
-          `
-          INSERT INTO notificaciones (
-            tipo, canal, asunto, mensaje, fecha_programada, fecha_envio, estado,
-            id_usuario_condominio, id_config
-          )
-          SELECT 'SUSCRIPCION_SUSPENDIDA', 'INTERNA', $1, $2, NOW(), NOW(), 'ENVIADA',
-                 uc.id_usuario_condominio, NULL
-          FROM usuarios_condominios uc
-          WHERE uc.id_condominio = $3 AND uc.rol = 'ADMINISTRADOR' AND uc.estado = 'ACTIVO'
-          `,
-          [
-            'Condominio suspendido',
-            `Pasaron ${dias} dias sin recibir el pago de la suscripcion. El condominio quedo en solo lectura; puedes seguir consultando el historial.`,
-            idCondominio,
-          ],
-        );
+        await this.notificaciones.crearParaAdmins(idCondominio, {
+          tipo: 'SUSCRIPCION_SUSPENDIDA',
+          asunto: 'Condominio suspendido',
+          mensaje: `Pasaron ${dias} dias sin recibir el pago de la suscripcion. El condominio quedo en solo lectura; puedes seguir consultando el historial.`,
+        });
       }
 
       if (condominios.length > 0) {

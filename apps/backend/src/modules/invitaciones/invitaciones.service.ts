@@ -10,7 +10,9 @@ import { DataSource } from 'typeorm';
 import { CondominioAltaService } from '../condominio-alta/condominio-alta.service';
 import { CupoService } from '../cupo/cupo.service';
 import { MailService } from '../mail/mail.service';
+import { plantillaConfirmacionSolicitud } from '../mail/mail.templates';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
+import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import {
   CrearSolicitudInvitacionDto,
   ResolverSolicitudAltaDto,
@@ -40,6 +42,7 @@ export class InvitacionesService {
     private readonly cupo: CupoService,
     private readonly mailService: MailService,
     private readonly notificacionesGateway: NotificacionesGateway,
+    private readonly notificaciones: NotificacionesService,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -902,29 +905,13 @@ export class InvitacionesService {
     tipo: string,
     mensaje: { asunto: string; mensaje: string },
   ): Promise<void> {
-    const admins = await this.dataSource.query(
-      `
-      SELECT id_usuario_condominio FROM usuarios_condominios
-      WHERE id_condominio = $1 AND rol = 'ADMINISTRADOR' AND estado = 'ACTIVO'
-      `,
-      [idCondominio],
-    );
-
-    for (const admin of admins as Array<Record<string, unknown>>) {
-      const idUsuarioCondominio = Number(admin.id_usuario_condominio);
-      await this.dataSource.query(
-        `
-        INSERT INTO notificaciones (
-          tipo, canal, asunto, mensaje, fecha_programada, fecha_envio, estado,
-          id_usuario_condominio, id_config
-        )
-        VALUES ($1, 'INTERNA', $2, $3, NOW(), NOW(), 'ENVIADA', $4, NULL)
-        `,
-        [tipo, mensaje.asunto, mensaje.mensaje, idUsuarioCondominio],
-      );
-
-      this.notificacionesGateway.emitNotificacionChanged(idCondominio, idUsuarioCondominio, { tipo });
-    }
+    // El servicio resuelve los administradores activos, respeta la configuracion
+    // de cada uno y encola las entregas de correo y push.
+    await this.notificaciones.crearParaAdmins(idCondominio, {
+      tipo,
+      asunto: mensaje.asunto,
+      mensaje: mensaje.mensaje,
+    });
   }
 
   private async enviarCorreoConfirmacion(input: {
@@ -938,18 +925,12 @@ export class InvitacionesService {
       .replace(/\/+$/, '');
     const url = `${base}/invitacion/confirmar?token=${input.token}`;
 
-    const html = `
-      <h2>Confirma tu correo - Elyx</h2>
-      <p>Hola ${input.nombre},</p>
-      <p>Recibimos tu solicitud para unirte a <strong>${input.nombreCondominio}</strong> en Elyx.</p>
-      <p>Confirma tu correo para que el administrador pueda revisar tu solicitud (enlace valido 48 horas):</p>
-      <p><a href="${url}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;">Confirmar mi correo</a></p>
-      <p>O copia este enlace en tu navegador:</p>
-      <p>${url}</p>
-      <p>Si no solicitaste esto, ignora este mensaje.</p>
-      <hr/>
-      <p style="color:#888;">Elyx - Plataforma condominal</p>
-    `;
+    const html = plantillaConfirmacionSolicitud({
+      nombre: input.nombre,
+      nombreCondominio: input.nombreCondominio,
+      url,
+      horas: 48,
+    });
 
     const enviado = await this.mailService.sendEmail(
       input.correo,

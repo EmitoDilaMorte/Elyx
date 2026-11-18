@@ -13,6 +13,7 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ValidateResetTokenDto } from './dto/validate-reset-token.dto';
 import { Role } from '../../common/auth/role.enum';
 import { MailService } from '../mail/mail.service';
+import { plantillaRecuperacion } from '../mail/mail.templates';
 import { LoginAttemptsService } from './login-attempts.service';
 import { RefreshTokensService } from './refresh-tokens.service';
 import { MfaCanal, MfaMetodo, MfaService } from './mfa.service';
@@ -527,23 +528,18 @@ export class AuthService {
     );
 
     const nombre = String(rows[0].nombre ?? 'Usuario');
-    const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:5173';
+    const frontendUrl = (process.env.PUBLIC_APP_URL ?? process.env.FRONTEND_URL ?? 'http://localhost:5173')
+      .replace(/\/+$/, '');
     const resetUrl = `${frontendUrl}/reset-password?token=${token}`;
 
-    const html = `
-      <h2>Recuperacion de contraseña - Elyx</h2>
-      <p>Hola ${nombre},</p>
-      <p>Recibimos una solicitud para restablecer tu contraseña en Elyx.</p>
-      <p>Usa el siguiente enlace para crear una nueva contraseña (valido por 30 minutos):</p>
-      <p><a href="${resetUrl}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;">Restablecer contraseña</a></p>
-      <p>O copia este enlace en tu navegador:</p>
-      <p>${resetUrl}</p>
-      <p>Si no solicitaste este cambio, ignora este mensaje.</p>
-      <hr/>
-      <p style="color:#888;">Elyx - Plataforma condominal</p>
-    `;
+    const html = plantillaRecuperacion({ nombre, url: resetUrl, minutos: 30 });
 
-    const envioOk = await this.mailService.sendEmail(correoNormalizado, 'Recuperacion de contraseña - Elyx', html);
+    const envioOk = await this.mailService.sendEmail(
+      correoNormalizado,
+      'Recupera tu contrasena - Elyx',
+      html,
+      { etiqueta: 'seguridad' },
+    );
     if (!envioOk) {
       throw new BadRequestException('Error al enviar el correo de recuperacion. Verifica la configuracion SMTP.');
     }

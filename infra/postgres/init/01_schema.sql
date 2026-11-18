@@ -106,6 +106,7 @@ CREATE TABLE IF NOT EXISTS config_notificaciones (
   dias_despues INT NOT NULL DEFAULT 2 CHECK (dias_despues >= 0),
   usar_email BOOLEAN NOT NULL DEFAULT TRUE,
   usar_interna BOOLEAN NOT NULL DEFAULT TRUE,
+  usar_push BOOLEAN NOT NULL DEFAULT TRUE,
   activo BOOLEAN NOT NULL DEFAULT TRUE,
   id_usuario_condominio INT NOT NULL UNIQUE,
   CONSTRAINT fk_config_notif_usuario_condominio
@@ -139,7 +140,9 @@ CREATE TABLE IF NOT EXISTS notificaciones (
     'CARGO_CUOTA_CREADO',
     'PAGO_EN_LINEA_CONFIRMADO',
     'CARGO_CUOTA_EXPIRADO',
-    'CUENTA_COBRO_CONFIGURADA'
+    'CUENTA_COBRO_CONFIGURADA',
+    'AVISO_PUBLICADO',
+    'PAGO_RECHAZADO'
   )),
   canal VARCHAR(20) NOT NULL CHECK (canal IN ('EMAIL', 'INTERNA')),
   asunto VARCHAR(150) NOT NULL,
@@ -147,6 +150,14 @@ CREATE TABLE IF NOT EXISTS notificaciones (
   fecha_programada TIMESTAMP NOT NULL,
   fecha_envio TIMESTAMP,
   estado VARCHAR(20) NOT NULL CHECK (estado IN ('PROGRAMADA', 'ENVIADA', 'FALLIDA', 'LEIDA')),
+  -- `leida_en` separa la fecha de lectura del momento de envio: antes se
+  -- reutilizaba `fecha_envio` y se perdia el dato real.
+  leida_en TIMESTAMPTZ,
+  -- Clave de deduplicacion de procesos automaticos (recordatorios, avisos).
+  clave_dedupe VARCHAR(150),
+  -- `false` cuando el usuario desactivo el canal interno: la fila queda como
+  -- historial de las entregas por correo/push pero no aparece en la bandeja.
+  visible_en_bandeja BOOLEAN NOT NULL DEFAULT TRUE,
   id_usuario_condominio INT NOT NULL,
   id_config INT,
   CONSTRAINT fk_notif_usuario_condominio
@@ -156,6 +167,63 @@ CREATE TABLE IF NOT EXISTS notificaciones (
     FOREIGN KEY (id_config) REFERENCES config_notificaciones(id_config)
     ON DELETE SET NULL
 );
+
+-- Clave de deduplicacion: Postgres permite varios NULL en un UNIQUE, asi que
+-- los eventos normales (sin clave) no compiten por la restriccion.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_notificaciones_clave_dedupe
+  ON notificaciones (clave_dedupe)
+  WHERE clave_dedupe IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_notificaciones_usuario_fecha
+  ON notificaciones (id_usuario_condominio, fecha_programada DESC);
+
+CREATE INDEX IF NOT EXISTS idx_notificaciones_usuario_no_leidas
+  ON notificaciones (id_usuario_condominio)
+  WHERE estado <> 'LEIDA' AND visible_en_bandeja = TRUE;
+
+-- Una fila por canal de una notificacion. Registra si el correo o el push se
+-- entregaron de verdad, con reintentos y motivo del fallo.
+CREATE TABLE IF NOT EXISTS notificacion_entregas (
+  id_entrega SERIAL PRIMARY KEY,
+  id_notificacion INT NOT NULL,
+  canal VARCHAR(10) NOT NULL CHECK (canal IN ('EMAIL', 'PUSH')),
+  estado VARCHAR(12) NOT NULL DEFAULT 'PENDIENTE'
+    CHECK (estado IN ('PENDIENTE', 'EN_PROCESO', 'ENVIADA', 'FALLIDA', 'OMITIDA')),
+  intentos INT NOT NULL DEFAULT 0,
+  proximo_intento_en TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  reclamado_en TIMESTAMPTZ,
+  enviada_en TIMESTAMPTZ,
+  ultimo_error TEXT,
+  actualizado_en TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT uq_notificacion_entrega_canal UNIQUE (id_notificacion, canal),
+  CONSTRAINT fk_entrega_notificacion
+    FOREIGN KEY (id_notificacion) REFERENCES notificaciones(id_notificacion)
+    ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_entregas_pendientes
+  ON notificacion_entregas (canal, proximo_intento_en)
+  WHERE estado IN ('PENDIENTE', 'EN_PROCESO');
+
+-- Suscripciones Web Push por navegador/dispositivo.
+CREATE TABLE IF NOT EXISTS notificacion_push_suscripciones (
+  id_suscripcion SERIAL PRIMARY KEY,
+  id_usuario_condominio INT NOT NULL,
+  endpoint TEXT NOT NULL UNIQUE,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  user_agent VARCHAR(300),
+  creado_en TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  ultimo_exito_en TIMESTAMPTZ,
+  fallos_consecutivos INT NOT NULL DEFAULT 0,
+  CONSTRAINT fk_push_usuario_condominio
+    FOREIGN KEY (id_usuario_condominio) REFERENCES usuarios_condominios(id_usuario_condominio)
+    ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_push_suscripciones_usuario
+  ON notificacion_push_suscripciones (id_usuario_condominio);
 
 CREATE TABLE IF NOT EXISTS cuotas (
   id_cuota SERIAL PRIMARY KEY,

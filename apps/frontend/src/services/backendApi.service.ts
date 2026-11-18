@@ -219,6 +219,7 @@ type BackendConfigNotificaciones = {
   diasDespues: number;
   usarEmail: boolean;
   usarInterna: boolean;
+  usarPush: boolean;
   activo: boolean;
 };
 
@@ -232,8 +233,19 @@ type BackendNotificacion = {
   mensaje: string;
   fechaProgramada: string;
   fechaEnvio: string | null;
+  leidaEn: string | null;
   estado: string;
   idConfig: number | null;
+  canales: Array<'EMAIL' | 'PUSH'>;
+  entregas: Array<{ canal: 'EMAIL' | 'PUSH'; estado: string; error: string | null }>;
+};
+
+type PaginaNotificaciones = {
+  items: BackendNotificacion[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
 };
 
 type BackendSolicitudCambio = {
@@ -553,6 +565,11 @@ export const backendApi = {
     authToken = token;
   },
 
+  /** Access token actual: lo necesita el handshake del WebSocket. */
+  getAccessToken(): string | null {
+    return authToken;
+  },
+
   /** Restaura la sesion usando la cookie HttpOnly del refresh token. */
   async refreshSession(): Promise<BackendLoginResponse | null> {
     // El refresh token es de un solo uso y React StrictMode monta los efectos
@@ -807,6 +824,7 @@ export const backendApi = {
     idUsuarioCondominioAdmin: number;
     titulo: string;
     contenido: string;
+    enviarPorCorreo?: boolean;
   }) {
     const item = await requestJson<BackendAviso>('/avisos', {
       method: 'POST',
@@ -1276,6 +1294,7 @@ export const backendApi = {
     diasDespues: number;
     usarEmail: boolean;
     usarInterna: boolean;
+    usarPush: boolean;
     activo: boolean;
   }) {
     return requestJson<BackendConfigNotificaciones>('/config-notificaciones/guardar', {
@@ -1284,22 +1303,119 @@ export const backendApi = {
     });
   },
 
-  async listNotificaciones(input: { idCondominio: number; idUsuarioCondominio: number; estado?: string }) {
-    const params = new URLSearchParams({
-      idCondominio: String(input.idCondominio),
-      idUsuarioCondominio: String(input.idUsuarioCondominio),
-    });
-    if (input.estado) {
-      params.set('estado', input.estado);
+  /** Contador de no leidas + ultimas diez: lo que pinta la campana. */
+  async notificacionesResumen(idCondominio?: number) {
+    const params = new URLSearchParams();
+    if (idCondominio) {
+      params.set('idCondominio', String(idCondominio));
     }
-    return requestJson<BackendNotificacion[]>(`/notificaciones?${params.toString()}`);
+    const query = params.toString();
+    return requestJson<{ noLeidas: number; items: BackendNotificacion[] }>(
+      `/notificaciones/resumen${query ? `?${query}` : ''}`,
+    );
   },
 
-  async marcarNotificacionLeida(input: { idCondominio: number; idNotificacion: number }) {
-    return requestJson<BackendNotificacion>('/notificaciones/leer', {
+  /**
+   * Bandeja paginada del usuario autenticado.
+   *
+   * No lleva `idUsuarioCondominio`: el backend lo toma del JWT. Enviarlo era
+   * un IDOR (cualquiera leia las notificaciones de otro miembro).
+   */
+  async listNotificaciones(input: {
+    idCondominio?: number;
+    page?: number;
+    pageSize?: number;
+    soloNoLeidas?: boolean;
+  } = {}) {
+    const params = new URLSearchParams();
+    if (input.idCondominio) {
+      params.set('idCondominio', String(input.idCondominio));
+    }
+    if (input.page) {
+      params.set('page', String(input.page));
+    }
+    if (input.pageSize) {
+      params.set('pageSize', String(input.pageSize));
+    }
+    if (input.soloNoLeidas) {
+      params.set('soloNoLeidas', 'true');
+    }
+    const query = params.toString();
+    return requestJson<PaginaNotificaciones>(`/notificaciones${query ? `?${query}` : ''}`);
+  },
+
+  async marcarNotificacionLeida(input: { idNotificacion: number; idCondominio?: number }) {
+    const params = new URLSearchParams();
+    if (input.idCondominio) {
+      params.set('idCondominio', String(input.idCondominio));
+    }
+    const query = params.toString();
+    return requestJson<BackendNotificacion>(`/notificaciones/leer${query ? `?${query}` : ''}`, {
       method: 'PATCH',
-      body: JSON.stringify(input),
+      body: JSON.stringify({ idNotificacion: input.idNotificacion }),
     });
+  },
+
+  async marcarTodasNotificacionesLeidas(idCondominio?: number) {
+    const params = new URLSearchParams();
+    if (idCondominio) {
+      params.set('idCondominio', String(idCondominio));
+    }
+    const query = params.toString();
+    return requestJson<number>(`/notificaciones/leer-todas${query ? `?${query}` : ''}`, {
+      method: 'PATCH',
+    });
+  },
+
+  async pushClave() {
+    return requestJson<{ configurado: boolean; clave: string | null }>(
+      '/notificaciones/push/clave',
+    );
+  },
+
+  async pushEstado(idCondominio?: number) {
+    const params = new URLSearchParams();
+    if (idCondominio) {
+      params.set('idCondominio', String(idCondominio));
+    }
+    const query = params.toString();
+    return requestJson<{ configurado: boolean; clave: string | null; dispositivos: number }>(
+      `/notificaciones/push/estado${query ? `?${query}` : ''}`,
+    );
+  },
+
+  async pushSuscribir(input: {
+    endpoint: string;
+    keys: { p256dh: string; auth: string };
+    idCondominio?: number;
+  }) {
+    const params = new URLSearchParams();
+    if (input.idCondominio) {
+      params.set('idCondominio', String(input.idCondominio));
+    }
+    const query = params.toString();
+    return requestJson<{ ok: boolean }>(
+      `/notificaciones/push/suscribir${query ? `?${query}` : ''}`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ endpoint: input.endpoint, keys: input.keys }),
+      },
+    );
+  },
+
+  async pushDesuscribir(endpoint: string, idCondominio?: number) {
+    const params = new URLSearchParams();
+    if (idCondominio) {
+      params.set('idCondominio', String(idCondominio));
+    }
+    const query = params.toString();
+    return requestJson<{ ok: boolean; eliminado: boolean }>(
+      `/notificaciones/push/desuscribir${query ? `?${query}` : ''}`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ endpoint }),
+      },
+    );
   },
 
   async createOnboardingInicial(input: {

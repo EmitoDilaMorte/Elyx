@@ -2256,3 +2256,234 @@ th {
     min-height: 520px;
   }
 }
+
+/* ==========================================================================
+   Campana de notificaciones y controles de push
+   ========================================================================== */
+
+/* Fila del selector de condominio + campana. La campana queda a la derecha y
+   siempre visible porque esta tarjeta se pinta en todas las vistas. */
+.welcome-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+
+.campana-notificaciones {
+  position: relative;
+  margin-left: auto;
+}
+
+.campana-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  border: 1px solid #e6dbc9;
+  background: var(--surface-strong);
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, color 0.15s ease;
+}
+
+.campana-btn:hover {
+  color: var(--brand-strong);
+  box-shadow: 0 6px 16px rgba(35, 28, 17, 0.12);
+}
+
+.campana-btn.con-pendientes {
+  color: var(--brand-strong);
+  border-color: #bfe3dd;
+  background: var(--brand-soft);
+}
+
+.campana-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #c2410c;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 0 2px var(--surface-strong);
+}
+
+/* Variante en linea, para el titulo de la bandeja. */
+.campana-badge.inline {
+  position: static;
+  margin-left: 0.45rem;
+  vertical-align: middle;
+  box-shadow: none;
+}
+
+.campana-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 10px);
+  width: min(370px, calc(100vw - 2rem));
+  background: #ffffff;
+  border: 1px solid #e8e1d7;
+  border-radius: 14px;
+  box-shadow: 0 18px 38px rgba(35, 28, 17, 0.18);
+  z-index: 60;
+  overflow: hidden;
+}
+
+.campana-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.7rem 0.85rem;
+  border-bottom: 1px solid #efe7db;
+  background: var(--surface-strong);
+}
+
+.campana-lista {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 380px;
+  overflow-y: auto;
+}
+
+.campana-lista li {
+  padding: 0.7rem 0.85rem;
+  border-bottom: 1px solid #f2ebe1;
+}
+
+.campana-lista li:last-child {
+  border-bottom: none;
+}
+
+.campana-lista li.leida {
+  opacity: 0.62;
+}
+
+.campana-item-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.campana-item-head small {
+  color: var(--ink-soft);
+  white-space: nowrap;
+  font-size: 0.72rem;
+}
+
+.campana-mensaje {
+  margin: 0.25rem 0 0.35rem;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.campana-item-pie {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.campana-canal {
+  font-size: 0.72rem;
+  color: var(--brand-strong);
+  background: var(--brand-soft);
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+}
+
+.campana-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--brand-strong);
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.campana-vacia {
+  color: var(--ink-soft);
+  font-size: 0.85rem;
+}
+
+.campana-ver-todas {
+  width: 100%;
+  border: none;
+  border-top: 1px solid #efe7db;
+  background: var(--surface-strong);
+  padding: 0.65rem;
+  font-family: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--brand-strong);
+  cursor: pointer;
+}
+
+.campana-ver-todas:hover {
+  background: var(--brand-soft);
+}
+
+/* Bloque de activacion de push dentro de las preferencias. */
+.push-bloque {
+  margin-top: 1rem;
+  border: 1px solid #e6dbc9;
+  border-radius: 14px;
+  background: rgba(255, 253, 248, 0.9);
+  padding: 0.75rem 0.85rem;
+}
+
+.push-aviso {
+  margin: 0.5rem 0 0;
+  background: var(--accent-soft);
+  border: 1px solid #f0d9a8;
+  border-radius: 10px;
+  padding: 0.55rem 0.7rem;
+  font-size: 0.8rem;
+  color: #7a4b12;
+}
+
+.bandeja-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.bandeja-head h4 {
+  margin: 0;
+}
+
+.notif-leida {
+  opacity: 0.65;
+}
+
+@media (max-width: 640px) {
+  .campana-panel {
+    right: -0.25rem;
+    width: min(320px, calc(100vw - 1.5rem));
+  }
+}

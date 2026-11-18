@@ -184,6 +184,9 @@ Para ejercer estos derechos, contacte a:
 | Códigos de recuperación de MFA | Mientras el segundo factor esté activo; se eliminan al desactivarlo |
 | Bloqueos temporales por intentos fallidos | 24 horas |
 | Preferencia "mantener sesión iniciada" | Hasta 30 días o hasta que el usuario la elimine |
+| Notificaciones leídas | 90 días desde su lectura |
+| Notificaciones enviadas no leídas | 180 días desde su envío |
+| Suscripciones a notificaciones del navegador | Hasta que el usuario las desactive o el dispositivo deje de responder (máximo 180 días sin uso) |
 
 Los usuarios pueden solicitar la eliminación de datos cuando dejen de ser necesarios para los fines declarados, salvo aquellos que la ley obligue a conservar.
 

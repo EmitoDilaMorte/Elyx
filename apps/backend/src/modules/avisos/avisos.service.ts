@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { CreateAvisoDto } from './dto/create-aviso.dto';
 import { DataSource } from 'typeorm';
+import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { AvisosGateway } from './avisos.gateway';
 
 type AvisoRecord = {
@@ -14,9 +15,12 @@ type AvisoRecord = {
 
 @Injectable()
 export class AvisosService {
+  private readonly logger = new Logger(AvisosService.name);
+
   constructor(
     private readonly dataSource: DataSource,
     private readonly avisosGateway: AvisosGateway,
+    private readonly notificaciones: NotificacionesService,
   ) {}
 
   async findByCondominio(idCondominio: number): Promise<AvisoRecord[]> {
@@ -60,7 +64,31 @@ export class AvisosService {
       tipo: 'CREADO',
       aviso,
     });
+
+    // Publicar un aviso ahora tambien genera notificacion en la bandeja y push
+    // para todo el condominio. El correo es opcional: lo decide el
+    // administrador porque un aviso a 200 unidades son 200 correos.
+    await this.notificarAviso(aviso, Boolean(input.enviarPorCorreo));
+
     return aviso;
+  }
+
+  private async notificarAviso(aviso: AvisoRecord, enviarPorCorreo: boolean): Promise<void> {
+    try {
+      await this.notificaciones.crearParaCondominio(aviso.idCondominio, {
+        tipo: 'AVISO_PUBLICADO',
+        asunto: aviso.titulo,
+        mensaje: aviso.contenido,
+        // El canal interno siempre se respeta por usuario (`usar_interna`).
+        // El correo se fuerza solo cuando el administrador lo pidio.
+        canales: enviarPorCorreo ? { email: true } : { email: false },
+      });
+    } catch (error) {
+      // Un fallo al notificar no debe tumbar la publicacion del aviso.
+      this.logger.warn(
+        `No fue posible notificar el aviso ${aviso.idAviso}: ${(error as Error).message}`,
+      );
+    }
   }
 
   private toAvisoRecord(row: Record<string, unknown>): AvisoRecord {

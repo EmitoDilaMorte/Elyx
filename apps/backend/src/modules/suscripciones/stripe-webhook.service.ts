@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import type Stripe from 'stripe';
 import { NotificacionesGateway } from '../notificaciones/notificaciones.gateway';
+import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import {
   idSuscripcionDeFactura,
   periodoDeFactura,
@@ -26,6 +27,7 @@ export class StripeWebhookService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly notificacionesGateway: NotificacionesGateway,
+    private readonly notificaciones: NotificacionesService,
   ) {}
 
   /** `true` si el evento es nuevo y debe procesarse. */
@@ -448,32 +450,9 @@ export class StripeWebhookService {
       return;
     }
 
-    const admins = await this.dataSource.query(
-      `
-      SELECT id_usuario_condominio
-      FROM usuarios_condominios
-      WHERE id_condominio = $1 AND rol = 'ADMINISTRADOR' AND estado = 'ACTIVO'
-      `,
-      [idCondominio],
-    );
-
-    for (const admin of admins as Array<Record<string, unknown>>) {
-      const idUsuarioCondominio = Number(admin.id_usuario_condominio);
-      await this.dataSource.query(
-        `
-        INSERT INTO notificaciones (
-          tipo, canal, asunto, mensaje, fecha_programada, fecha_envio, estado,
-          id_usuario_condominio, id_config
-        )
-        VALUES ($1, 'INTERNA', $2, $3, NOW(), NOW(), 'ENVIADA', $4, NULL)
-        `,
-        [tipo, asunto, mensaje, idUsuarioCondominio],
-      );
-
-      this.notificacionesGateway.emitNotificacionChanged(idCondominio, idUsuarioCondominio, {
-        tipo,
-      });
-    }
+    // El servicio resuelve los administradores activos, respeta la configuracion
+    // de cada uno y encola las entregas de correo y push.
+    await this.notificaciones.crearParaAdmins(idCondominio, { tipo, asunto, mensaje });
   }
 
   private numeroDeMetadata(

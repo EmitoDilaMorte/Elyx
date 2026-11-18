@@ -24,5 +24,8 @@ export class UpsertConfigNotificacionDto {
   usarInterna!: boolean;
 
   @IsBoolean()
+  usarPush!: boolean;
+
+  @IsBoolean()
   activo!: boolean;
 }

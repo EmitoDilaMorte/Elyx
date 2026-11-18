@@ -12,6 +12,7 @@ import type {
 } from '../types/app';
 import type { NavItem } from '../types/app';
 import { statusLabel } from '../constants/status';
+import { CampanaNotificaciones } from '../components/CampanaNotificaciones';
 import { CondominioSwitcher } from '../components/CondominioSwitcher';
 import { ConfiguracionCobroPanel } from '../components/ConfiguracionCobroPanel';
 import { DepositosPanel } from '../components/DepositosPanel';
@@ -98,15 +99,24 @@ type DashboardPageProps = {
     diasDespues: number;
     usarEmail: boolean;
     usarInterna: boolean;
+    usarPush: boolean;
     activo: boolean;
   };
   notificacionesRecientes: Array<{
     idNotificacion: number;
     asunto: string;
+    mensaje: string;
     canal: string;
     estado: string;
     fechaProgramada: string;
+    canales: string[];
   }>;
+  notificacionesNoLeidas: number;
+  pushEstado: 'no-soportado' | 'sin-configurar' | 'inactivo' | 'activo' | 'bloqueado';
+  pushMensaje: string | null;
+  pushSoportado: boolean;
+  pushIosSinInstalar: boolean;
+  pushOcupado: boolean;
   onboardingForm: {
     nombreCondominio: string;
     direccionCondominio: string;
@@ -174,7 +184,7 @@ type DashboardPageProps = {
   onVotar: (votacionId: number, choice: VoteChoice) => void;
   onCrearVotacion: () => void;
   onCerrarVotacion: (votacionId: number) => void;
-  onPublicarAviso: () => void;
+  onPublicarAviso: (enviarPorCorreo: boolean) => void;
   onFallaChange: (value: string) => void;
   onAvisoTituloChange: (value: string) => void;
   onAvisoMensajeChange: (value: string) => void;
@@ -207,9 +217,13 @@ type DashboardPageProps = {
     diasDespues: number;
     usarEmail: boolean;
     usarInterna: boolean;
+    usarPush: boolean;
     activo: boolean;
   }) => void;
   onGuardarConfigNotificaciones: () => void;
+  onMarcarTodasNotificaciones: () => void;
+  onActivarPush: () => void;
+  onDesactivarPush: () => void;
   onOnboardingFormChange: (
     key:
       | 'nombreCondominio'
@@ -297,6 +311,12 @@ export function DashboardPage({
   gastoMonto,
   configNotificaciones,
   notificacionesRecientes,
+  notificacionesNoLeidas,
+  pushEstado,
+  pushMensaje,
+  pushSoportado,
+  pushIosSinInstalar,
+  pushOcupado,
   onboardingForm,
   perfil,
   solicitudForm,
@@ -344,6 +364,9 @@ export function DashboardPage({
   onRegistrarGasto,
   onConfigNotificacionesChange,
   onGuardarConfigNotificaciones,
+  onMarcarTodasNotificaciones,
+  onActivarPush,
+  onDesactivarPush,
   onOnboardingFormChange,
   onCrearOnboardingInicial,
   onMarcarNotificacionLeida,
@@ -369,6 +392,12 @@ export function DashboardPage({
   formatShortDate,
 }: DashboardPageProps) {
   const [unidadCondomino, setUnidadCondomino] = useState<UnidadConOcupante | null>(null);
+  /**
+   * El aviso ya no solo alimenta la seccion "Avisos": tambien genera una
+   * notificacion para cada miembro. El correo es opcional porque un aviso a 200
+   * unidades son 200 envios.
+   */
+  const [enviarAvisoPorCorreo, setEnviarAvisoPorCorreo] = useState(false);
 
   useEffect(() => {
     if (role !== 'condomino' || !sessionUser) {
@@ -630,12 +659,26 @@ export function DashboardPage({
         <main className="content">
           <section className="welcome-card animate-in">
             <h3>{role === 'condomino' ? 'Panel de Condominio' : 'Panel de Administrador'}</h3>
-            <CondominioSwitcher
-              condominios={condominiosDisponibles}
-              membresias={sessionUser?.membresias ?? []}
-              activeCondominioId={activeCondominioId}
-              onChange={onChangeCondominio}
-            />
+            <div className="welcome-top">
+              <CondominioSwitcher
+                condominios={condominiosDisponibles}
+                membresias={sessionUser?.membresias ?? []}
+                activeCondominioId={activeCondominioId}
+                onChange={onChangeCondominio}
+              />
+              {/* La campana vive en la tarjeta de bienvenida, que se pinta en
+                  todas las vistas: siempre esta visible. */}
+              <CampanaNotificaciones
+                noLeidas={notificacionesNoLeidas}
+                items={notificacionesRecientes}
+                onMarcarLeida={onMarcarNotificacionLeida}
+                onMarcarTodas={onMarcarTodasNotificaciones}
+                onVerTodas={() => {
+                  onSetView('avisos');
+                  onCloseMenu();
+                }}
+              />
+            </div>
             <p className="welcome-intro">
               {role === 'condomino'
                 ? 'Aqui puedes pagar cuotas, votar en asambleas, reportar incidencias y descargar comprobantes.'
@@ -882,10 +925,31 @@ export function DashboardPage({
                     placeholder="Describe fecha, hora y recomendaciones para residentes"
                   />
                   <div className="btn-row">
-                    <button className="primary-btn" onClick={onPublicarAviso}>
+                    <button
+                      className="primary-btn"
+                      onClick={() => {
+                        onPublicarAviso(enviarAvisoPorCorreo);
+                        setEnviarAvisoPorCorreo(false);
+                      }}
+                    >
                       Publicar aviso
                     </button>
+                    <label
+                      className="soft-btn"
+                      style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={enviarAvisoPorCorreo}
+                        onChange={(event) => setEnviarAvisoPorCorreo(event.target.checked)}
+                      />
+                      Enviar tambien por correo
+                    </label>
                   </div>
+                  <p className="helper-text" style={{ marginTop: '0.4rem' }}>
+                    El aviso siempre aparece en la bandeja y en el navegador de los condominos. El
+                    correo es adicional y consume un envio por cada miembro.
+                  </p>
                 </article>
               )}
 
@@ -965,6 +1029,19 @@ export function DashboardPage({
                       />
                       Interna
                     </label>
+                    <label className="soft-btn" style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                      <input
+                        type="checkbox"
+                        checked={configNotificaciones.usarPush}
+                        onChange={(event) =>
+                          onConfigNotificacionesChange({
+                            ...configNotificaciones,
+                            usarPush: event.target.checked,
+                          })
+                        }
+                      />
+                      Push
+                    </label>
                   </div>
 
                   <div className="btn-row" style={{ marginTop: '0.8rem' }}>
@@ -992,17 +1069,84 @@ export function DashboardPage({
                     </button>
                   </div>
 
+                  {/*
+                    Permiso del navegador. Se pide SOLO al pulsar el boton: si se
+                    pide al entrar y el usuario lo bloquea, ya no se puede volver
+                    a pedir desde la pagina.
+                  */}
+                  <div className="push-bloque">
+                    <div>
+                      <strong>Notificaciones del navegador</strong>
+                      <p className="helper-text" style={{ margin: '0.2rem 0 0' }}>
+                        {pushEstado === 'activo' && 'Activas en este dispositivo.'}
+                        {pushEstado === 'inactivo' && 'Aun no las has activado en este dispositivo.'}
+                        {pushEstado === 'bloqueado' &&
+                          'Estan bloqueadas. Permitilas desde los ajustes del sitio en tu navegador.'}
+                        {pushEstado === 'sin-configurar' &&
+                          'El servidor no tiene configuradas las notificaciones push.'}
+                        {pushEstado === 'no-soportado' && 'Este navegador no admite notificaciones del sistema.'}
+                      </p>
+                    </div>
+
+                    {pushIosSinInstalar && (
+                      <p className="push-aviso">
+                        En iPhone o iPad primero agrega Elyx a la pantalla de inicio
+                        (Compartir &gt; Agregar a inicio). Safari solo entrega notificaciones a la
+                        app instalada.
+                      </p>
+                    )}
+
+                    {pushSoportado && !pushIosSinInstalar && (
+                      <div className="btn-row" style={{ marginTop: '0.6rem' }}>
+                        {pushEstado === 'activo' ? (
+                          <button className="soft-btn" onClick={onDesactivarPush} disabled={pushOcupado}>
+                            {pushOcupado ? 'Desactivando...' : 'Desactivar en este dispositivo'}
+                          </button>
+                        ) : (
+                          <button
+                            className="primary-btn"
+                            onClick={onActivarPush}
+                            disabled={pushOcupado || pushEstado === 'bloqueado' || pushEstado === 'sin-configurar'}
+                          >
+                            {pushOcupado ? 'Activando...' : 'Activar notificaciones del navegador'}
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {pushMensaje && <p className="helper-text">{pushMensaje}</p>}
+                  </div>
+
                   <hr style={{ margin: '1rem 0', border: 'none', borderTop: '1px solid #e7d9c6' }} />
 
-                  <h4 style={{ marginBottom: '0.4rem' }}>Bandeja de notificaciones</h4>
+                  <div id="bandeja-notificaciones" className="bandeja-head">
+                    <h4 style={{ marginBottom: '0.4rem' }}>
+                      Bandeja de notificaciones
+                      {notificacionesNoLeidas > 0 && (
+                        <span className="campana-badge inline">{notificacionesNoLeidas}</span>
+                      )}
+                    </h4>
+                    {notificacionesNoLeidas > 0 && (
+                      <button className="soft-btn" onClick={onMarcarTodasNotificaciones}>
+                        Marcar todas como leidas
+                      </button>
+                    )}
+                  </div>
+
                   <ul className="clean-list">
                     {notificacionesRecientes.length === 0 && <li>No hay notificaciones recientes.</li>}
                     {notificacionesRecientes.map((item) => (
-                      <li key={item.idNotificacion}>
+                      <li key={item.idNotificacion} className={item.estado === 'LEIDA' ? 'notif-leida' : ''}>
                         <div>
                           <strong>{item.asunto}</strong>
+                          <p className="helper-text">{item.mensaje}</p>
                           <p className="helper-text">
-                            Canal: {item.canal} | Estado: {item.estado}
+                            {item.canales.length > 0
+                              ? `Tambien por: ${item.canales
+                                  .map((canal) => (canal === 'EMAIL' ? 'correo' : 'navegador'))
+                                  .join(' y ')}`
+                              : 'Solo en la app'}{' '}
+                            | Estado: {item.estado}
                           </p>
                           {item.estado !== 'LEIDA' && (
                             <button className="soft-btn" onClick={() => onMarcarNotificacionLeida(item.idNotificacion)}>

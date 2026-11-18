@@ -1015,14 +1015,13 @@ export class CobrosService {
         return;
       }
 
-      await this.notificaciones.create({
-        idCondominio,
-        idUsuarioCondominio,
+      // `crearParaUsuarios` no lanza si el usuario desactivo las notificaciones:
+      // solo devuelve una lista vacia. Con `crear` un pago confirmado de alguien
+      // que las apago dejaria un warning en el log.
+      await this.notificaciones.crearParaUsuarios(idCondominio, [idUsuarioCondominio], {
         tipo: 'PAGO_EN_LINEA_CONFIRMADO',
-        canal: 'INTERNA',
         asunto: 'Pago confirmado',
         mensaje: `Tu pago de $${cargo.montoTotal.toFixed(2)} fue confirmado. Referencia ${cargo.referenciaSpei ?? cargo.idCargo}.`,
-        fechaProgramada: new Date().toISOString(),
       });
     } catch (error) {
       // La notificacion nunca debe tumbar la confirmacion del pago.

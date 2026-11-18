@@ -4,6 +4,7 @@ import Redis from 'ioredis';
 import * as crypto from 'crypto';
 import { toDataURL as qrToDataURL } from 'qrcode';
 import { MailService } from '../mail/mail.service';
+import { plantillaCodigoMfa } from '../mail/mail.templates';
 import { otpauthUri, verificarTotp, generarSecreto } from '../../common/mfa/totp';
 
 export type MfaCanal = 'TOTP' | 'EMAIL' | 'AMBOS';
@@ -356,15 +357,10 @@ export class MfaService implements OnModuleDestroy {
   }
 
   private async enviarOtpCorreo(correo: string, codigo: string): Promise<boolean> {
-    const html = `
-      <h2>Codigo de verificacion - Elyx</h2>
-      <p>Tu codigo de verificacion es:</p>
-      <p style="font-size:28px;letter-spacing:6px;font-weight:bold;">${codigo}</p>
-      <p>Vale por 5 minutos. Si no intentaste iniciar sesion, ignora este mensaje.</p>
-      <hr/>
-      <p style="color:#888;">Elyx - Plataforma condominal</p>
-    `;
-    return this.mailService.sendEmail(correo, 'Codigo de verificacion - Elyx', html);
+    const html = plantillaCodigoMfa({ nombre: 'Usuario', codigo, minutos: 5 });
+    return this.mailService.sendEmail(correo, 'Codigo de verificacion - Elyx', html, {
+      etiqueta: 'seguridad',
+    });
   }
 
   private generarSecretoBase32(): string {

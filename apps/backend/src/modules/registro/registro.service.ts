@@ -9,6 +9,7 @@ import * as crypto from 'crypto';
 import { DataSource } from 'typeorm';
 import { CondominioAltaService, TipoUnidad } from '../condominio-alta/condominio-alta.service';
 import { MailService } from '../mail/mail.service';
+import { plantillaVerificacionRegistro } from '../mail/mail.templates';
 import {
   CreateRegistroCondominioDto,
   ReenviarVerificacionDto,
@@ -424,28 +425,13 @@ export class RegistroService {
       .replace(/\/+$/, '');
     const url = `${base}/crear-condominio/verificar?token=${input.token}`;
 
-    const avisoCuenta = input.cuentaExistente
-      ? `<p style="background:#fff7e6;border:1px solid #f0d9a8;padding:12px;border-radius:8px;">
-           <strong>Ya tienes una cuenta en Elyx con este correo.</strong><br/>
-           Al confirmar, se agregara tu acceso como administrador del nuevo condominio y
-           <strong>conservaras tu contrasena actual</strong> (la que escribiste en el formulario
-           no se aplicara).
-         </p>`
-      : '';
-
-    const html = `
-      <h2>Confirma tu correo - Elyx</h2>
-      <p>Hola ${input.nombre},</p>
-      <p>Recibimos la solicitud para crear el condominio <strong>${input.nombreCondominio}</strong> en Elyx.</p>
-      ${avisoCuenta}
-      <p>Confirma tu correo para continuar (el enlace vence en ${input.horas} horas):</p>
-      <p><a href="${url}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;">Confirmar y crear mi condominio</a></p>
-      <p>O copia este enlace en tu navegador:</p>
-      <p>${url}</p>
-      <p>Si no solicitaste este registro, puedes ignorar este mensaje.</p>
-      <hr/>
-      <p style="color:#888;">Elyx - Plataforma condominal</p>
-    `;
+    const html = plantillaVerificacionRegistro({
+      nombre: input.nombre,
+      nombreCondominio: input.nombreCondominio,
+      url,
+      horas: input.horas,
+      cuentaExistente: input.cuentaExistente,
+    });
 
     const enviado = await this.mailService.sendEmail(
       input.correo,

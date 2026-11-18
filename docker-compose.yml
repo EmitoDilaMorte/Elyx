@@ -106,8 +106,17 @@ services:
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
-      # auto (SMTP si esta configurado) | smtp | resend
+      # auto (Resend primero, SMTP de respaldo) | resend | smtp | console
       MAIL_PROVIDER: ${MAIL_PROVIDER:-auto}
+      # Tope diario de correos de notificacion. 0 = sin limite.
+      MAIL_MAX_DIARIO: ${MAIL_MAX_DIARIO:-500}
+      # En desarrollo redirige todos los correos a un buzon de pruebas.
+      MAIL_OVERRIDE_TO: ${MAIL_OVERRIDE_TO:-}
+      # Web Push (npx web-push generate-vapid-keys)
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:no-reply@elyx-app.com}
+      RECORDATORIOS_ENABLED: ${RECORDATORIOS_ENABLED:-true}
     ports:
       - "${BACKEND_PORT:-3000}:3000"
     volumes:

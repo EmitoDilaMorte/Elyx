@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { DataSource } from 'typeorm';
+import { conteoDe } from '../../common/db/resultado-query';
 
 /**
  * Aplica los plazos de conservacion declarados en `docs/politica-privacidad.md`.
@@ -59,6 +60,8 @@ export class RetencionService {
     resumen.auditoria = await this.purgarIntentosLogin();
     resumen.resets = await this.purgarResetsUsados();
     resumen.recuperacion = await this.purgarCodigosRecuperacion();
+    resumen.notificaciones = await this.purgarNotificaciones();
+    resumen.push = await this.purgarSuscripcionesPush();
 
     const total = Object.values(resumen).reduce((suma, valor) => suma + valor, 0);
     if (total > 0) {
@@ -66,7 +69,8 @@ export class RetencionService {
         `Retencion aplicada: ${total} filas eliminadas ` +
           `(tokens=${resumen.tokens}, telemetria=${resumen.telemetria}, ` +
           `auditoria=${resumen.auditoria}, resets=${resumen.resets}, ` +
-          `recuperacion=${resumen.recuperacion}).`,
+          `recuperacion=${resumen.recuperacion}, notificaciones=${resumen.notificaciones}, ` +
+          `push=${resumen.push}).`,
       );
     }
   }
@@ -139,6 +143,43 @@ export class RetencionService {
   }
 
   /**
+   * Notificaciones ya cerradas.
+   *
+   * Se conservan 90 dias las leidas y 180 las enviadas que nunca se abrieron.
+   * Las `PENDIENTE`/`EN_PROCESO` se respetan siempre: son trabajo del
+   * despachador, no historial. Borrar una notificacion arrastra sus entregas
+   * (`ON DELETE CASCADE`), asi que el conteo del cupo diario no queda inflado
+   * con filas viejas.
+   */
+  private async purgarNotificaciones(): Promise<number> {
+    const diasLeidas = this.dias('RETENCION_NOTIFICACIONES_DIAS', 90);
+    const diasEnviadas = diasLeidas * 2;
+
+    return this.borrarEnLotes(
+      'notificaciones',
+      `(estado = 'LEIDA' AND leida_en IS NOT NULL AND leida_en < NOW() - ($1 || ' days')::interval)
+         OR (estado IN ('ENVIADA', 'FALLIDA') AND fecha_programada < NOW() - ($2 || ' days')::interval)`,
+      String(diasLeidas),
+      String(diasEnviadas),
+    );
+  }
+
+  /**
+   * Suscripciones push muertas.
+   *
+   * El despachador ya borra las que responden 404/410, pero un endpoint puede
+   * quedar abandonado sin que nadie intente enviarle nada (usuario inactivo).
+   * A los 180 dias sin uso ni actualizacion deja de tener sentido conservarlo.
+   */
+  private async purgarSuscripcionesPush(): Promise<number> {
+    return this.borrarEnLotes(
+      'notificacion_push_suscripciones',
+      `(fallos_consecutivos >= 5)
+         OR (COALESCE(ultimo_exito_en, actualizado_en) < NOW() - INTERVAL '180 days')`,
+    );
+  }
+
+  /**
    * Borra por lotes hasta agotar las filas que cumplen la condicion.
    *
    * `LIMIT` dentro de un `DELETE ... WHERE ctid IN (...)` se apoya en `ctid`
@@ -149,9 +190,9 @@ export class RetencionService {
   private async borrarEnLotes(
     tabla: string,
     condicion: string,
-    parametro?: string,
+    ...parametros: string[]
   ): Promise<number> {
-    const valores = parametro !== undefined ? [parametro] : [];
+    const valores = parametros;
     let total = 0;
 
     try {
@@ -171,7 +212,9 @@ export class RetencionService {
           valores,
         );
 
-        const borradas = Array.isArray(resultado) ? resultado.length : 0;
+        // `query()` devuelve `[filas, conteo]` en una mutacion: leer `.length`
+        // daria siempre 2 y el bucle cortaria en la primera vuelta.
+        const borradas = conteoDe(resultado);
         total += borradas;
 
         if (borradas < RetencionService.LOTE) {

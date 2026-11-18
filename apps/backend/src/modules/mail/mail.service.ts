@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { aTextoPlano } from './mail.templates';
 
 /** Dominios que Resend rechaza como remitente salvo que se verifiquen. */
 const DOMINIOS_NO_VERIFICABLES = new Set([
@@ -13,32 +14,114 @@ const DOMINIOS_NO_VERIFICABLES = new Set([
   'protonmail.com',
 ]);
 
+export type TransporteCorreo = 'resend' | 'smtp' | 'console';
+
+/** Corte de la peticion a Resend. Una red colgada no debe bloquear el despacho. */
+const RESEND_TIMEOUT_MS = 15_000;
+
+export type OpcionesCorreo = {
+  /**
+   * Clave de idempotencia (Resend). Si se reintenta el mismo envio, Resend
+   * devuelve el mensaje original en lugar de duplicarlo.
+   */
+  idempotencyKey?: string;
+  /** Direccion de respuesta visible para el usuario. */
+  replyTo?: string;
+  /** Etiqueta interna para filtrar en el panel del proveedor. */
+  etiqueta?: string;
+};
+
+export type ResultadoEnvio = {
+  ok: boolean;
+  transporte: TransporteCorreo;
+  /** Motivo legible cuando `ok` es false. Se guarda en `notificacion_entregas`. */
+  error?: string;
+  /** `true` si el envio se redirigio por `MAIL_OVERRIDE_TO`. */
+  redirigido?: boolean;
+};
+
+/**
+ * Envio de correo transaccional.
+ *
+ * Resolucion del transporte (`MAIL_PROVIDER`):
+ *  - `resend`: Resend si hay `RESEND_API_KEY`.
+ *  - `smtp`: SMTP si hay `SMTP_HOST`.
+ *  - `auto` (default): Resend primero y SMTP como respaldo. Se prefiere Resend
+ *    porque el dominio esta verificado y la entrega es mas confiable que un
+ *    buzon personal; SMTP queda para pruebas locales.
+ *  - `console`: no se envia nada, solo se registra en el log (sin credenciales).
+ */
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
 
-  async sendEmail(to: string, subject: string, html: string): Promise<boolean> {
-    const proveedor = this.proveedor();
+  async sendEmail(
+    to: string,
+    subject: string,
+    html: string,
+    opciones: OpcionesCorreo = {},
+  ): Promise<boolean> {
+    const resultado = await this.enviar(to, subject, html, opciones);
 
-    if (proveedor === 'resend') {
+    if (!resultado.ok) {
+      this.logger.warn(`Correo no enviado a ${to} (${resultado.transporte}): ${resultado.error}`);
+    }
+
+    return resultado.ok;
+  }
+
+  /** Igual que `sendEmail` pero devuelve el motivo del fallo. */
+  async enviar(
+    to: string,
+    subject: string,
+    html: string,
+    opciones: OpcionesCorreo = {},
+  ): Promise<ResultadoEnvio> {
+    const destino = (to ?? '').trim();
+    if (!destino) {
+      return { ok: false, transporte: this.proveedor(), error: 'destinatario-vacio' };
+    }
+
+    const override = (process.env.MAIL_OVERRIDE_TO ?? '').trim();
+    const destinoReal = override || destino;
+    const asuntoReal = override ? `[para: ${destino}] ${subject}` : subject;
+    const transporte = this.proveedor();
+
+    if (transporte === 'resend') {
       const key = (process.env.RESEND_API_KEY ?? '').trim();
-      return this.sendViaResend(to, subject, html, key);
+      const resultado = await this.sendViaResend(destinoReal, asuntoReal, html, key, opciones);
+
+      // Si Resend rechaza el remitente (dominio no verificado) y hay SMTP
+      // configurado, se reintenta por ahi. Asi un `.env` con un remitente de
+      // Gmail sigue enviando en lugar de dejar el correo muerto.
+      if (!resultado.ok && (process.env.SMTP_HOST ?? '').trim()) {
+        this.logger.warn(
+          `Resend fallo (${resultado.error ?? 'sin detalle'}); se reintenta por SMTP.`,
+        );
+        const respaldo = await this.sendViaSmtp(destinoReal, asuntoReal, html, opciones);
+        return { ...respaldo, redirigido: override ? true : undefined };
+      }
+
+      return { ...resultado, redirigido: override ? true : undefined };
     }
 
-    if (proveedor === 'smtp') {
-      return this.sendViaSmtp(to, subject, html);
+    if (transporte === 'smtp') {
+      const resultado = await this.sendViaSmtp(destinoReal, asuntoReal, html, opciones);
+      return { ...resultado, redirigido: override ? true : undefined };
     }
 
-    this.logConsole(to, subject, html);
-    return true;
+    this.logConsole(destinoReal, asuntoReal, html);
+    return { ok: true, transporte: 'console', redirigido: override ? true : undefined };
   }
 
   /**
-   * Resuelve el transporte. `MAIL_PROVIDER` permite forzarlo; en `auto` se
-   * prefiere SMTP porque cualquier buzon real sirve, mientras que Resend exige
-   * un dominio propio verificado en su panel.
+   * Transporte que se usaria en este momento (para diagnostico y UI).
+   *
+   * En `auto` Resend solo se elige si el remitente pertenece a un dominio
+   * verificable. Con `SMTP_FROM` apuntando a un Gmail, Resend devolveria 422 y
+   * el correo se perderia: en ese caso se usa SMTP.
    */
-  private proveedor(): 'smtp' | 'resend' | 'console' {
+  proveedor(): TransporteCorreo {
     const forzado = (process.env.MAIL_PROVIDER ?? 'auto').trim().toLowerCase();
     const tieneSmtp = Boolean((process.env.SMTP_HOST ?? '').trim());
     const tieneResend = Boolean((process.env.RESEND_API_KEY ?? '').trim());
@@ -49,14 +132,29 @@ export class MailService {
     if (forzado === 'resend') {
       return tieneResend ? 'resend' : 'console';
     }
+    if (forzado === 'console') {
+      return 'console';
+    }
 
+    if (tieneResend && this.remitenteVerificable()) {
+      return 'resend';
+    }
     if (tieneSmtp) {
       return 'smtp';
     }
-    if (tieneResend) {
-      return 'resend';
-    }
     return 'console';
+  }
+
+  /** `false` si el remitente es de un dominio que Resend no puede verificar. */
+  remitenteVerificable(): boolean {
+    const from = this.buildFrom();
+    const correo = /<([^<>]+)>/.exec(from)?.[1] ?? from;
+    return !this.esDominioNoVerificable(correo);
+  }
+
+  /** Remitente efectivo, ya normalizado a `Nombre <correo@dominio>`. */
+  remitente(): string {
+    return this.buildFrom();
   }
 
   /**
@@ -95,7 +193,7 @@ export class MailService {
       return `Elyx <${usuario}>`;
     }
 
-    return 'Elyx <no-reply@elyx.mx>';
+    return 'Elyx <no-reply@elyx-app.com>';
   }
 
   /** Quita comillas simples/dobles que docker deja literales desde el .env. */
@@ -115,7 +213,13 @@ export class MailService {
     return DOMINIOS_NO_VERIFICABLES.has(dominio);
   }
 
-  private async sendViaResend(to: string, subject: string, html: string, apiKey: string): Promise<boolean> {
+  private async sendViaResend(
+    to: string,
+    subject: string,
+    html: string,
+    apiKey: string,
+    opciones: OpcionesCorreo,
+  ): Promise<ResultadoEnvio> {
     try {
       const from = this.buildFrom();
       const correoRemitente = /<([^<>]+)>/.exec(from)?.[1] ?? from;
@@ -123,75 +227,112 @@ export class MailService {
       // Resend solo admite remitentes de un dominio verificado en su panel.
       // Con Gmail/Hotmail el error del API es opaco (422): se avisa aqui.
       if (this.esDominioNoVerificable(correoRemitente)) {
-        console.error(
-          `[MAIL] Resend no puede enviar desde "${correoRemitente}": su dominio no es verificable. ` +
-            'Configura un dominio propio en Resend o usa SMTP (MAIL_PROVIDER=smtp).',
-        );
-        return false;
+        const error =
+          `Resend no puede enviar desde "${correoRemitente}": su dominio no es verificable. ` +
+          'Configura un dominio propio en Resend o usa SMTP (MAIL_PROVIDER=smtp).';
+        this.logger.error(`[MAIL] ${error}`);
+        return { ok: false, transporte: 'resend', error };
+      }
+
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      };
+      if (opciones.idempotencyKey) {
+        headers['Idempotency-Key'] = opciones.idempotencyKey;
+      }
+
+      const payload: Record<string, unknown> = {
+        from,
+        to,
+        subject,
+        html,
+        text: aTextoPlano(html),
+      };
+      if (opciones.replyTo) {
+        payload.reply_to = opciones.replyTo;
+      }
+      if (opciones.etiqueta) {
+        payload.tags = [{ name: 'categoria', value: opciones.etiqueta.slice(0, 60) }];
       }
 
       const response = await fetch('https://api.resend.com/emails', {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ from, to, subject, html }),
+        headers,
+        body: JSON.stringify(payload),
+        // Sin timeout, una red lenta deja la peticion abierta y el despachador
+        // se queda esperando: la entrega queda `EN_PROCESO` y bloquea el lote.
+        signal: AbortSignal.timeout(RESEND_TIMEOUT_MS),
       });
 
       if (!response.ok) {
         const body = await response.text();
-        console.error('[MAIL] Resend API error:', response.status, body);
-        return false;
+        this.logger.error(`[MAIL] Resend API error ${response.status}: ${body.slice(0, 400)}`);
+        return {
+          ok: false,
+          transporte: 'resend',
+          error: `resend-${response.status}: ${body.slice(0, 300)}`,
+        };
       }
 
-      return true;
+      return { ok: true, transporte: 'resend' };
     } catch (error) {
-      console.error('[MAIL] Error enviando via Resend:', error);
-      return false;
+      const mensaje = (error as Error).message;
+      this.logger.error(`[MAIL] Error enviando via Resend: ${mensaje}`);
+      return { ok: false, transporte: 'resend', error: `resend-excepcion: ${mensaje}` };
     }
   }
 
-  private async sendViaSmtp(to: string, subject: string, html: string): Promise<boolean> {
-    const nodemailer = await import('nodemailer');
+  private async sendViaSmtp(
+    to: string,
+    subject: string,
+    html: string,
+    opciones: OpcionesCorreo,
+  ): Promise<ResultadoEnvio> {
     const host = process.env.SMTP_HOST!;
     const port = Number(process.env.SMTP_PORT ?? 587);
     const user = process.env.SMTP_USER;
     const pass = process.env.SMTP_PASS;
 
     if (!user || !pass) {
-      console.error('[MAIL] SMTP_USER o SMTP_PASS no configurados.');
-      return false;
+      const error = 'SMTP_USER o SMTP_PASS no configurados.';
+      this.logger.error(`[MAIL] ${error}`);
+      return { ok: false, transporte: 'smtp', error };
     }
 
-    const transporter = nodemailer.createTransport({
-      host,
-      port,
-      secure: port === 465,
-      auth: { user, pass },
-      connectionTimeout: 10000,
-      greetingTimeout: 10000,
-      socketTimeout: 10000,
-    });
-
     try {
+      const nodemailer = await import('nodemailer');
+      const transporter = nodemailer.createTransport({
+        host,
+        port,
+        secure: port === 465,
+        auth: { user, pass },
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 10000,
+      });
+
       await transporter.sendMail({
-        from: process.env.SMTP_FROM ?? user,
+        from: this.buildFrom(),
         to,
         subject,
         html,
+        text: aTextoPlano(html),
+        replyTo: opciones.replyTo,
       });
-      return true;
+
+      return { ok: true, transporte: 'smtp' };
     } catch (error) {
-      console.error('[MAIL] Error al enviar correo SMTP:', error);
-      return false;
+      const mensaje = (error as Error).message;
+      this.logger.error(`[MAIL] Error al enviar correo SMTP: ${mensaje}`);
+      return { ok: false, transporte: 'smtp', error: `smtp: ${mensaje}` };
     }
   }
 
   private logConsole(to: string, subject: string, html: string) {
-    console.log(`[MAIL] Sin configuracion de correo. Simulando envio:`);
-    console.log(`  Para: ${to}`);
-    console.log(`  Asunto: ${subject}`);
-    console.log(`  Cuerpo: ${html.replace(/<[^>]*>/g, '').slice(0, 200)}`);
+    this.logger.log('[MAIL] Sin configuracion de correo. Simulando envio:');
+    this.logger.log(`  Para: ${to}`);
+    this.logger.log(`  Asunto: ${subject}`);
+    this.logger.log(`  Cuerpo: ${aTextoPlano(html).slice(0, 200)}`);
   }
 }
