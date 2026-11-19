@@ -5,6 +5,9 @@ import { navAdministrador, navCondomino } from './constants/navigation';
 import { statusLabel } from './constants/status';
 import { ActiveCondominioProvider, useActiveCondominio } from './contexts/ActiveCondominioContext';
 import { formatShortDate, seedData } from './lib/appData';
+import { downloadBlob } from './lib/descargas';
+import { generarReciboPdf } from './lib/recibos/pdf';
+import type { ReciboGenerado } from './types/recibos';
 import { PagoCuotaModal } from './components/PagoCuotaModal';
 import { DashboardPage } from './pages/DashboardPage';
 import { LoginPage } from './pages/LoginPage';
@@ -137,15 +140,6 @@ function persistActiveCondominio(correo: string, condominioId: number) {
     return;
   }
   window.localStorage.setItem(getActiveCondominioStorageKey(correo), String(condominioId));
-}
-
-function downloadBlob(blob: Blob, fileName: string) {
-  const url = window.URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = fileName;
-  anchor.click();
-  window.URL.revokeObjectURL(url);
 }
 
 /** Mensaje de espera legible a partir de los segundos de `Retry-After`. */
@@ -486,7 +480,6 @@ function AppContent() {
   const [gastoCategoria, setGastoCategoria] = useState('');
   const [gastoMonto, setGastoMonto] = useState('');
   const [votacionPregunta, setVotacionPregunta] = useState('');
-  const [periodosSeleccionados, setPeriodosSeleccionados] = useState<string[]>([]);
   const [evidenciasPorPago, setEvidenciasPorPago] = useState<Record<number, EvidenciaPagoItem[]>>({});
   /** Comprobantes de transferencias que aun esperan conciliacion del admin. */
   const [evidenciasPorCargo, setEvidenciasPorCargo] = useState<Record<number, EvidenciaPagoItem[]>>({});
@@ -849,6 +842,13 @@ function AppContent() {
       (sum: number, pago: Pago) => (pago.status === 'APROBADO' ? sum + pago.monto : sum),
       0,
     );
+    // `pago.monto` ya incluye el recargo: sin separarlo, el saldo mostraba como
+    // "cuotas cobradas" un importe que en parte son recargos.
+    const recargos = pagosScoped.reduce(
+      (sum: number, pago: Pago) =>
+        pago.status === 'APROBADO' ? sum + (pago.montoRecargo ?? 0) : sum,
+      0,
+    );
     const gastado = gastosScoped.reduce((sum: number, gasto: Gasto) => sum + gasto.monto, 0);
     const comisiones = reportesScoped.reduce(
       (sum: number, reporte: ReporteFinanciero) => sum + (reporte.comisiones ?? 0),
@@ -857,33 +857,13 @@ function AppContent() {
 
     return {
       cobrado,
+      capital: cobrado - recargos,
+      recargos,
       gastado,
       comisiones,
       saldo: cobrado - gastado - comisiones,
     };
   }, [gastosScoped, pagosScoped, reportesScoped]);
-
-  const periodosDisponibles = useMemo(
-    () => Array.from(new Set(reportesScoped.map((item: ReporteFinanciero) => item.periodo))),
-    [reportesScoped],
-  );
-
-  const reportesFiltrados = useMemo(() => {
-    if (periodosSeleccionados.length === 0) {
-      return reportesScoped;
-    }
-
-    const periodosSet = new Set(periodosSeleccionados);
-    return reportesScoped.filter((item: ReporteFinanciero) => periodosSet.has(item.periodo));
-  }, [periodosSeleccionados, reportesScoped]);
-
-  useEffect(() => {
-    if (periodosSeleccionados.length === 0) {
-      return;
-    }
-
-    setPeriodosSeleccionados((prev) => prev.filter((periodo) => periodosDisponibles.includes(periodo)));
-  }, [periodosDisponibles, periodosSeleccionados.length]);
 
   const panelReminders = useMemo(() => {
     const reminders: string[] = [];
@@ -1812,7 +1792,13 @@ function AppContent() {
       return;
     }
 
-    setPagoCuota({ idCuota: cuotaId, periodo: cuota.periodo, monto: cuota.monto });
+    setPagoCuota({
+      idCuota: cuotaId,
+      periodo: cuota.periodo,
+      // El modal muestra el total con el recargo ya devengado: si se pasara la
+      // base, el condomino veria un importe menor al que se le va a cobrar.
+      monto: cuota.montoTotal ?? cuota.monto,
+    });
   };
 
   const subirComprobante = async (cuotaId: number, file: File, idCargo?: number | null) => {
@@ -1967,7 +1953,22 @@ function AppContent() {
     }
   };
 
-  const abrirRecibo = async (recibo: { folio: string; urlPdf: string; idPago: number }) => {
+  /**
+   * Abre el recibo del pago.
+   *
+   * El backend devuelve folio, URL y `detalle` (condominio, unidad, condomino,
+   * metodo y desglose). Con ese detalle se dibuja el PDF en el navegador: es un
+   * documento informativo que se descarga, no se almacena ni se envia.
+   *
+   * Se conserva el PDF simple como respaldo por si un backend anterior no
+   * devuelve `detalle`: preferible un recibo basico a un error.
+   */
+  const abrirRecibo = async (recibo: ReciboGenerado) => {
+    if (recibo.detalle) {
+      await generarReciboPdf(recibo);
+      return;
+    }
+
     try {
       const parsedUrl = new URL(recibo.urlPdf);
       const isPrivateHost = parsedUrl.hostname.endsWith('.elyx.local');
@@ -1976,7 +1977,7 @@ function AppContent() {
         return;
       }
     } catch {
-      // If URL parsing fails, fallback to local PDF below.
+      // Si la URL no se puede interpretar, se genera una copia local.
     }
 
     const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib');
@@ -2444,168 +2445,6 @@ function AppContent() {
     } catch (error) {
       console.error(error);
       setFeedback('No se pudo enviar el reporte al backend');
-      window.setTimeout(() => setFeedback(null), 2200);
-    }
-  };
-
-  const descargarReporteExcel = async () => {
-    try {
-      const XLSX = await import('xlsx');
-      const rows = reportesFiltrados.map((item: ReporteFinanciero) => ({
-        Periodo: item.periodo,
-        Ingresos: item.ingresos,
-        Gastos: item.gastos,
-        Adeudos: item.adeudos,
-      }));
-      const worksheet = XLSX.utils.json_to_sheet(rows);
-      const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, worksheet, 'Reportes');
-      const data = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
-      const blob = new Blob([data], {
-        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      });
-      const fileSuffix =
-        periodosSeleccionados.length === 0
-          ? 'todos'
-          : periodosSeleccionados.join('-').toLowerCase().replace(/\s+/g, '-');
-      downloadBlob(blob, `reporte-financiero-${fileSuffix}.xlsx`);
-      runAction('Exportando Excel...', 'Reporte Excel descargado');
-    } catch (error) {
-      console.error(error);
-      setFeedback('No se pudo exportar Excel');
-      window.setTimeout(() => setFeedback(null), 2200);
-    }
-  };
-
-  const descargarReportePdf = async () => {
-    try {
-      const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib');
-      const pdfDoc = await PDFDocument.create();
-      const page = pdfDoc.addPage([595, 842]);
-      const { width, height } = page.getSize();
-      const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-      const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-
-      page.drawText('Reporte financiero Elyx', {
-        x: 40,
-        y: height - 50,
-        size: 16,
-        font: bold,
-        color: rgb(0.1, 0.2, 0.35),
-      });
-      page.drawText(`Periodo: ${periodosSeleccionados.length === 0 ? 'Todos' : periodosSeleccionados.join(', ')}`, {
-        x: 40,
-        y: height - 74,
-        size: 11,
-        font,
-      });
-
-      let y = height - 110;
-      const lines = reportesFiltrados.length
-        ? reportesFiltrados.map(
-            (item: ReporteFinanciero) =>
-              `${item.periodo} | Ingresos: $${item.ingresos.toLocaleString('es-MX')} | Gastos: $${item.gastos.toLocaleString('es-MX')} | Adeudos: $${item.adeudos.toLocaleString('es-MX')}`,
-          )
-        : ['No hay informacion para el periodo seleccionado'];
-
-      for (const line of lines) {
-        page.drawText(line, { x: 40, y, size: 10, font });
-        y -= 18;
-        if (y < 40) {
-          break;
-        }
-      }
-
-      const bytes = await pdfDoc.save();
-      const pdfBytes = new Uint8Array(bytes.length);
-      pdfBytes.set(bytes);
-      const blob = new Blob([pdfBytes], {
-        type: 'application/pdf',
-      });
-      const fileSuffix =
-        periodosSeleccionados.length === 0
-          ? 'todos'
-          : periodosSeleccionados.join('-').toLowerCase().replace(/\s+/g, '-');
-      downloadBlob(blob, `reporte-financiero-${fileSuffix}.pdf`);
-      runAction('Exportando PDF...', 'Reporte PDF descargado');
-    } catch (error) {
-      console.error(error);
-      setFeedback('No se pudo exportar PDF');
-      window.setTimeout(() => setFeedback(null), 2200);
-    }
-  };
-
-  const alternarPeriodoReporte = (periodo: string) => {
-    setPeriodosSeleccionados((prev) =>
-      prev.includes(periodo) ? prev.filter((item) => item !== periodo) : [...prev, periodo],
-    );
-  };
-
-  const generarReporteFinanzasAdmin = () => {
-    if (!effectiveActiveCondominioId) {
-      return;
-    }
-
-    const periodo = new Date().toLocaleDateString('es-MX', { month: 'long', year: 'numeric' });
-    const ingresos = cuotasScoped.reduce((sum: number, cuota: Cuota) => {
-      return cuota.status === 'PAGADA' ? sum + cuota.monto : sum;
-    }, 0);
-    const gastos = gastosScoped.reduce((sum: number, gasto: Gasto) => sum + gasto.monto, 0);
-    const adeudos = cuotasScoped.reduce((sum: number, cuota: Cuota) => {
-      return cuota.status !== 'PAGADA' ? sum + cuota.monto + cuota.recargo : sum;
-    }, 0);
-
-    patchAppData((prev) => {
-      const nuevoReporte: ReporteFinanciero = {
-        idCondominio: effectiveActiveCondominioId,
-        periodo,
-        ingresos,
-        gastos,
-        // Las comisiones reales se calculan en el backend desde `cargos_cuota`;
-        // este reporte local no las conoce y no debe inventarlas.
-        comisiones: 0,
-        adeudos,
-      };
-
-      const reportesSinPeriodo = prev.reportes.filter(
-        (item: ReporteFinanciero) => !(item.idCondominio === effectiveActiveCondominioId && item.periodo === periodo),
-      );
-
-      return {
-        ...prev,
-        reportes: [nuevoReporte, ...reportesSinPeriodo],
-      };
-    });
-
-    runAction('Generando reporte...', 'Reporte financiero generado');
-  };
-
-  const exportarExcelFinanzasAdmin = async () => {
-    if (!effectiveActiveCondominioId) {
-      return;
-    }
-
-    try {
-      const XLSX = await import('xlsx');
-      const rows = reportesScoped.map((item: ReporteFinanciero) => ({
-        Periodo: item.periodo,
-        Ingresos: item.ingresos,
-        Gastos: item.gastos,
-        Comisiones: item.comisiones ?? 0,
-        Adeudos: item.adeudos,
-      }));
-      const worksheet = XLSX.utils.json_to_sheet(rows);
-      const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, worksheet, 'Finanzas');
-      const data = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
-      const blob = new Blob([data], {
-        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      });
-      downloadBlob(blob, `finanzas-condominio-${effectiveActiveCondominioId}.xlsx`);
-      runAction('Exportando Excel...', 'Excel descargado');
-    } catch (error) {
-      console.error(error);
-      setFeedback('No se pudo exportar Excel de finanzas');
       window.setTimeout(() => setFeedback(null), 2200);
     }
   };
@@ -3699,7 +3538,8 @@ function AppContent() {
       panelReminders={panelReminders}
       saldoActual={saldoActual}
       saldoCondominio={finanzasCondominio.saldo}
-      cobradoCondominio={finanzasCondominio.cobrado}
+      cobradoCondominio={finanzasCondominio.capital}
+      recargosCondominio={finanzasCondominio.recargos}
       gastadoCondominio={finanzasCondominio.gastado}
       comisionesCondominio={finanzasCondominio.comisiones}
       pagosPendientesAdminCount={pagosPendientesAdmin.length}
@@ -3799,13 +3639,6 @@ function AppContent() {
       onAltaCondominoFormChange={setAltaCondominoForm}
       onCrearAltaCondomino={crearAltaCondominoAdmin}
       onRefreshUnidadesDisponibles={cargarUnidadesDisponiblesAdmin}
-      periodosSeleccionados={periodosSeleccionados}
-      periodosDisponibles={periodosDisponibles}
-      onAlternarPeriodoReporte={alternarPeriodoReporte}
-      onDescargarReportePdf={descargarReportePdf}
-      onDescargarReporteExcel={descargarReporteExcel}
-      onGenerarReporteFinanzas={generarReporteFinanzasAdmin}
-      onExportarExcelFinanzas={exportarExcelFinanzasAdmin}
       onRunAction={runAction}
       formatShortDate={formatShortDate}
     />

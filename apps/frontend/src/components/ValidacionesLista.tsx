@@ -436,6 +436,11 @@ export function ValidacionesLista({
                 </small>
               </div>
               <p className="item-amount">{MONEDA.format(pago.monto)}</p>
+              {pago.montoRecargo > 0 && (
+                <small className="muted-text">
+                  Incluye recargo por atraso: {MONEDA.format(pago.montoRecargo)}
+                </small>
+              )}
               <span
                 className={`status-pill ${
                   pago.estadoBackend === 'VALIDADO'
@@ -484,9 +489,14 @@ export function ValidacionesLista({
                 >
                   Rechazar pago
                 </button>
-                <button className="soft-btn" onClick={() => onGenerarReciboPago(pago.idPago)}>
-                  Generar recibo
-                </button>
+                {/* El recibo solo existe para pagos VALIDADOS: el backend lo
+                    exige. Mostrar el boton en un pago pendiente o rechazado
+                    llevaba a un error evitable. */}
+                {pago.estadoBackend === 'VALIDADO' && (
+                  <button className="soft-btn" onClick={() => onGenerarReciboPago(pago.idPago)}>
+                    Generar recibo
+                  </button>
+                )}
               </div>
             </article>
           );

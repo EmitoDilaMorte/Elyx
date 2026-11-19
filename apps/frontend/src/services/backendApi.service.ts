@@ -1,4 +1,6 @@
 import type { CuotaStatus, PagoStatus, UnidadConOcupante, VoteChoice } from '../types/app';
+import type { ReciboGenerado } from '../types/recibos';
+import type { ReporteFinancieroResumen } from '../types/reportes';
 import { getApiBaseUrl } from './apiBase';
 
 let authToken: string | null = null;
@@ -8,9 +10,17 @@ export type CuotaPaginada = {
   idCondominio: number;
   periodo: string;
   tipo: string;
+  /** Cuota base. */
   monto: number;
   fechaLimite: string;
+  /** Tasa diaria de recargo, no el importe. */
   recargo: number;
+  /** Dias transcurridos desde la fecha limite. */
+  diasAtraso: number;
+  /** Recargo devengado a hoy. 0 si el condominio no cobra recargos. */
+  recargoEstimado: number;
+  /** Total a pagar hoy: base + recargo. */
+  montoTotal: number;
   estado: CuotaStatus;
   claveUnidad: string | null;
   /**
@@ -49,7 +59,10 @@ export type PagoPaginado = {
   referencia: string | null;
   /** Canal con el que entro el dinero. */
   origen: OrigenPago;
+  /** Total pagado: cuota base + recargo. */
   monto: number;
+  /** Parte del monto que corresponde a recargo por atraso. */
+  montoRecargo: number;
   fechaPago: string;
   status: PagoStatus;
   estadoBackend: 'CAPTURADO' | 'VALIDADO' | 'RECHAZADO';
@@ -62,9 +75,17 @@ type BackendCuota = {
   idCondominio: number;
   periodo: string;
   tipo: string;
+  /** Cuota base, sin recargos. */
   monto: number;
   fechaLimite: string;
+  /** Tasa diaria de recargo (no el importe acumulado). */
   recargo: number;
+  /** Dias transcurridos desde la fecha limite. */
+  diasAtraso: number;
+  /** Recargo devengado a hoy (0 si el condominio no cobra recargos). */
+  recargoEstimado: number;
+  /** Lo que hay que pagar hoy: base + recargo. */
+  montoTotal: number;
   estado: 'PENDIENTE' | 'EN_VALIDACION' | 'PAGADA';
 };
 
@@ -133,6 +154,7 @@ type BackendPago = {
   idCondominio: number;
   idCuota: number;
   monto: number;
+  montoRecargo: number;
   fechaPago: string;
   estado: 'CAPTURADO' | 'VALIDADO' | 'RECHAZADO';
   idUsuarioCondominioPaga: number;
@@ -736,6 +758,9 @@ export const backendApi = {
       monto: item.monto,
       fechaLimite: item.fechaLimite,
       recargo: item.recargo,
+      diasAtraso: item.diasAtraso ?? 0,
+      recargoEstimado: item.recargoEstimado ?? 0,
+      montoTotal: item.montoTotal ?? item.monto,
       status: item.estado,
     }));
   },
@@ -784,6 +809,9 @@ export const backendApi = {
       monto: item.monto,
       fechaLimite: item.fechaLimite,
       recargo: item.recargo,
+      diasAtraso: item.diasAtraso ?? 0,
+      recargoEstimado: item.recargoEstimado ?? 0,
+      montoTotal: item.montoTotal ?? item.monto,
       status: item.estado,
     }));
   },
@@ -969,6 +997,7 @@ export const backendApi = {
       cuotaId: item.idCuota,
       condominio: item.claveUnidad ?? `Unidad ${item.idUsuarioCondominioPaga}`,
       monto: item.monto,
+      montoRecargo: item.montoRecargo ?? 0,
       fecha: item.fechaPago,
       status: mapPagoStatus(item.estado),
       idUsuarioCondominioPaga: item.idUsuarioCondominioPaga,
@@ -1033,6 +1062,7 @@ export const backendApi = {
         referencia: item.referencia ?? null,
         origen: item.origen ?? 'COMPROBANTE',
         monto: item.monto,
+        montoRecargo: item.montoRecargo ?? 0,
         fechaPago: item.fechaPago,
         status: mapPagoStatus(item.estado),
         estadoBackend: item.estado,
@@ -1240,6 +1270,23 @@ export const backendApi = {
     return requestJson<BackendReporteFinanciero[]>(`/reportes-financieros?idCondominio=${idCondominio}`);
   },
 
+  /**
+   * Reporte detallado: KPIs, serie por periodo, desgloses y movimientos.
+   *
+   * El backend decide que se entrega segun el rol EN ESE condominio: al
+   * condomino le quita la cartera por unidad, los deudores y las comisiones.
+   * `periodos` vacio = todos los periodos con informacion.
+   */
+  async getReporteFinancieroResumen(idCondominio: number, periodos: string[] = []) {
+    const query = new URLSearchParams({ idCondominio: String(idCondominio) });
+    if (periodos.length > 0) {
+      query.set('periodos', periodos.join(','));
+    }
+    return requestJson<ReporteFinancieroResumen>(
+      `/reportes-financieros/resumen?${query.toString()}`,
+    );
+  },
+
   async createEvidenciaPago(input: {
     idCondominio: number;
     /** Pago ya declarado. Excluyente con `idCargo`. */
@@ -1286,7 +1333,7 @@ export const backendApi = {
   },
 
   async generarRecibo(input: { idCondominio: number; idPago: number }) {
-    return requestJson<BackendRecibo>('/recibos/generar', {
+    return requestJson<ReciboGenerado>('/recibos/generar', {
       method: 'POST',
       body: JSON.stringify(input),
     });

@@ -2487,3 +2487,325 @@ th {
     width: min(320px, calc(100vw - 1.5rem));
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* Reportes financieros: KPIs, selector de periodos y graficas        */
+/* ------------------------------------------------------------------ */
+
+.reportes-panel {
+  display: grid;
+  gap: 1rem;
+}
+
+.reporte-encabezado {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.reporte-encabezado h4 {
+  margin: 0;
+}
+
+.reporte-acciones {
+  margin: 0;
+}
+
+.reporte-periodos {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.7rem;
+  border-radius: 14px;
+  border: 1px solid #e5ddcf;
+  background: rgba(255, 253, 250, 0.72);
+}
+
+.reporte-periodos-atajos,
+.reporte-periodos-lista {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.reporte-periodos-lista {
+  max-height: 7.5rem;
+  overflow-y: auto;
+}
+
+.reporte-chip {
+  min-height: 28px;
+  border-radius: 999px;
+  border: 1px solid #e1ccb0;
+  background: #fff7ea;
+  color: #75502a;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 700;
+  padding: 0.2rem 0.6rem;
+  cursor: pointer;
+}
+
+.reporte-chip:hover {
+  border-color: #78c4ba;
+}
+
+.reporte-chip.activo {
+  border-color: #0a8a7c;
+  background: #e3f5f2;
+  color: #085a52;
+}
+
+.reporte-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(178px, 1fr));
+  gap: 0.7rem;
+}
+
+.reporte-kpi {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.8rem;
+  border-radius: 16px;
+  border: 1px solid #e5ddcf;
+  background: var(--surface-strong);
+  box-shadow: 0 8px 20px rgba(41, 33, 24, 0.05);
+}
+
+.reporte-kpi > span {
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+}
+
+.reporte-kpi > strong {
+  font-size: 1.28rem;
+  font-weight: 800;
+  color: var(--brand-strong);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.reporte-kpi > small {
+  color: var(--ink-soft);
+  font-size: 0.74rem;
+}
+
+.reporte-kpi-negativo > strong,
+.reporte-kpi-alerta > strong {
+  color: var(--danger);
+}
+
+.reporte-kpi-positivo > strong {
+  color: var(--success);
+}
+
+.reporte-progreso {
+  height: 7px;
+  border-radius: 999px;
+  background: #e9e2d6;
+  overflow: hidden;
+}
+
+.reporte-progreso > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #0a8a7c, #f59f5a);
+}
+
+.reporte-bloque {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.9rem;
+  border-radius: 16px;
+  border: 1px solid #e5ddcf;
+  background: rgba(255, 253, 250, 0.78);
+}
+
+.reporte-bloque > h5,
+.reporte-mi-unidad h5 {
+  margin: 0;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 0.98rem;
+}
+
+.reporte-bloque-encabezado {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.reporte-chart-grid {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.reporte-grafica {
+  width: 100%;
+  min-width: 0;
+}
+
+.reporte-tooltip {
+  border-radius: 12px;
+  border: 1px solid #e5ddcf;
+  background: #fffdfa;
+  padding: 0.55rem 0.7rem;
+  box-shadow: 0 12px 28px rgba(9, 14, 30, 0.16);
+  font-size: 0.8rem;
+}
+
+.reporte-tooltip ul {
+  list-style: none;
+  margin: 0.35rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.reporte-tooltip li {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.reporte-tooltip li strong {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.reporte-tooltip-punto {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.reporte-tabla {
+  margin-bottom: 0;
+}
+
+.reporte-tabla table {
+  min-width: 760px;
+}
+
+.reporte-tabla th {
+  white-space: nowrap;
+}
+
+.reporte-tabla td.num,
+.reporte-tabla th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.reporte-tabla td.negativo {
+  color: var(--danger);
+}
+
+.reporte-tabla td.unidad {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.reporte-tabla td.positivo {
+  color: var(--success);
+}
+
+.reporte-estado {
+  margin-bottom: 0;
+}
+
+.reporte-estado-al_corriente {
+  background: #e3f5f2;
+  color: #085a52;
+  border-color: #78c4ba;
+}
+
+.reporte-estado-pendiente {
+  background: #fff2de;
+  color: #8f5a25;
+  border-color: #efcfaa;
+}
+
+.reporte-estado-vencido {
+  background: #fbe3e3;
+  color: #8f2323;
+  border-color: #e7b0b0;
+}
+
+.reporte-mi-unidad {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.reporte-mi-unidad-encabezado {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.reporte-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  padding: 0.7rem;
+  border-radius: 14px;
+  border: 1px solid #e7b0b0;
+  background: #fbe3e3;
+  color: #8f2323;
+}
+
+.reporte-error p {
+  margin: 0;
+}
+
+@media (min-width: 1100px) {
+  .reporte-chart-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .reporte-kpis {
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  }
+
+  .reporte-kpi > strong {
+    font-size: 1.08rem;
+  }
+
+  .reporte-acciones {
+    width: 100%;
+  }
+
+  .reporte-acciones .soft-btn {
+    flex: 1 1 auto;
+  }
+}
+
+/* Las tablas dentro de las tarjetas de grafica viven en media columna: con el
+   min-width global (520px) se cortaban las ultimas columnas. Aqui se ajustan al
+   ancho disponible en lugar de obligar a un scroll horizontal en cada tarjeta. */
+.reporte-chart-grid .reporte-tabla table {
+  min-width: 100%;
+}
+
+.reporte-chart-grid .reporte-tabla th,
+.reporte-chart-grid .reporte-tabla td {
+  padding: 0.45rem 0.4rem;
+  font-size: 0.82rem;
+}
+
+.reporte-chart-grid .reporte-tabla th {
+  font-size: 0.72rem;
+}

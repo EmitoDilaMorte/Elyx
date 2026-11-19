@@ -281,10 +281,12 @@ CREATE TABLE IF NOT EXISTS cargos_cuota (
   metodo VARCHAR(20) NOT NULL CHECK (metodo IN ('SPEI', 'STRIPE')),
   estado VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE'
     CHECK (estado IN ('PENDIENTE', 'PAGADO', 'EXPIRADO', 'CANCELADO')),
-  -- `monto_total` es lo que paga el condomino: SIEMPRE igual a `monto_cuota`
-  -- (la cuota no se incrementa). `monto_comision` es informativo y se llena
-  -- con el dato real de Stripe al confirmar.
+  -- `monto_total` es lo que paga el condomino: `monto_cuota + monto_recargo`.
+  -- `monto_comision` es informativo y se llena con el dato real de Stripe al
+  -- confirmar. El recargo solo aplica a los condominios que lo configuran
+  -- (`cuotas.recargo_por_dia > 0`); en los demas queda en 0.
   monto_cuota NUMERIC(12,2) NOT NULL CHECK (monto_cuota >= 0),
+  monto_recargo NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (monto_recargo >= 0),
   monto_comision NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (monto_comision >= 0),
   monto_total NUMERIC(12,2) NOT NULL CHECK (monto_total >= 0),
   moneda VARCHAR(3) NOT NULL DEFAULT 'MXN',
@@ -372,7 +374,11 @@ CREATE INDEX IF NOT EXISTS idx_depositos_condominio_fecha
 
 CREATE TABLE IF NOT EXISTS pagos (
   id_pago SERIAL PRIMARY KEY,
+  -- `monto` es lo que pago el condomino: cuota base + recargo. `monto_recargo`
+  -- desglosa la parte que corresponde a recargo por atraso (0 si el
+  -- condominio no cobra recargos).
   monto NUMERIC(12,2) NOT NULL CHECK (monto >= 0),
+  monto_recargo NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (monto_recargo >= 0),
   fecha_pago TIMESTAMP NOT NULL,
   estado VARCHAR(20) NOT NULL CHECK (estado IN ('CAPTURADO', 'VALIDADO', 'RECHAZADO')),
   referencia VARCHAR(120),

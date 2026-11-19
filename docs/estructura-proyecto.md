@@ -116,6 +116,26 @@ por conexiones a la base:
   (pendientes + recargos devengados). `cuotas.recargo_por_dia` es una tasa diaria, no el
   acumulado. La tabla `estado_cuenta` es legado y ya no se usa.
 
+### Recargos por atraso (opcionales por condominio)
+
+La tasa (`cuotas.recargo_por_dia`) es la **configuracion**: un condominio que la deja en 0
+no cobra recargos y no ve el concepto en ningun documento. Cuando es mayor que cero:
+
+- **Devengo**: `recargo = tasa × max(0, hoy - fecha_limite)`. El calculo vive en
+  `common/dinero/recargos.ts` (`calcularRecargoCuota`) y lo usan cuotas, cobros, pagos y
+  reportes, para que el saldo del estado de cuenta coincida con lo que se cobra.
+- **Cobro**: el recargo se **congela al crear el cargo** (SPEI o Stripe) y al **declarar el
+  pago manual**. Si el condomino tarda en pagar, el importe que se le mostro no cambia solo;
+  una referencia vencida y regenerada se recalcula con la fecha nueva.
+- **Persistencia**: `pagos.monto` = capital + recargo; `pagos.monto_recargo` guarda la parte
+  del recargo. En `cargos_cuota`, `monto_total = monto_cuota + monto_recargo`.
+  Migracion `20261118_recargos_pagos.sql` (sin backfill: los pagos historicos no se pueden
+  reconstruir porque la tasa se ponia en 0 al pagar).
+- **Al pagar** se conserva el recargo cobrado; `marcarPagada` sigue poniendo
+  `recargo_por_dia = 0` en la cuota, porque ya no devenga.
+- **Reportes**: `cobradoCapital = monto - monto_recargo`, `recargosCobrados = monto_recargo`.
+  La tasa de cobranza se calcula solo con capital para que el recargo no la infle.
+
 ### Confirmacion del pago con tarjeta
 
 La cuota **nunca** se marca pagada desde el navegador: la respuesta del cliente no es
@@ -145,6 +165,55 @@ el comportamiento por defecto de Stripe (`redirect_on_completion: if_required`):
 
 Ademas el backend emite `pagoChanged` por WebSocket al confirmar (tarjeta o SPEI), igual
 que `PagosService.aprobar`, para que administrador y condomino vean el cambio sin recargar.
+
+## Reportes financieros
+
+`GET /api/reportes-financieros` devuelve una fila por periodo (lo usa el polling y el
+calculo de comisiones del panel). `GET /api/reportes-financieros/resumen` entrega el reporte
+detallado que consumen el panel y las exportaciones:
+
+- **Agregados**: KPIs, serie por periodo (facturado, cobrado, recargos, gastos, comisiones,
+  balance, adeudo y tasa de cobranza), gastos por categoria, metodos de pago y antiguedad de
+  adeudos en tramos (por vencer, 1-30, 31-60, 61-90, mas de 90).
+- **Solo administrador**: `cobranzaPorUnidad`, `topDeudores` y `comisiones`.
+- **Orden de la cartera**: `cobranzaPorUnidad` lista primero las unidades con adeudo y
+  despues las que estan al corriente, y dentro de cada grupo usa **orden natural** de la
+  unidad (`substring(clave from '^[^0-9]*')` + primer numero, la misma regla que
+  `condominos.service.ts`): `2` antes que `10`, no `1, 10, 11, 2`. `topDeudores` elige las
+  10 de mayor adeudo (con desempate por orden natural) y despues las devuelve en orden
+  natural para poder localizarlas.
+- **Solo condomino**: `miUnidad` (agregado de sus unidades) y unicamente sus pagos en
+  `movimientos`; nunca ve cartera, deudores ni pagos de vecinos. Los gastos del condominio si
+  se comparten: son informacion de transparencia, no datos personales.
+- **Periodos**: `?periodos=2026-10,2026-11` o parametro repetido. Vacio = todos. Se validan
+  con `YYYY-MM` y se recortan a 60 para no permitir consultas ilimitadas.
+- El rol se deduce de la **membresia en ese condominio**: ser administrador en A no da
+  cartera en B.
+
+**Exportaciones** (navegador, sin almacenamiento en servidor):
+
+- **PDF ejecutivo** (`lib/reportes/exportarPdf.ts`) con `pdf-lib` y los helpers de
+  `lib/pdf/layout.ts`: KPIs, tendencia, categorias, metodos, detalle por periodo, antiguedad,
+  top de deudores y las primeras 20 unidades (el resto va al Excel).
+- **Excel completo** (`lib/reportes/exportarExcel.ts`): resumen, periodos, categorias,
+  metodos, antiguedad, cartera por unidad, pagos y gastos, con formato de moneda y
+  autofiltro. Las columnas numericas se escriben como numeros, no como texto.
+- El grafico de la UI usa **Recharts** (necesita `react-is` como peer explicito).
+
+## Recibos
+
+`POST /api/recibos/generar` crea (o recupera) el recibo de un pago **VALIDADO** y devuelve
+`detalle` con condominio (nombre, direccion, RFC, razon social, contacto), unidad, condomino,
+cuota y desglose del pago (`montoCapital`, `montoRecargo`, `ajuste`).
+
+- **Permisos**: el condomino solo puede generar y listar SUS recibos (por
+  `id_usuario_condominio_paga` o por haber ocupado la unidad de la cuota); el administrador,
+  todos los del condominio. `GET /api/recibos` aplica el mismo filtro.
+- **El PDF se genera en el navegador** y se descarga; no se guarda ni se envia por correo.
+  La tabla `recibos` conserva folio, fecha y `url_pdf` por compatibilidad.
+- Es un **documento informativo**, no un CFDI: el PDF lo dice explicitamente e incluye el
+  importe en letras.
+- `ajuste` solo aparece en pagos historicos cuyo monto no coincide con capital + recargo.
 
 ## Pagina publica del condominio
 
@@ -223,6 +292,7 @@ Las migraciones viven en `apps/backend/src/database/migrations/` y se aplican **
 | `20261102_registro_publico.sql` | Ciclo de vida del condominio, `cupo_unidades`, `registros_condominio`, `invitaciones_condominio`, `solicitudes_alta_invitacion`, `suscripciones_condominio`, `pagos_suscripcion` |
 | `20261103_votaciones_roles_stripe.sql` | `votaciones.tipo` + `votaciones_cambio_rol`, datos fiscales del condominio, columnas de Stripe, `stripe_eventos` |
 | `20261104_stripe_items_suscripcion.sql` | `stripe_item_base_id`, `stripe_item_unidades_id`, `stripe_item_ajuste_id` (un id por concepto de cobro) |
+| `20261118_recargos_pagos.sql` | `pagos.monto_recargo` y `cargos_cuota.monto_recargo`: el recargo por atraso se cobra y se desglosa |
 
 ## Base de datos
 

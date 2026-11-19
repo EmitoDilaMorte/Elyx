@@ -281,7 +281,19 @@ export function PagosListaCondomino({
                   <time dateTime={cuota.fechaLimite} title={formatShortDate(cuota.fechaLimite)}>
                     {cuota.fechaLimite}
                   </time>
-                  {cuota.recargo > 0 ? ` | Recargo: ${MONEDA.format(cuota.recargo)}` : ''}
+                  {/* `cuota.recargo` es la TASA diaria, no un importe. Mostrarla
+                      con formato de moneda hacia creer que ese era el recargo
+                      acumulado. Ahora se informa el recargo devengado real y
+                      solo si el condominio lo cobra. */}
+                  {!pagada && cuota.recargoEstimado > 0 && (
+                    <>
+                      {' | '}
+                      Recargo por atraso: {MONEDA.format(cuota.recargoEstimado)}
+                      {cuota.diasAtraso > 0
+                        ? ` (${cuota.diasAtraso} ${cuota.diasAtraso === 1 ? 'dia' : 'dias'})`
+                        : ''}
+                    </>
+                  )}
                 </small>
                 {referenciaSpei && (
                   <p className="helper-text" style={{ margin: '0.35rem 0 0' }}>
@@ -291,7 +303,13 @@ export function PagosListaCondomino({
                   </p>
                 )}
               </div>
-              <p className="item-amount">{MONEDA.format(cuota.monto)}</p>
+              <p className="item-amount">{MONEDA.format(cuota.montoTotal)}</p>
+              {!pagada && cuota.recargoEstimado > 0 && (
+                <small className="muted-text">
+                  Cuota {MONEDA.format(cuota.monto)} + recargo{' '}
+                  {MONEDA.format(cuota.recargoEstimado)}
+                </small>
+              )}
               <span
                 className={`status-pill ${pagada ? 'status-pagada' : 'status-pendiente'}`}
               >

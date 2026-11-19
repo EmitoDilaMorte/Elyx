@@ -1,5 +1,6 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import { aCentavos, calcularRecargoCuota } from '../../common/dinero/recargos';
 
 export type CuotaEstado = 'PENDIENTE' | 'EN_VALIDACION' | 'PAGADA';
 
@@ -8,9 +9,23 @@ type CuotaRecord = {
   idCondominio: number;
   periodo: string;
   tipo: string;
+  /** Cuota base, sin recargos. */
   monto: number;
   fechaLimite: string;
+  /**
+   * TASA diaria de recargo, no el importe acumulado.
+   *
+   * Se conserva por compatibilidad: quien necesite el importe debe leer
+   * `recargoEstimado`. Solo los condominios que la configuran cobran recargo;
+   * con 0 el condomino paga exactamente `monto`.
+   */
   recargo: number;
+  /** Dias transcurridos desde la fecha limite (0 si aun no vence). */
+  diasAtraso: number;
+  /** Recargo devengado a la fecha de consulta. 0 si la cuota esta pagada. */
+  recargoEstimado: number;
+  /** Lo que hay que pagar hoy: base + recargo devengado. */
+  montoTotal: number;
   estado: CuotaEstado;
 };
 
@@ -591,16 +606,43 @@ export class CuotasService {
     return texto;
   }
 
+  /**
+   * Normaliza una fila de cuota y calcula el recargo devengado.
+   *
+   * El calculo se hace AQUI, en un solo lugar, con el mismo helper que usan el
+   * cobro y los reportes. Antes cada pantalla sumaba la tasa como si fuera el
+   * importe acumulado y subestimaba el adeudo. Una cuota pagada no devenga
+   * recargo: al pagarse, `recargo_por_dia` se pone en 0.
+   */
   private toCuotaRecord(row: Record<string, unknown>): CuotaRecord {
+    const monto = aCentavos(row.monto_base);
+    const recargo = aCentavos(row.recargo_por_dia);
+    const estado = this.resolveEstado(
+      String(row.cuota_estado),
+      row.pago_estado ? String(row.pago_estado) : null,
+    );
+
+    const vencimiento =
+      estado === 'PAGADA'
+        ? { diasAtraso: 0, montoRecargo: 0, montoTotal: monto }
+        : calcularRecargoCuota({
+            montoBase: monto,
+            tasaDiaria: recargo,
+            fechaLimite: row.fecha_limite,
+          });
+
     return {
       idCuota: Number(row.id_cuota),
       idCondominio: Number(row.id_condominio),
       periodo: String(row.periodo),
       tipo: String(row.tipo ?? 'Cuota de mantenimiento'),
-      monto: Number(row.monto_base),
+      monto,
       fechaLimite: this.aFechaIso(row.fecha_limite),
-      recargo: Number(row.recargo_por_dia),
-      estado: this.resolveEstado(String(row.cuota_estado), row.pago_estado ? String(row.pago_estado) : null),
+      recargo,
+      diasAtraso: vencimiento.diasAtraso,
+      recargoEstimado: vencimiento.montoRecargo,
+      montoTotal: vencimiento.montoTotal,
+      estado,
     };
   }
 

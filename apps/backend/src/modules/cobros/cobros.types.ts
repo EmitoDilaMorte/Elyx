@@ -59,6 +59,13 @@ export type ConfiguracionCobro = {
  */
 export type OpcionesPagoCuota = {
   idCuota: number;
+  /** Cuota base, sin recargos. */
+  montoBase: number;
+  /** Recargo devengado a hoy. 0 si el condominio no cobra recargos. */
+  montoRecargo: number;
+  /** Dias de atraso con los que se calculo el recargo. */
+  diasAtraso: number;
+  /** Lo que se cobra hoy: base + recargo. */
   montoTotal: number;
   moneda: string;
   metodosDisponibles: MetodoCargo[];
@@ -75,6 +82,16 @@ export type DatosPagoCuota = {
   idCuota: number;
   metodo: MetodoCargo;
   estado: EstadoCargo;
+  /** Cuota base, sin recargos. */
+  montoBase: number;
+  /** Recargo incluido en este cobro. */
+  montoRecargo: number;
+  /**
+   * Dias de atraso con los que se calculo el recargo. Opcional: el cargo ya
+   * guardado no los conserva, solo el importe congelado.
+   */
+  diasAtraso?: number;
+  /** Lo que se cobra: base + recargo. */
   montoTotal: number;
   moneda: string;
   /** Solo SPEI */
@@ -108,8 +125,12 @@ export type CargoRecord = {
   idCondominio: number;
   metodo: MetodoCargo;
   estado: EstadoCargo;
+  /** Cuota base del cargo. */
   montoCuota: number;
+  /** Recargo incluido en el cargo (0 si no aplica). */
+  montoRecargo: number;
   montoComision: number;
+  /** montoCuota + montoRecargo. */
   montoTotal: number;
   moneda: string;
   referenciaSpei: string | null;
@@ -126,7 +147,9 @@ export type CargoPendiente = {
   idCuota: number;
   periodo: string;
   claveUnidad: string;
+  /** Base + recargo: lo que debe llegar por transferencia. */
   montoTotal: number;
+  montoRecargo: number;
   referenciaSpei: string | null;
   expiraEn: string | null;
 };

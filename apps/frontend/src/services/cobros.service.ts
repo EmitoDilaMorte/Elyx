@@ -79,6 +79,13 @@ export type EstadoAdministradoresStripe = {
 
 export type OpcionesPagoCuota = {
   idCuota: number;
+  /** Cuota base, sin recargos. */
+  montoBase: number;
+  /** Recargo devengado a hoy. 0 si el condominio no cobra recargos. */
+  montoRecargo: number;
+  /** Dias de atraso con los que se calculo el recargo. */
+  diasAtraso: number;
+  /** Lo que se cobra hoy: base + recargo. */
   montoTotal: number;
   moneda: string;
   /** Metodos que el condominio ofrece hoy. */
@@ -95,6 +102,13 @@ export type DatosPagoCuota = {
   idCuota: number;
   metodo: MetodoCargo;
   estado: 'PENDIENTE' | 'PAGADO' | 'EXPIRADO' | 'CANCELADO';
+  /** Cuota base, sin recargos. */
+  montoBase?: number;
+  /** Recargo incluido en este cobro. */
+  montoRecargo?: number;
+  /** Dias de atraso con los que se calculo el recargo. */
+  diasAtraso?: number;
+  /** Total a pagar: base + recargo. */
   montoTotal: number;
   moneda: string;
   clabe?: string | null;
@@ -118,7 +132,9 @@ export type CargoPendiente = {
   idCuota: number;
   periodo: string;
   claveUnidad: string;
+  /** Base + recargo: lo que debe llegar por transferencia. */
   montoTotal: number;
+  montoRecargo: number;
   referenciaSpei: string | null;
   expiraEn: string | null;
 };

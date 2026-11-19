@@ -204,8 +204,19 @@ export function PagoCuotaModal({
           <div>
             <h4>Pagar cuota {periodo}</h4>
             <p className="muted-text" style={{ margin: '0.2rem 0 0' }}>
-              Monto a pagar: <strong>{MONEDA.format(monto)}</strong>
+              Monto a pagar: <strong>{MONEDA.format(opciones?.montoTotal ?? monto)}</strong>
             </p>
+            {/* El recargo solo aparece en los condominios que lo cobran; con
+                tasa 0 el total es la cuota y no se muestra un desglose falso. */}
+            {opciones && opciones.montoRecargo > 0 && (
+              <p className="helper-text" style={{ margin: '0.15rem 0 0' }}>
+                Cuota {MONEDA.format(opciones.montoBase)} + recargo por atraso{' '}
+                {MONEDA.format(opciones.montoRecargo)}
+                {opciones.diasAtraso > 0
+                  ? ` (${opciones.diasAtraso} ${opciones.diasAtraso === 1 ? 'dia' : 'dias'})`
+                  : ''}
+              </p>
+            )}
           </div>
           <button type="button" className="icon-btn" onClick={onCerrar} aria-label="Cerrar">
             ✕
@@ -298,8 +309,22 @@ export function PagoCuotaModal({
                 <span>Referencia</span>
                 <strong className="mono">{datos.referencia}</strong>
               </li>
+              {(datos.montoRecargo ?? 0) > 0 && (
+                <li>
+                  <span>Cuota base</span>
+                  <strong>
+                    {MONEDA.format(datos.montoBase ?? datos.montoTotal - (datos.montoRecargo ?? 0))}
+                  </strong>
+                </li>
+              )}
+              {(datos.montoRecargo ?? 0) > 0 && (
+                <li>
+                  <span>Recargo por atraso</span>
+                  <strong>{MONEDA.format(datos.montoRecargo ?? 0)}</strong>
+                </li>
+              )}
               <li>
-                <span>Monto</span>
+                <span>{datos.montoRecargo ? 'Total a transferir' : 'Monto'}</span>
                 <strong>{MONEDA.format(datos.montoTotal)}</strong>
               </li>
             </ul>

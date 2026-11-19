@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import type Stripe from 'stripe';
+import { aCentavos, calcularRecargoCuota } from '../../common/dinero/recargos';
 import { PagosGateway } from '../pagos/pagos.gateway';
 import { StripeClientService } from '../suscripciones/stripe-client.service';
 import type { CargoRecord, DatosPagoCuota } from './cobros.types';
@@ -15,9 +16,11 @@ import type { CargoRecord, DatosPagoCuota } from './cobros.types';
  *  - Un contracargo tambien se le debita al condominio.
  *  - Elyx no es intermediario de fondos de terceros.
  *
- * **Monto**: exactamente el de la cuota. No se agrega recargo ni comision al
- * condomino; si se hiciera, la cuota dejaria de valer lo que dice y habria que
- * explicar un cobro mayor en cada estado de cuenta.
+ * **Monto**: la cuota base MAS el recargo por atraso cuando el condominio lo
+ * configura (`cuotas.recargo_por_dia > 0`). El recargo se congela al crear la
+ * sesion: si el condomino tarda en pagar, el importe mostrado no cambia solo.
+ * Un condominio sin recargo cobra exactamente la cuota. La comision de Stripe
+ * la absorbe el condominio y NUNCA se suma al monto del condomino.
  *
  * **MSI**: apagado por defecto. Con dynamic payment methods Stripe ofrece meses
  * sin intereses automaticamente para tarjetas de credito mexicanas, y cada
@@ -133,7 +136,10 @@ export class CobrosStripeService {
               unit_amount: Math.round(cuota.monto * 100),
               product_data: {
                 name: `Cuota de mantenimiento ${cuota.periodo}`,
-                description: `Unidad ${cuota.claveUnidad}`,
+                description:
+                  cuota.montoRecargo > 0
+                    ? `Unidad ${cuota.claveUnidad} · incluye recargo por atraso`
+                    : `Unidad ${cuota.claveUnidad}`,
               },
             },
           },
@@ -235,7 +241,7 @@ export class CobrosStripeService {
           monto_comision = $4,
           actualizado_en = NOW()
       WHERE id_cargo = $1 AND estado = 'PENDIENTE'
-      RETURNING id_cargo, id_cuota, id_condominio, monto_total
+      RETURNING id_cargo, id_cuota, id_condominio, monto_total, monto_recargo
       `,
       [idCargo, this.idPaymentIntent(session), comision?.balanceTransactionId ?? null, comision?.monto ?? 0],
     );
@@ -249,15 +255,16 @@ export class CobrosStripeService {
     const idCuota = Number(cargo.id_cuota);
     const idCondominio = Number(cargo.id_condominio);
     const monto = Number(cargo.monto_total);
+    const montoRecargo = aCentavos(cargo.monto_recargo);
 
-    await this.registrarPago(idCondominio, idCuota, idCargo, monto, session.id);
+    await this.registrarPago(idCondominio, idCuota, idCargo, monto, montoRecargo, session.id);
 
     // Avisa al navegador del condomino y del administrador. Sin esto la cuota
     // se marcaba pagada en la base pero la pantalla seguia mostrandola
     // pendiente hasta que alguien recargaba a mano.
     this.pagosGateway.emitPagoChanged(idCondominio, {
       tipo: 'VALIDADO',
-      pago: { idCuota, idCargo, monto, origen: 'STRIPE' },
+      pago: { idCuota, idCargo, monto, montoRecargo, origen: 'STRIPE' },
     });
 
     this.logger.log(
@@ -334,13 +341,29 @@ export class CobrosStripeService {
     };
   }
 
+  /**
+   * Cuota lista para cobrar, con el recargo ya devengado.
+   *
+   * `monto` es el TOTAL que se cobra; `montoBase` y `montoRecargo` permiten
+   * desglosarlo en el checkout, el recibo y los reportes. Sin recargo
+   * configurado, `montoRecargo` es 0 y `monto` coincide con la base.
+   */
   private async cuotaParaCobro(
     idCondominio: number,
     idCuota: number,
-  ): Promise<{ idCuota: number; monto: number; periodo: string; claveUnidad: string }> {
+  ): Promise<{
+    idCuota: number;
+    monto: number;
+    montoBase: number;
+    montoRecargo: number;
+    diasAtraso: number;
+    periodo: string;
+    claveUnidad: string;
+  }> {
     const rows = await this.dataSource.query(
       `
-      SELECT c.id_cuota, c.monto_base, c.periodo, c.estado, u.clave_unidad
+      SELECT c.id_cuota, c.monto_base, c.recargo_por_dia, c.fecha_limite,
+             c.periodo, c.estado, u.clave_unidad
       FROM cuotas c
       INNER JOIN unidades u ON u.id_unidad = c.id_unidad
       WHERE c.id_cuota = $1 AND c.id_condominio = $2
@@ -358,9 +381,18 @@ export class CobrosStripeService {
       throw new BadRequestException('Esta cuota ya esta pagada.');
     }
 
+    const desglose = calcularRecargoCuota({
+      montoBase: row.monto_base,
+      tasaDiaria: row.recargo_por_dia,
+      fechaLimite: row.fecha_limite,
+    });
+
     return {
       idCuota: Number(row.id_cuota),
-      monto: Number(row.monto_base),
+      monto: desglose.montoTotal,
+      montoBase: aCentavos(row.monto_base),
+      montoRecargo: desglose.montoRecargo,
+      diasAtraso: desglose.diasAtraso,
       periodo: String(row.periodo),
       claveUnidad: String(row.clave_unidad),
     };
@@ -370,12 +402,15 @@ export class CobrosStripeService {
     idCargo: number;
     idCuota: number;
     metodo: string;
+    montoCuota: number;
+    montoRecargo: number;
     montoTotal: number;
     checkoutSessionId: string | null;
   } | null> {
     const rows = await this.dataSource.query(
       `
-      SELECT id_cargo, id_cuota, metodo, monto_total, stripe_checkout_session_id
+      SELECT id_cargo, id_cuota, metodo, monto_cuota, monto_recargo, monto_total,
+             stripe_checkout_session_id
       FROM cargos_cuota
       WHERE id_cuota = $1 AND estado = 'PENDIENTE'
       LIMIT 1
@@ -391,7 +426,9 @@ export class CobrosStripeService {
       idCargo: Number(row.id_cargo),
       idCuota: Number(row.id_cuota),
       metodo: String(row.metodo),
-      montoTotal: Number(row.monto_total),
+      montoCuota: aCentavos(row.monto_cuota),
+      montoRecargo: aCentavos(row.monto_recargo),
+      montoTotal: aCentavos(row.monto_total),
       checkoutSessionId: row.stripe_checkout_session_id
         ? String(row.stripe_checkout_session_id)
         : null,
@@ -427,7 +464,7 @@ export class CobrosStripeService {
 
   private async guardarCargo(
     idCondominio: number,
-    cuota: { idCuota: number; monto: number },
+    cuota: { idCuota: number; monto: number; montoBase: number; montoRecargo: number },
     sesion: Stripe.Checkout.Session,
     stripeAccountId: string,
   ): Promise<CargoRecord> {
@@ -439,17 +476,19 @@ export class CobrosStripeService {
       `
       INSERT INTO cargos_cuota (
         id_cuota, id_condominio, metodo, estado,
-        monto_cuota, monto_comision, monto_total, moneda,
+        monto_cuota, monto_recargo, monto_comision, monto_total, moneda,
         stripe_checkout_session_id, stripe_account_id, expira_en
       )
-      VALUES ($1, $2, 'STRIPE', 'PENDIENTE', $3, 0, $3, 'MXN', $4, $5, $6)
+      VALUES ($1, $2, 'STRIPE', 'PENDIENTE', $3, $4, 0, $5, 'MXN', $6, $7, $8)
       ON CONFLICT (id_cuota) WHERE estado = 'PENDIENTE' DO NOTHING
       RETURNING id_cargo, id_cuota, id_condominio, metodo, estado, monto_cuota,
-                monto_comision, monto_total, moneda, referencia_spei, expira_en, pagado_en
+                monto_recargo, monto_comision, monto_total, moneda, referencia_spei, expira_en, pagado_en
       `,
       [
         cuota.idCuota,
         idCondominio,
+        cuota.montoBase,
+        cuota.montoRecargo,
         cuota.monto,
         sesion.id,
         stripeAccountId,
@@ -472,7 +511,8 @@ export class CobrosStripeService {
       idCondominio,
       metodo: 'STRIPE',
       estado: 'PENDIENTE',
-      montoCuota: vigente.montoTotal,
+      montoCuota: vigente.montoCuota,
+      montoRecargo: vigente.montoRecargo,
       montoComision: 0,
       montoTotal: vigente.montoTotal,
       moneda: 'MXN',
@@ -495,7 +535,7 @@ export class CobrosStripeService {
    */
   private async reemplazarSesionDeCargo(
     idCargo: number,
-    cuota: { idCuota: number; monto: number },
+    cuota: { idCuota: number; monto: number; montoBase: number; montoRecargo: number },
     sesion: Stripe.Checkout.Session,
     stripeAccountId: string,
   ): Promise<CargoRecord> {
@@ -505,7 +545,8 @@ export class CobrosStripeService {
       `
       UPDATE cargos_cuota
       SET metodo = 'STRIPE',
-          monto_cuota = $2,
+          monto_cuota = $6,
+          monto_recargo = $7,
           monto_total = $2,
           monto_comision = 0,
           stripe_checkout_session_id = $3,
@@ -517,9 +558,17 @@ export class CobrosStripeService {
           actualizado_en = NOW()
       WHERE id_cargo = $1 AND estado = 'PENDIENTE'
       RETURNING id_cargo, id_cuota, id_condominio, metodo, estado, monto_cuota,
-                monto_comision, monto_total, moneda, referencia_spei, expira_en, pagado_en
+                monto_recargo, monto_comision, monto_total, moneda, referencia_spei, expira_en, pagado_en
       `,
-      [idCargo, cuota.monto, sesion.id, stripeAccountId, expira],
+      [
+        idCargo,
+        cuota.monto,
+        sesion.id,
+        stripeAccountId,
+        expira,
+        cuota.montoBase,
+        cuota.montoRecargo,
+      ],
     );
 
     const filas = this.filasDe(actualizados);
@@ -535,6 +584,8 @@ export class CobrosStripeService {
     cargo: {
       idCargo: number;
       idCuota: number;
+      montoCuota?: number;
+      montoRecargo?: number;
       montoTotal: number;
       moneda?: string;
       estado?: CargoRecord['estado'];
@@ -549,7 +600,9 @@ export class CobrosStripeService {
       idCuota: cargo.idCuota,
       metodo: 'STRIPE',
       estado: cargo.estado ?? 'PENDIENTE',
-      montoTotal: cargo.montoTotal,
+      montoBase: aCentavos(cargo.montoCuota ?? cargo.montoTotal),
+      montoRecargo: aCentavos(cargo.montoRecargo ?? 0),
+      montoTotal: aCentavos(cargo.montoTotal),
       moneda: cargo.moneda ?? 'MXN',
       clientSecret,
       permitirMsi: configuracion.permitirMsi,
@@ -830,6 +883,7 @@ export class CobrosStripeService {
     idCuota: number,
     idCargo: number,
     monto: number,
+    montoRecargo: number,
     sessionId: string,
   ): Promise<void> {
     await this.dataSource.transaction(async (manager) => {
@@ -838,11 +892,11 @@ export class CobrosStripeService {
       await manager.query(
         `
         INSERT INTO pagos (
-          monto, fecha_pago, estado, referencia, origen, id_cuota,
+          monto, monto_recargo, fecha_pago, estado, referencia, origen, id_cuota,
           id_usuario_condominio_paga, id_usuario_condominio_admin, id_cargo
         )
         SELECT
-          $1, NOW(), 'VALIDADO', $2, 'STRIPE', $3,
+          $1, $6, NOW(), 'VALIDADO', $2, 'STRIPE', $3,
           -- Quien paga es el ocupante vigente de la unidad de la cuota. Antes
           -- se guardaba NULL y, como "Mis pagos" filtra por esta columna, el
           -- condomino no veia los cargos hechos con tarjeta.
@@ -864,6 +918,7 @@ export class CobrosStripeService {
           $4, $5
         ON CONFLICT (id_cuota) DO UPDATE SET
           monto = EXCLUDED.monto,
+          monto_recargo = EXCLUDED.monto_recargo,
           fecha_pago = EXCLUDED.fecha_pago,
           estado = 'VALIDADO',
           referencia = EXCLUDED.referencia,
@@ -877,7 +932,7 @@ export class CobrosStripeService {
           id_cargo = EXCLUDED.id_cargo
         WHERE pagos.estado IN ('RECHAZADO', 'CAPTURADO')
         `,
-        [monto, sessionId, idCuota, idUsuario, idCargo],
+        [monto, sessionId, idCuota, idUsuario, idCargo, montoRecargo],
       );
 
       await manager.query(
@@ -917,9 +972,10 @@ export class CobrosStripeService {
       idCondominio: Number(row.id_condominio),
       metodo: 'STRIPE',
       estado: String(row.estado) as CargoRecord['estado'],
-      montoCuota: Number(row.monto_cuota),
+      montoCuota: aCentavos(row.monto_cuota),
+      montoRecargo: aCentavos(row.monto_recargo),
       montoComision: Number(row.monto_comision ?? 0),
-      montoTotal: Number(row.monto_total),
+      montoTotal: aCentavos(row.monto_total),
       moneda: String(row.moneda ?? 'MXN'),
       referenciaSpei: null,
       expiraEn: row.expira_en ? new Date(String(row.expira_en)).toISOString() : null,

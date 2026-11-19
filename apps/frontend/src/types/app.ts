@@ -71,9 +71,17 @@ export type Cuota = {
   idCondominio: number;
   periodo: string;
   tipo: string;
+  /** Cuota base, sin recargos. */
   monto: number;
   fechaLimite: string;
+  /** Tasa diaria de recargo (no el importe acumulado). */
   recargo: number;
+  /** Dias transcurridos desde la fecha limite. */
+  diasAtraso?: number;
+  /** Recargo devengado a hoy. 0 si el condominio no cobra recargos. */
+  recargoEstimado?: number;
+  /** Total a pagar hoy: base + recargo. */
+  montoTotal?: number;
   status: CuotaStatus;
 };
 
@@ -82,7 +90,10 @@ export type Pago = {
   idCondominio: number;
   cuotaId: number;
   condominio: string;
+  /** Total pagado: cuota base + recargo. */
   monto: number;
+  /** Parte del monto que corresponde a recargo por atraso. */
+  montoRecargo?: number;
   fecha: string;
   status: PagoStatus;
   idUsuarioCondominioPaga?: number;

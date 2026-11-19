@@ -76,6 +76,11 @@ que nadie intervenga del lado de la plataforma.
 Todo el dinero que se mueve en el condominio queda trazado: cada pago tiene su
 comprobante, su validación, su recibo y su línea en el reporte financiero del periodo.
 
+**Recargos por atraso (opcional por condominio).** Si el condominio configura una tasa
+diaria, el recargo se **devenga** en la cuota pendiente, se **cobra** en el pago (manual,
+SPEI o tarjeta) y se **desglosa** en el recibo y en los reportes. Un condominio sin tasa
+cobra exactamente la cuota base: el recargo queda en cero y no aparece en ningún documento.
+
 ---
 
 ## Funcionalidades
@@ -89,7 +94,7 @@ comprobante, su validación, su recibo y su línea en el reporte financiero del 
 | **Avisos** | Comunicados del administrador con fecha de publicación |
 | **Votaciones** | Votar asambleas abiertas y consultar resultados |
 | **Mantenimiento** | Reportar fallas con descripción y fotografías, y seguir el estatus |
-| **Reportes** | Consultar el histórico de cuotas y pagos de su unidad |
+| **Reportes** | Panel financiero del condominio con KPIs, gráficas, selección de periodos y exportación a **PDF** y **Excel**; incluye el resumen de su unidad |
 
 ### Para el administrador
 
@@ -101,7 +106,7 @@ comprobante, su validación, su recibo y su línea en el reporte financiero del 
 | **Votaciones** | Convocar votaciones generales y ejecutar acuerdos de cambio de cuota aprobados |
 | **Reportes de mantenimiento** | Dar seguimiento a los reportes de los condóminos con comentarios y evidencias |
 | **Gastos** | Registro de gastos por categoría, proveedor y comprobante |
-| **Reportes financieros** | Ingresos, egresos y adeudos por periodo, con exportación a **PDF** y **Excel** |
+| **Reportes financieros** | KPIs, gráficas, gastos por categoría, métodos de pago, antigüedad de adeudos, cobranza por unidad y deudores, con selección de periodos y exportación a **PDF** y **Excel** |
 | **Altas, bajas y cambios** | Administrar unidades, ocupantes y membresías del condominio |
 | **Invitaciones** | Generar un enlace para que los condóminos se registren, con cupo igual a las unidades libres, y aprobar cada solicitud |
 | **Suscripción** | Estado de la suscripción a Elyx, desglose de la cuota, pago con tarjeta o Link y datos fiscales (solo si esta instancia la cobra) |
@@ -611,8 +616,8 @@ y validan la pertenencia al condominio solicitado.
 | `PATCH` | `/api/pagos/aprobar` | El administrador valida el pago |
 | `PATCH` | `/api/pagos/rechazar` | El administrador rechaza el pago (con motivo) |
 | `GET` | `/api/evidencias-pago` | Comprobantes cargados |
-| `GET` | `/api/recibos` | Recibos emitidos |
-| `POST` | `/api/recibos/generar` | Genera el recibo de un pago validado |
+| `GET` | `/api/recibos` | Recibos emitidos (el condómino solo ve los suyos) |
+| `POST` | `/api/recibos/generar` | Genera el recibo de un pago validado y devuelve su detalle (condominio, unidad, condómino, método y desglose de importes) |
 
 ### Cobro en línea de cuotas
 
@@ -631,7 +636,7 @@ comprobantes que suben los condóminos.
 | `GET` | `/api/estado-cuenta?idCondominio=&idUsuarioCondominio=` | Saldo, adeudo y recargos devengados calculados en el servidor |
 | `GET` | `/api/cobros/configuracion` | Método configurado y si el condominio puede usar cada uno |
 | `PATCH` | `/api/cobros/configuracion` | Configura SPEI o tarjeta (`STRIPE_CONNECT` exige RFC del condominio) |
-| `GET` | `/api/cobros/cuota/:idCuota` | Datos para pagar: CLABE y referencia, o `clientSecret` del checkout |
+| `GET` | `/api/cobros/cuota/:idCuota` | Desglose de la cuota (base, recargo y total), métodos disponibles y cargo vigente |
 | `POST` | `/api/cobros/cargo/tarjeta` | Crea la Checkout Session de una cuota (direct charge) |
 | `GET` | `/api/cobros/cargo/estado` | Estado de la cuota frente a su cargo |
 | `GET` | `/api/cobros/cargos/pendientes` | Cargos SPEI pendientes de conciliar |
@@ -675,7 +680,8 @@ contra `payouts.list`.
 | `PATCH` | `/api/reportes-mantenimiento/estado` | Cambia el estatus de un reporte |
 | `GET` | `/api/fotos-mantenimiento` | Fotografías adjuntas a los reportes |
 | `GET` | `/api/gastos` | Gastos del condominio por periodo y categoría |
-| `GET` | `/api/reportes-financieros` | Reportes por periodo: ingresos, gastos, comisiones de Stripe y adeudos |
+| `GET` | `/api/reportes-financieros` | Series por periodo: ingresos, gastos, comisiones de Stripe y adeudos |
+| `GET` | `/api/reportes-financieros/resumen` | Reporte detallado: KPIs, antigüedad de adeudos, cobranza por unidad y movimientos; acepta `periodos=2026-10,2026-11` |
 
 ### Unidades, condóminos y plataforma
 
@@ -843,17 +849,25 @@ En el volumen de archivos del backend, y sólo son accesibles para el condómino
 pago, el administrador de su condominio y el superusuario.
 
 **¿Elyx cobra comisión por los pagos de los condóminos?**
-No. Elyx no intermedia el dinero de las cuotas: registra el pago, valida el comprobante y
-emite el recibo, pero el dinero va del condómino al condominio por el medio que ellos
-acuerden (transferencia, depósito, efectivo). Hoy **no** se paga la cuota de mantenimiento
-con tarjeta desde la plataforma.
+No. Elyx no intermedia el dinero de las cuotas: cuando el condominio lo configura, el
+condómino paga por **transferencia SPEI** o **tarjeta** con Stripe Connect, y el dinero
+llega directo al condominio. En cualquier caso Elyx registra el pago, valida el comprobante
+si aplica y emite el recibo.
 
 Lo que sí se cobra es la **suscripción a Elyx**: un cargo mensual distinto, a nombre del
 condominio, que se paga con tarjeta o Link desde el panel de administración.
 
+**¿Cómo funcionan los recargos por atraso?**
+Son **opcionales por condominio**: si se configura una tasa diaria, cada cuota vencida
+devenga el recargo correspondiente (`tasa × días de atraso`). El condómino ve el importe
+actualizado en su lista de cuotas y en el modal de pago; al pagar, el recargo se cobra y
+queda congelado en el pago. El recibo lo desglosa y el reporte lo separa del capital.
+Si el condominio deja la tasa en cero, no se cobra ni se muestra recargo alguno.
+
 **¿Puedo exportar la información?**
-Sí. Los reportes financieros se exportan a PDF y Excel, y la base de datos es PostgreSQL
-estándar.
+Sí. Los reportes financieros se exportan a PDF (resumen ejecutivo con gráficas) y Excel
+(detalle completo: periodos, categorías, métodos, cartera por unidad y movimientos), y la
+base de datos es PostgreSQL estándar.
 
 ---
 

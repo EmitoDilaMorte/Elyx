@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { DataSource } from 'typeorm';
+import { aCentavos, calcularRecargoCuota } from '../../common/dinero/recargos';
 import { CuotasService } from '../cuotas/cuotas.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { PagosGateway } from '../pagos/pagos.gateway';
@@ -36,8 +37,12 @@ const DIAS_VIGENCIA_SPEI = 15;
  *    dinero nunca pasa por Elyx (ver `CobrosStripeService`).
  *
  * Reglas de dinero:
- *  - `monto_total` SIEMPRE es igual al monto de la cuota. La cuota no se
- *    incrementa y el condomino no paga la comision.
+ *  - `monto_total = monto_cuota + monto_recargo`. El recargo solo existe en los
+ *    condominios que lo configuran (`cuotas.recargo_por_dia > 0`); con tasa 0
+ *    el condomino paga exactamente la cuota base.
+ *  - El recargo se congela al crear el cargo: si el condomino tarda en pagar,
+ *    el importe que se le mostro no cambia solo. Al expirar el cargo y
+ *    regenerarlo se recalcula con la fecha nueva.
  *  - La comision de Stripe la absorbe el condominio; `monto_comision` es
  *    informativo y se llena con el dato real de Stripe al confirmar.
  *  - Elyx no cobra comision por transaccion.
@@ -447,7 +452,7 @@ export class CobrosService {
     const rows = await this.dataSource.query(
       `
       SELECT id_cargo, id_cuota, id_condominio, metodo, estado, monto_cuota,
-             monto_comision, monto_total, moneda, referencia_spei, expira_en, pagado_en
+             monto_recargo, monto_comision, monto_total, moneda, referencia_spei, expira_en, pagado_en
       FROM cargos_cuota
       WHERE id_cuota = $1 AND estado = 'PENDIENTE'
       LIMIT 1
@@ -473,6 +478,7 @@ export class CobrosService {
         cc.id_cargo,
         cc.id_cuota,
         cc.monto_total,
+        cc.monto_recargo,
         cc.referencia_spei,
         cc.expira_en,
         c.periodo,
@@ -498,6 +504,7 @@ export class CobrosService {
       periodo: String(row.periodo),
       claveUnidad: String(row.clave_unidad),
       montoTotal: Number(row.monto_total),
+      montoRecargo: aCentavos(row.monto_recargo),
       referenciaSpei: row.referencia_spei ? String(row.referencia_spei) : null,
       expiraEn: row.expira_en ? new Date(String(row.expira_en)).toISOString() : null,
     }));
@@ -578,6 +585,9 @@ export class CobrosService {
 
     return {
       idCuota,
+      montoBase: cuota.montoBase,
+      montoRecargo: cuota.montoRecargo,
+      diasAtraso: cuota.diasAtraso,
       montoTotal: cuota.monto,
       moneda: 'MXN',
       metodosDisponibles: configuracion.metodosDisponibles,
@@ -625,14 +635,30 @@ export class CobrosService {
     return this.armarDatosPago(cargo, idCondominio);
   }
 
-  /** Datos de la cuota que se va a cobrar, validando que sea cobrable. */
+  /**
+   * Datos de la cuota que se va a cobrar, validando que sea cobrable.
+   *
+   * `monto` es el TOTAL a cobrar (base + recargo); `montoBase` y
+   * `montoRecargo` se guardan por separado para que el recibo y los reportes
+   * puedan desglosarlo. Un condominio sin recargo configurado obtiene
+   * `montoRecargo = 0`.
+   */
   private async cuotaParaCobro(
     idCondominio: number,
     idCuota: number,
-  ): Promise<{ idCuota: number; monto: number; periodo: string; claveUnidad: string }> {
+  ): Promise<{
+    idCuota: number;
+    monto: number;
+    montoBase: number;
+    montoRecargo: number;
+    diasAtraso: number;
+    periodo: string;
+    claveUnidad: string;
+  }> {
     const rows = await this.dataSource.query(
       `
-      SELECT c.id_cuota, c.monto_base, c.periodo, c.estado, u.clave_unidad
+      SELECT c.id_cuota, c.monto_base, c.recargo_por_dia, c.fecha_limite,
+             c.periodo, c.estado, u.clave_unidad
       FROM cuotas c
       INNER JOIN unidades u ON u.id_unidad = c.id_unidad
       WHERE c.id_cuota = $1 AND c.id_condominio = $2
@@ -650,9 +676,18 @@ export class CobrosService {
       throw new BadRequestException('Esta cuota ya esta pagada.');
     }
 
+    const desglose = calcularRecargoCuota({
+      montoBase: row.monto_base,
+      tasaDiaria: row.recargo_por_dia,
+      fechaLimite: row.fecha_limite,
+    });
+
     return {
       idCuota: Number(row.id_cuota),
-      monto: Number(row.monto_base),
+      monto: desglose.montoTotal,
+      montoBase: aCentavos(row.monto_base),
+      montoRecargo: desglose.montoRecargo,
+      diasAtraso: desglose.diasAtraso,
       periodo: String(row.periodo),
       claveUnidad: String(row.clave_unidad),
     };
@@ -667,7 +702,15 @@ export class CobrosService {
    */
   private async crearCargoSpei(
     idCondominio: number,
-    cuota: { idCuota: number; monto: number; periodo: string; claveUnidad: string },
+    cuota: {
+      idCuota: number;
+      /** Total a cobrar: base + recargo. */
+      monto: number;
+      montoBase: number;
+      montoRecargo: number;
+      periodo: string;
+      claveUnidad: string;
+    },
     configuracion: ConfiguracionCobro,
   ): Promise<CargoRecord> {
     if (!configuracion.clabe) {
@@ -689,7 +732,8 @@ export class CobrosService {
         `
         UPDATE cargos_cuota
         SET metodo = 'SPEI',
-            monto_cuota = $2,
+            monto_cuota = $5,
+            monto_recargo = $6,
             monto_total = $2,
             monto_comision = 0,
             referencia_spei = $3,
@@ -701,9 +745,16 @@ export class CobrosService {
             actualizado_en = NOW()
         WHERE id_cargo = $1 AND estado = 'PENDIENTE'
         RETURNING id_cargo, id_cuota, id_condominio, metodo, estado, monto_cuota,
-                  monto_comision, monto_total, moneda, referencia_spei, expira_en, pagado_en
+                  monto_recargo, monto_comision, monto_total, moneda, referencia_spei, expira_en, pagado_en
         `,
-        [vigente.idCargo, cuota.monto, referencia, expira.toISOString()],
+        [
+          vigente.idCargo,
+          cuota.monto,
+          referencia,
+          expira.toISOString(),
+          cuota.montoBase,
+          cuota.montoRecargo,
+        ],
       );
 
       const filas = this.normalizarFilas(reemplazados);
@@ -718,15 +769,23 @@ export class CobrosService {
       `
       INSERT INTO cargos_cuota (
         id_cuota, id_condominio, metodo, estado,
-        monto_cuota, monto_comision, monto_total, moneda,
+        monto_cuota, monto_recargo, monto_comision, monto_total, moneda,
         referencia_spei, expira_en
       )
-      VALUES ($1, $2, 'SPEI', 'PENDIENTE', $3, 0, $3, 'MXN', $4, $5)
+      VALUES ($1, $2, 'SPEI', 'PENDIENTE', $3, $4, 0, $5, 'MXN', $6, $7)
       ON CONFLICT (id_cuota) WHERE estado = 'PENDIENTE' DO NOTHING
       RETURNING id_cargo, id_cuota, id_condominio, metodo, estado, monto_cuota,
-                monto_comision, monto_total, moneda, referencia_spei, expira_en, pagado_en
+                monto_recargo, monto_comision, monto_total, moneda, referencia_spei, expira_en, pagado_en
       `,
-      [cuota.idCuota, idCondominio, cuota.monto, referencia, expira.toISOString()],
+      [
+        cuota.idCuota,
+        idCondominio,
+        cuota.montoBase,
+        cuota.montoRecargo,
+        cuota.monto,
+        referencia,
+        expira.toISOString(),
+      ],
     );
 
     const insertadas = this.normalizarFilas(insertados);
@@ -768,6 +827,8 @@ export class CobrosService {
       idCuota: cargo.idCuota,
       metodo: cargo.metodo,
       estado: cargo.estado,
+      montoBase: cargo.montoCuota,
+      montoRecargo: cargo.montoRecargo,
       montoTotal: cargo.montoTotal,
       moneda: cargo.moneda,
       clabe: configuracion.clabe,
@@ -791,7 +852,7 @@ export class CobrosService {
       const rowsRaw = await manager.query(
         `
         SELECT id_cargo, id_cuota, id_condominio, metodo, estado, monto_cuota,
-               monto_comision, monto_total, moneda, referencia_spei, expira_en, pagado_en
+               monto_recargo, monto_comision, monto_total, moneda, referencia_spei, expira_en, pagado_en
         FROM cargos_cuota
         WHERE id_cargo = $1 AND id_condominio = $2
         LIMIT 1
@@ -821,7 +882,7 @@ export class CobrosService {
         SET estado = 'PAGADO', pagado_en = NOW(), actualizado_en = NOW()
         WHERE id_cargo = $1 AND estado = 'PENDIENTE'
         RETURNING id_cargo, id_cuota, id_condominio, metodo, estado, monto_cuota,
-                  monto_comision, monto_total, moneda, referencia_spei, expira_en, pagado_en
+                  monto_recargo, monto_comision, monto_total, moneda, referencia_spei, expira_en, pagado_en
         `,
         [input.idCargo],
       );
@@ -844,11 +905,11 @@ export class CobrosService {
       await manager.query(
         `
         INSERT INTO pagos (
-          monto, fecha_pago, estado, referencia, origen, id_cuota,
+          monto, monto_recargo, fecha_pago, estado, referencia, origen, id_cuota,
           id_usuario_condominio_paga, id_usuario_condominio_admin, id_cargo
         )
         SELECT
-          $1, NOW(), 'VALIDADO', $2, 'SPEI', $3,
+          $1, $6, NOW(), 'VALIDADO', $2, 'SPEI', $3,
           -- Quien paga es el ocupante vigente de la unidad de la cuota. Antes
           -- se guardaba NULL y, como "Mis pagos" filtra por esta columna, el
           -- condomino no veia la transferencia confirmada por el administrador.
@@ -870,6 +931,7 @@ export class CobrosService {
           $4, $5
         ON CONFLICT (id_cuota) DO UPDATE SET
           monto = EXCLUDED.monto,
+          monto_recargo = EXCLUDED.monto_recargo,
           fecha_pago = EXCLUDED.fecha_pago,
           estado = 'VALIDADO',
           referencia = EXCLUDED.referencia,
@@ -889,6 +951,7 @@ export class CobrosService {
           actual.idCuota,
           idUsuario,
           actual.idCargo,
+          actual.montoRecargo,
         ],
       );
 
@@ -1075,9 +1138,10 @@ export class CobrosService {
       idCondominio: Number(row.id_condominio),
       metodo: String(row.metodo) as MetodoCargo,
       estado: String(row.estado) as EstadoCargo,
-      montoCuota: Number(row.monto_cuota),
+      montoCuota: aCentavos(row.monto_cuota),
+      montoRecargo: aCentavos(row.monto_recargo),
       montoComision: Number(row.monto_comision ?? 0),
-      montoTotal: Number(row.monto_total),
+      montoTotal: aCentavos(row.monto_total),
       moneda: String(row.moneda ?? 'MXN'),
       referenciaSpei: row.referencia_spei ? String(row.referencia_spei) : null,
       expiraEn: row.expira_en ? new Date(String(row.expira_en)).toISOString() : null,

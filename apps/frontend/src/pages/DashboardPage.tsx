@@ -21,6 +21,7 @@ import { Icon } from '../components/Icon';
 import { InvitacionesPanel } from '../components/InvitacionesPanel';
 import { MfaSettings } from '../components/MfaSettings';
 import { PagosListaCondomino } from '../components/PagosListaCondomino';
+import { ReportesPanel } from '../components/reportes/ReportesPanel';
 import { SuscripcionPanel } from '../components/SuscripcionPanel';
 import { ValidacionesLista } from '../components/ValidacionesLista';
 import { backendApi, getApiHostUrl } from '../services/backendApi.service';
@@ -60,7 +61,10 @@ type DashboardPageProps = {
   saldoActual: number;
   /** Saldo del condominio: cobrado - gastos - comisiones de Stripe. */
   saldoCondominio: number;
+  /** Capital de cuotas cobrado, sin recargos. */
   cobradoCondominio: number;
+  /** Recargos por atraso efectivamente cobrados. */
+  recargosCondominio: number;
   gastadoCondominio: number;
   comisionesCondominio: number;
   pagosPendientesAdminCount: number;
@@ -267,13 +271,6 @@ type DashboardPageProps = {
   }) => void;
   onCrearAltaCondomino: () => void;
   onRefreshUnidadesDisponibles: () => void;
-  periodosSeleccionados: string[];
-  periodosDisponibles: string[];
-  onAlternarPeriodoReporte: (value: string) => void;
-  onDescargarReportePdf: () => void;
-  onDescargarReporteExcel: () => void;
-  onGenerarReporteFinanzas: () => void;
-  onExportarExcelFinanzas: () => void;
   onRunAction: (loading: string, success: string) => void;
   formatShortDate: (isoDate: string) => string;
 };
@@ -295,6 +292,7 @@ export function DashboardPage({
   saldoActual,
   saldoCondominio,
   cobradoCondominio,
+  recargosCondominio,
   gastadoCondominio,
   comisionesCondominio,
   pagosPendientesAdminCount,
@@ -390,17 +388,19 @@ export function DashboardPage({
   onAltaCondominoFormChange,
   onCrearAltaCondomino,
   onRefreshUnidadesDisponibles,
-  periodosSeleccionados,
-  periodosDisponibles,
-  onAlternarPeriodoReporte,
-  onDescargarReportePdf,
-  onDescargarReporteExcel,
-  onGenerarReporteFinanzas,
-  onExportarExcelFinanzas,
   onRunAction,
   formatShortDate,
 }: DashboardPageProps) {
   const [unidadCondomino, setUnidadCondomino] = useState<UnidadConOcupante | null>(null);
+  /**
+   * Clave de refresco del panel de reportes.
+   *
+   * Ademas de los pagos (`refrescoPagos`), cambia cuando se registra un gasto
+   * o cambia el numero de movimientos: el panel recalcula contra el servidor y
+   * no contra copias locales.
+   */
+  const refrescoReportes =
+    refrescoPagos + appData.pagos.length + appData.gastos.length + appData.cuotas.length;
   /**
    * El aviso ya no solo alimenta la seccion "Avisos": tambien genera una
    * notificacion para cada miembro. El correo es opcional porque un aviso a 200
@@ -1882,52 +1882,12 @@ export function DashboardPage({
 
           {role === 'condomino' && activeView === 'reportes' && (
             <section className="panel animate-in">
-              <h4>Reportes financieros</h4>
-              <p className="helper-text" style={{ marginBottom: '0.8rem' }}>
-                Selecciona los periodos directamente en la tabla. Si no seleccionas ninguno, se exportan todos.
-              </p>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Sel.</th>
-                      <th>Periodo</th>
-                      <th>Ingresos</th>
-                      <th>Gastos</th>
-                      <th>Adeudos</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {appData.reportes.map((row) => (
-                      <tr key={row.periodo}>
-                        <td>
-                          <button
-                            className={`period-toggle ${periodosSeleccionados.includes(row.periodo) ? 'active' : ''}`}
-                            onClick={() => onAlternarPeriodoReporte(row.periodo)}
-                            type="button"
-                          >
-                            {periodosSeleccionados.includes(row.periodo) ? 'Seleccionado' : 'Seleccionar'}
-                          </button>
-                        </td>
-                        <td>{row.periodo}</td>
-                        <td>${row.ingresos.toLocaleString('es-MX')}</td>
-                        <td>${row.gastos.toLocaleString('es-MX')}</td>
-                        <td>${row.adeudos.toLocaleString('es-MX')}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="btn-row">
-                <button className="soft-btn" onClick={onDescargarReportePdf}>
-                  <Icon name="download" />
-                  Descargar PDF
-                </button>
-                <button className="soft-btn" onClick={onDescargarReporteExcel}>
-                  <Icon name="download" />
-                  Descargar Excel
-                </button>
-              </div>
+              <ReportesPanel
+                idCondominio={activeCondominioId}
+                esAdmin={false}
+                refrescoPagos={refrescoReportes}
+                onRunAction={onRunAction}
+              />
             </section>
           )}
 
@@ -2360,12 +2320,16 @@ export function DashboardPage({
                 <h4>Saldo actual</h4>
                 <p className="big-number">${saldoCondominio.toLocaleString('es-MX')}</p>
                 <small className="muted-text">
-                  Cuotas cobradas menos gastos y comisiones de Stripe.
+                  Cobrado menos gastos y comisiones de Stripe. Incluye recargos.
                 </small>
                 <ul className="datos-lista" style={{ marginTop: '0.6rem' }}>
                   <li>
-                    <span>Cuotas cobradas</span>
+                    <span>Capital de cuotas cobrado</span>
                     <strong>${cobradoCondominio.toLocaleString('es-MX')}</strong>
+                  </li>
+                  <li>
+                    <span>Recargos cobrados</span>
+                    <strong>${recargosCondominio.toLocaleString('es-MX')}</strong>
                   </li>
                   <li>
                     <span>Gastos reportados</span>
@@ -2376,15 +2340,6 @@ export function DashboardPage({
                     <strong>${comisionesCondominio.toLocaleString('es-MX')}</strong>
                   </li>
                 </ul>
-                <div className="btn-row" style={{ marginTop: '0.7rem' }}>
-                  <button className="soft-btn" onClick={onGenerarReporteFinanzas}>
-                    Generar reporte
-                  </button>
-                  <button className="soft-btn" onClick={onExportarExcelFinanzas}>
-                    <Icon name="download" />
-                    Exportar Excel
-                  </button>
-                </div>
               </article>
 
               <article className="panel animate-in stagger-2">
@@ -2411,45 +2366,18 @@ export function DashboardPage({
                   cuanto y cuando le transfirieron. */}
               <DepositosPanel idCondominio={activeCondominioId} />
 
-              {/* Desglose por periodo. Las comisiones se muestran aparte de los
-                  gastos porque las descuenta Stripe del deposito: sumarlas a
-                  `gastos` contaria dos veces si el administrador tambien sube
-                  el movimiento de Stripe a mano. */}
+              {/* Reporte detallado: KPIs, graficas, seleccion de periodos y
+                  exportacion PDF/Excel. Sustituye a la tabla plana anterior y
+                  es el mismo panel que ve el condomino, con la cartera y las
+                  comisiones que solo corresponden al administrador. */}
               <article className="panel animate-in" style={{ gridColumn: '1 / -1' }}>
-                <h4>Reportes por periodo</h4>
-                <p className="helper-text">
-                  Las comisiones son lo que Stripe desconto del deposito del condominio por los
-                  pagos con tarjeta. No se registran como gasto manual y solo el administrador las
-                  ve.
-                </p>
-                {appData.reportes.length === 0 ? (
-                  <p className="empty-state">Aun no hay periodos con movimientos.</p>
-                ) : (
-                  <div className="table-wrap">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Periodo</th>
-                          <th>Ingresos</th>
-                          <th>Gastos</th>
-                          <th>Comisiones</th>
-                          <th>Adeudos</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {appData.reportes.map((row) => (
-                          <tr key={row.periodo}>
-                            <td>{row.periodo}</td>
-                            <td>${row.ingresos.toLocaleString('es-MX')}</td>
-                            <td>${row.gastos.toLocaleString('es-MX')}</td>
-                            <td>${(row.comisiones ?? 0).toLocaleString('es-MX')}</td>
-                            <td>${row.adeudos.toLocaleString('es-MX')}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+                <ReportesPanel
+                  idCondominio={activeCondominioId}
+                  esAdmin
+                  refrescoPagos={refrescoReportes}
+                  embebido
+                  onRunAction={onRunAction}
+                />
               </article>
             </section>
           )}

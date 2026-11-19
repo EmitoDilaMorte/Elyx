@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PagoEstado } from '../../common/enums/pago-estado.enum';
+import { aCentavos, calcularRecargoCuota } from '../../common/dinero/recargos';
 import { CuotasService } from '../cuotas/cuotas.service';
 import { AprobarPagoDto, RechazarPagoDto } from './dto/actualizar-pago.dto';
 import { CapturarPagoDto } from './dto/capturar-pago.dto';
@@ -14,13 +15,18 @@ type PagoRecord = {
   idPago: number;
   idCondominio: number;
   idCuota: number;
+  /** Lo que pago el condomino: cuota base + recargo. */
   monto: number;
+  /** Parte del monto que corresponde a recargo por atraso. */
+  montoRecargo: number;
   fechaPago: string;
   estado: PagoEstado;
   idUsuarioCondominioPaga: number;
   idUsuarioCondominioAdmin: number | null;
   motivoRechazo: string | null;
   claveUnidad: string | null;
+  /** Canal con el que entro el dinero. */
+  origen: OrigenPago;
 };
 
 /** Pago con los datos de su cuota: lo que necesita el listado paginado. */
@@ -28,8 +34,6 @@ export type PagoPaginado = PagoRecord & {
   periodo: string;
   tipo: string;
   referencia: string | null;
-  /** Canal con el que entro el dinero: transferencia, tarjeta o manual. */
-  origen: OrigenPago;
 };
 
 /** Origen del pago tal como lo guarda `pagos.origen`. */
@@ -93,6 +97,8 @@ export class PagosService {
         p.id_usuario_condominio_paga,
         p.id_usuario_condominio_admin,
         p.motivo_rechazo,
+        p.monto_recargo,
+        COALESCE(p.origen, 'COMPROBANTE') AS origen,
         u.clave_unidad
       FROM pagos p
       INNER JOIN cuotas c ON c.id_cuota = p.id_cuota
@@ -156,6 +162,7 @@ export class PagosService {
           c.periodo,
           c.tipo,
           p.monto,
+          p.monto_recargo,
           p.fecha_pago,
           p.estado,
           p.referencia,
@@ -207,7 +214,6 @@ export class PagosService {
         periodo: row.periodo ? String(row.periodo) : '',
         tipo: row.tipo ? String(row.tipo) : 'Cuota de mantenimiento',
         referencia: row.referencia ? String(row.referencia) : null,
-        origen: (row.origen ? String(row.origen) : 'COMPROBANTE') as OrigenPago,
       })),
       meta: {
         page,
@@ -222,7 +228,8 @@ export class PagosService {
     await this.dataSource.transaction(async (manager) => {
       const cuotaRaw = await manager.query(
         `
-        SELECT c.id_cuota, c.id_condominio, c.monto_base, c.estado
+        SELECT c.id_cuota, c.id_condominio, c.monto_base, c.recargo_por_dia,
+               c.fecha_limite, c.estado
         FROM cuotas c
         WHERE c.id_condominio = $1 AND c.id_cuota = $2
         LIMIT 1
@@ -268,10 +275,23 @@ export class PagosService {
         await manager.query('DELETE FROM pagos WHERE id_pago = $1', [Number(pagoRows[0].id_pago)]);
       }
 
+      /*
+       * El recargo se congela al DECLARAR el pago: es el importe que el
+       * condomino afirma haber cubierto. Si el administrador tarda en validar,
+       * el monto no cambia por el paso de los dias. Una cuota sin recargo
+       * configurado (`recargo_por_dia = 0`) sigue cobrando solo la base.
+       */
+      const desglose = calcularRecargoCuota({
+        montoBase: cuota.monto_base,
+        tasaDiaria: cuota.recargo_por_dia,
+        fechaLimite: cuota.fecha_limite,
+      });
+
       const createdRaw = await manager.query(
         `
         INSERT INTO pagos (
           monto,
+          monto_recargo,
           fecha_pago,
           estado,
           referencia,
@@ -280,10 +300,16 @@ export class PagosService {
           id_usuario_condominio_paga,
           id_usuario_condominio_admin
         )
-        VALUES ($1, NOW(), 'CAPTURADO', NULL, NULL, $2, $3, NULL)
-        RETURNING id_pago, monto, fecha_pago, estado, id_cuota, id_usuario_condominio_paga, id_usuario_condominio_admin, motivo_rechazo
+        VALUES ($1, $2, NOW(), 'CAPTURADO', NULL, NULL, $3, $4, NULL)
+        RETURNING id_pago, monto, monto_recargo, fecha_pago, estado, id_cuota,
+                  id_usuario_condominio_paga, id_usuario_condominio_admin, motivo_rechazo
         `,
-        [Number(cuota.monto_base), input.idCuota, input.idUsuarioCondominioPaga],
+        [
+          desglose.montoTotal,
+          desglose.montoRecargo,
+          input.idCuota,
+          input.idUsuarioCondominioPaga,
+        ],
       );
 
       const createdRows = this.normalizeQueryRows(createdRaw);
@@ -308,11 +334,13 @@ export class PagosService {
           p.id_pago,
           p.id_cuota,
           p.monto,
+          p.monto_recargo,
           p.fecha_pago,
           p.estado,
           p.id_usuario_condominio_paga,
           p.id_usuario_condominio_admin,
           p.motivo_rechazo,
+          COALESCE(p.origen, 'COMPROBANTE') AS origen,
           c.id_condominio,
           u.clave_unidad
         FROM pagos p
@@ -349,7 +377,8 @@ export class PagosService {
             id_usuario_condominio_admin = $1,
             motivo_rechazo = NULL
         WHERE id_pago = $2 AND estado = 'CAPTURADO'
-        RETURNING id_pago, monto, fecha_pago, estado, id_cuota, id_usuario_condominio_paga, id_usuario_condominio_admin, motivo_rechazo
+        RETURNING id_pago, monto, monto_recargo, fecha_pago, estado, id_cuota,
+                  id_usuario_condominio_paga, id_usuario_condominio_admin, motivo_rechazo
         `,
         [input.idUsuarioCondominioAdmin, input.idPago],
       );
@@ -401,12 +430,14 @@ export class PagosService {
         idCondominio: input.idCondominio,
         idCuota: Number(pago.id_cuota),
         monto: Number(pago.monto),
+        montoRecargo: aCentavos(pago.monto_recargo),
         fechaPago: this.toIsoDate(pago.fecha_pago),
         estado: PagoEstado.VALIDADO,
         idUsuarioCondominioPaga: pago.id_usuario_condominio_paga ? Number(pago.id_usuario_condominio_paga) : 0,
         idUsuarioCondominioAdmin: input.idUsuarioCondominioAdmin,
         motivoRechazo: null,
         claveUnidad: pago.clave_unidad ? String(pago.clave_unidad) : null,
+        origen: (pago.origen ? String(pago.origen) : 'COMPROBANTE') as OrigenPago,
       } satisfies PagoRecord;
     });
 
@@ -426,11 +457,13 @@ export class PagosService {
           p.id_pago,
           p.id_cuota,
           p.monto,
+          p.monto_recargo,
           p.fecha_pago,
           p.estado,
           p.id_usuario_condominio_paga,
           p.id_usuario_condominio_admin,
           p.motivo_rechazo,
+          COALESCE(p.origen, 'COMPROBANTE') AS origen,
           c.id_condominio,
           u.clave_unidad
         FROM pagos p
@@ -467,7 +500,8 @@ export class PagosService {
             id_usuario_condominio_admin = $1,
             motivo_rechazo = $2
         WHERE id_pago = $3 AND estado = 'CAPTURADO'
-        RETURNING id_pago, monto, fecha_pago, estado, id_cuota, id_usuario_condominio_paga, id_usuario_condominio_admin, motivo_rechazo
+        RETURNING id_pago, monto, monto_recargo, fecha_pago, estado, id_cuota,
+                  id_usuario_condominio_paga, id_usuario_condominio_admin, motivo_rechazo
         `,
         [input.idUsuarioCondominioAdmin, input.motivoRechazo.trim(), input.idPago],
       );
@@ -491,12 +525,14 @@ export class PagosService {
         idCondominio: input.idCondominio,
         idCuota: Number(pago.id_cuota),
         monto: Number(pago.monto),
+        montoRecargo: aCentavos(pago.monto_recargo),
         fechaPago: this.toIsoDate(pago.fecha_pago),
         estado: PagoEstado.RECHAZADO,
         idUsuarioCondominioPaga: pago.id_usuario_condominio_paga ? Number(pago.id_usuario_condominio_paga) : 0,
         idUsuarioCondominioAdmin: input.idUsuarioCondominioAdmin,
         motivoRechazo: input.motivoRechazo.trim(),
         claveUnidad: pago.clave_unidad ? String(pago.clave_unidad) : null,
+        origen: (pago.origen ? String(pago.origen) : 'COMPROBANTE') as OrigenPago,
       } satisfies PagoRecord;
     });
 
@@ -516,11 +552,13 @@ export class PagosService {
         c.id_condominio,
         p.id_cuota,
         p.monto,
+        p.monto_recargo,
         p.fecha_pago,
         p.estado,
         p.id_usuario_condominio_paga,
         p.id_usuario_condominio_admin,
         p.motivo_rechazo,
+        COALESCE(p.origen, 'COMPROBANTE') AS origen,
         u.clave_unidad
       FROM pagos p
       INNER JOIN cuotas c ON c.id_cuota = p.id_cuota
@@ -558,13 +596,15 @@ export class PagosService {
       idPago: Number(row.id_pago),
       idCondominio: row.id_condominio ? Number(row.id_condominio) : 0,
       idCuota: row.id_cuota ? Number(row.id_cuota) : 0,
-      monto: Number(row.monto),
+      monto: aCentavos(row.monto),
+      montoRecargo: aCentavos(row.monto_recargo),
       fechaPago,
       estado: String(row.estado) as PagoEstado,
       idUsuarioCondominioPaga: row.id_usuario_condominio_paga ? Number(row.id_usuario_condominio_paga) : 0,
       idUsuarioCondominioAdmin: row.id_usuario_condominio_admin ? Number(row.id_usuario_condominio_admin) : null,
       motivoRechazo: row.motivo_rechazo ? String(row.motivo_rechazo) : null,
       claveUnidad: row.clave_unidad ? String(row.clave_unidad) : null,
+      origen: (row.origen ? String(row.origen) : 'COMPROBANTE') as OrigenPago,
     };
   }
 
