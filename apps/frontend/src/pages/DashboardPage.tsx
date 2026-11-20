@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type {
   AppData,
   Condominio,
@@ -443,6 +443,136 @@ export function DashboardPage({
     };
   }, [role, sessionUser, activeCondominioId]);
 
+  /**
+   * Al abrir el menu en pantalla chica la lista se desplaza hasta el boton
+   * activo. Sin esto, un administrador parado en "Suscripcion y cobro" abre el
+   * menu y no ve donde esta; con la lista ya scrolleable el boton existe, pero
+   * queda fuera de vista.
+   */
+  const navScrollRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!menuOpen) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      navScrollRef.current
+        ?.querySelector<HTMLElement>('.nav-item.active')
+        ?.scrollIntoView({ block: 'nearest' });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [menuOpen, activeView]);
+
+  /**
+   * Contenedor del drawer, barra movil y contenido: los tres participan en el
+   * manejo de foco mientras el menu esta abierto.
+   */
+  const sidebarRef = useRef<HTMLElement | null>(null);
+  const barraMovilRef = useRef<HTMLElement | null>(null);
+  const contenidoRef = useRef<HTMLElement | null>(null);
+  const botonMenuRef = useRef<HTMLButtonElement | null>(null);
+
+  /**
+   * Con el drawer abierto el fondo queda `inert`: no recibe Tab, ni clics, ni
+   * lo lee un lector de pantalla. Sin esto, tabular desde el menu se salia al
+   * contenido tapado por el velo y el usuario de teclado "desaparecia".
+   */
+  useEffect(() => {
+    const esDrawer = menuOpen && !window.matchMedia('(min-width: 900px)').matches;
+    const fondos = [barraMovilRef.current, contenidoRef.current];
+
+    fondos.forEach((elemento) => {
+      if (!elemento) {
+        return;
+      }
+
+      if (esDrawer) {
+        elemento.setAttribute('inert', '');
+      } else {
+        elemento.removeAttribute('inert');
+      }
+    });
+
+    return () => {
+      fondos.forEach((elemento) => elemento?.removeAttribute('inert'));
+    };
+  }, [menuOpen]);
+
+  /**
+   * Focus trap del drawer movil: Tab y Shift+Tab ciclan solo entre los botones
+   * del menu y al cerrar el foco vuelve al boton que lo abrio. En escritorio no
+   * aplica porque ahi el menu es navegacion persistente, no un dialogo.
+   */
+  useEffect(() => {
+    if (!menuOpen || window.matchMedia('(min-width: 900px)').matches) {
+      return;
+    }
+
+    const panel = sidebarRef.current;
+    if (!panel) {
+      return;
+    }
+
+    const enfocables = () =>
+      Array.from(
+        panel.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((elemento) => elemento.offsetParent !== null);
+
+    // Al abrir, el foco entra al menu para que el lector de pantalla lo anuncie.
+    const frame = window.requestAnimationFrame(() => {
+      const [primero] = enfocables();
+      const destino = panel.querySelector<HTMLElement>('.sidebar-close') ?? primero ?? panel;
+      destino.focus({ preventScroll: true });
+    });
+
+    const alPresionarTab = (evento: KeyboardEvent) => {
+      if (evento.key !== 'Tab') {
+        return;
+      }
+
+      const items = enfocables();
+      if (items.length === 0) {
+        evento.preventDefault();
+        return;
+      }
+
+      const primero = items[0];
+      const ultimo = items[items.length - 1];
+      const activo = document.activeElement;
+
+      // Si el foco se escapo (o nunca entro), se devuelve al extremo correcto.
+      if (!panel.contains(activo)) {
+        evento.preventDefault();
+        (evento.shiftKey ? ultimo : primero).focus();
+        return;
+      }
+
+      if (evento.shiftKey && activo === primero) {
+        evento.preventDefault();
+        ultimo.focus();
+      } else if (!evento.shiftKey && activo === ultimo) {
+        evento.preventDefault();
+        primero.focus();
+      }
+    };
+
+    document.addEventListener('keydown', alPresionarTab);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener('keydown', alPresionarTab);
+
+      // En el siguiente frame el fondo ya no es `inert` y el boton acepta foco.
+      window.requestAnimationFrame(() => {
+        botonMenuRef.current?.focus({ preventScroll: true });
+      });
+    };
+  }, [menuOpen]);
+
   // Membresia activa del usuario en el condominio seleccionado. Se calcula
   // antes de los accesos rapidos porque de ella depende si el administrador
   // tambien es residente y puede ver "Mis pagos".
@@ -624,14 +754,36 @@ export function DashboardPage({
   return (
     <div className="app-bg">
       <div className="app-shell">
-        <header className="mobile-bar">
+        <header className="mobile-bar" ref={barraMovilRef}>
           <h1>Elyx</h1>
-          <button className="icon-btn" onClick={onToggleMenu} aria-label="Abrir menu">
+          <button
+            ref={botonMenuRef}
+            className="icon-btn"
+            onClick={onToggleMenu}
+            type="button"
+            aria-expanded={menuOpen}
+            aria-controls="app-sidebar"
+            aria-label={menuOpen ? 'Cerrar menu' : 'Abrir menu'}
+          >
             <Icon name={menuOpen ? 'close' : 'menu'} />
           </button>
         </header>
 
-        <aside className={`sidebar ${menuOpen ? 'open' : ''}`}>
+        <aside
+          id="app-sidebar"
+          ref={sidebarRef}
+          tabIndex={-1}
+          className={`sidebar ${menuOpen ? 'open' : ''}`}
+        >
+          <button
+            className="sidebar-close"
+            onClick={onCloseMenu}
+            type="button"
+            aria-label="Cerrar menu"
+          >
+            <Icon name="close" />
+          </button>
+
           <div className="brand-block">
             <p className="brand-kicker">Plataforma condominal</p>
             <h2>Elyx</h2>
@@ -641,7 +793,7 @@ export function DashboardPage({
             <p>Pago, validacion, comunicacion y mantenimiento en un solo lugar.</p>
           </div>
 
-          <nav>
+          <nav ref={navScrollRef}>
             {navItems.map((item) => (
               <button
                 key={item.key}
@@ -665,7 +817,7 @@ export function DashboardPage({
           type="button"
         />
 
-        <main className="content">
+        <main className="content" ref={contenidoRef}>
           <section className="welcome-card animate-in">
             <h3>{role === 'condomino' ? 'Panel de Condominio' : 'Panel de Administrador'}</h3>
             <div className="welcome-top">

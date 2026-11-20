@@ -1499,6 +1499,77 @@ function AppContent() {
 
   const closeMobileMenu = () => setMenuOpen(false);
 
+  /**
+   * Con el menu lateral abierto el fondo no debe moverse: en movil el scroll
+   * "de rebote" hacia que el usuario cerrara el menu sin querer.
+   */
+  useEffect(() => {
+    if (!menuOpen) {
+      return;
+    }
+
+    const raiz = document.documentElement;
+    const overflowPrevioBody = document.body.style.overflow;
+    const overflowPrevioRaiz = raiz.style.overflow;
+
+    document.body.style.overflow = 'hidden';
+    raiz.style.overflow = 'hidden';
+
+    return () => {
+      document.body.style.overflow = overflowPrevioBody;
+      raiz.style.overflow = overflowPrevioRaiz;
+    };
+  }, [menuOpen]);
+
+  /** Escape cierra el menu, igual que el boton de cerrar o el fondo oscuro. */
+  useEffect(() => {
+    if (!menuOpen) {
+      return;
+    }
+
+    const alPresionarTecla = (evento: KeyboardEvent) => {
+      if (evento.key === 'Escape') {
+        setMenuOpen(false);
+      }
+    };
+
+    window.addEventListener('keydown', alPresionarTecla);
+    return () => window.removeEventListener('keydown', alPresionarTecla);
+  }, [menuOpen]);
+
+  /**
+   * El drawer solo existe por debajo de 900px. Si el usuario lo deja abierto y
+   * agranda la ventana (o rota el celular), el fondo quedaria bloqueado sin
+   * que se viera el menu.
+   */
+  useEffect(() => {
+    if (!menuOpen) {
+      return;
+    }
+
+    const escritorio = window.matchMedia('(min-width: 900px)');
+    const cerrarSiEsEscritorio = () => {
+      if (escritorio.matches) {
+        setMenuOpen(false);
+      }
+    };
+    const cerrarAlRotar = () => setMenuOpen(false);
+
+    cerrarSiEsEscritorio();
+    escritorio.addEventListener('change', cerrarSiEsEscritorio);
+    window.addEventListener('orientationchange', cerrarAlRotar);
+
+    return () => {
+      escritorio.removeEventListener('change', cerrarSiEsEscritorio);
+      window.removeEventListener('orientationchange', cerrarAlRotar);
+    };
+  }, [menuOpen]);
+
+  /** Navegar con atras/adelante tambien debe dejar el menu cerrado. */
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [location.pathname]);
+
   const handleCondominioChange = (condominioId: number) => {
     if (!sessionUser) {
       return;

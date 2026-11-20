@@ -545,8 +545,12 @@ body {
 .app-shell {
   position: relative;
   min-height: calc(100vh - 1.6rem);
+  min-height: calc(100dvh - 1.6rem);
   border-radius: 28px;
+  /* `overflow: clip` recorta igual que `hidden` (esquinas y ::before) pero no
+     crea un contenedor de scroll, asi que `.mobile-bar` puede quedarse sticky. */
   overflow: hidden;
+  overflow: clip;
   background:
     linear-gradient(130deg, rgba(255, 251, 246, 0.98), rgba(244, 242, 236, 0.96)),
     repeating-linear-gradient(
@@ -597,6 +601,8 @@ body {
   justify-content: space-between;
   align-items: center;
   padding: 0.8rem 1rem;
+  padding-left: max(1rem, env(safe-area-inset-left, 0px));
+  padding-right: max(1rem, env(safe-area-inset-right, 0px));
   border-bottom: 1px solid #ece3d7;
   background: rgba(255, 252, 247, 0.9);
   backdrop-filter: blur(12px);
@@ -628,27 +634,67 @@ body {
 
 .sidebar {
   position: fixed;
-  top: 60px;
-  left: 0;
-  width: min(82vw, 320px);
-  height: calc(100vh - 60px);
+  /* Toda la altura: el dibujado arranca en el borde superior de la pantalla
+     para no dejar el hueco de la barra movil. */
+  inset: 0 auto 0 0;
+  width: min(86vw, 340px);
+  display: flex;
+  flex-direction: column;
   padding: 1rem;
+  padding-top: max(1rem, env(safe-area-inset-top, 0px));
+  padding-right: max(1rem, env(safe-area-inset-right, 0px));
+  padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+  padding-left: max(1rem, env(safe-area-inset-left, 0px));
   background: rgba(19, 30, 48, 0.96);
   color: #f5f0e5;
   border-right: 1px solid rgba(255, 232, 205, 0.22);
   transform: translateX(-100%);
-  transition: transform 260ms ease;
+  /* Al cerrar se retiene `visibility: visible` hasta que termina el desliz;
+     asi los botones ocultos salen del orden de tabulacion. */
+  visibility: hidden;
+  transition: transform 260ms ease, visibility 0s linear 260ms;
+  overflow: hidden;
   z-index: 35;
   box-shadow: 14px 0 36px rgba(4, 10, 21, 0.38);
 }
 
 .sidebar.open {
   transform: translateX(0);
+  visibility: visible;
+  transition: transform 260ms ease, visibility 0s linear 0s;
+}
+
+/* El contenedor lleva `tabIndex={-1}` solo como destino de respaldo del focus
+   trap; no necesita anillo, porque el foco util siempre cae en un boton. */
+.sidebar:focus {
+  outline: none;
+}
+
+.sidebar-close {
+  position: absolute;
+  top: max(0.75rem, env(safe-area-inset-top, 0px));
+  right: max(0.75rem, env(safe-area-inset-right, 0px));
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 236, 211, 0.28);
+  background: rgba(255, 255, 255, 0.08);
+  color: #f5f0e5;
+  transition: background-color 180ms ease, border-color 180ms ease, transform 180ms ease;
+  z-index: 2;
+}
+
+.sidebar-close:hover {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 236, 211, 0.45);
+  transform: translateY(-1px);
 }
 
 .menu-backdrop {
   position: fixed;
-  inset: 60px 0 0;
+  inset: 0;
   z-index: 34;
   border: 0;
   padding: 0;
@@ -666,7 +712,11 @@ body {
 }
 
 .brand-block {
+  /* La marca no se desplaza: solo la lista de navegacion hace scroll. */
+  flex: 0 0 auto;
   padding: 0.8rem;
+  /* Espacio para el boton de cerrar del drawer movil. */
+  padding-right: 3.2rem;
   border-radius: 16px;
   background: linear-gradient(135deg, rgba(255, 173, 94, 0.2), rgba(10, 138, 124, 0.2));
   border: 1px solid rgba(255, 236, 211, 0.22);
@@ -691,9 +741,67 @@ body {
   color: #f5e8d7;
 }
 
+/**
+ * En ventanas bajas (celular en horizontal o panel angosto en escritorio) la
+ * marca cede espacio: si no, el bloque de presentacion se queda con todo el
+ * alto y la lista de botones termina midiendo cero.
+ */
+@media (max-height: 480px) {
+  .brand-block {
+    padding-top: 0.55rem;
+    padding-bottom: 0.55rem;
+  }
+
+  .brand-block p:not(.brand-kicker) {
+    display: none;
+  }
+}
+
 nav {
   display: grid;
   gap: 0.5rem;
+}
+
+/* Solo la navegacion del menu lateral scrollea; las paginaciones conservan su
+   comportamiento actual. */
+.sidebar nav {
+  flex: 1 1 auto;
+  min-height: 0;
+  /* Sin `minmax(0, 1fr)` la columna toma el ancho maximo de los botones y
+     aparece una barra horizontal en pantallas angostas. */
+  grid-template-columns: minmax(0, 1fr);
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-right: 0.15rem;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 236, 211, 0.3) transparent;
+}
+
+.sidebar nav::-webkit-scrollbar {
+  width: 7px;
+}
+
+.sidebar nav::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar nav::-webkit-scrollbar-thumb {
+  background: rgba(255, 236, 211, 0.3);
+  border-radius: 999px;
+}
+
+.sidebar nav::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 236, 211, 0.45);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar,
+  .sidebar.open,
+  .menu-backdrop {
+    transition: none;
+  }
 }
 
 .nav-item {
@@ -1474,13 +1582,32 @@ th {
   }
 
   .sidebar {
-    position: static;
+    /* En escritorio el menu acompana el scroll de la pagina y su lista
+       conserva scroll propio si la ventana es baja. */
+    position: sticky;
+    top: 0;
+    left: auto;
+    align-self: start;
     transform: none;
+    visibility: visible;
+    transition: none;
+    overflow: hidden;
+    /* Queda por debajo de la linea de color superior del shell (z-index 2). */
+    z-index: 1;
     width: auto;
-    height: auto;
+    height: 100vh;
+    height: 100dvh;
     padding: 1.2rem;
     border-radius: 0;
     box-shadow: none;
+  }
+
+  .sidebar-close {
+    display: none;
+  }
+
+  .brand-block {
+    padding: 0.8rem;
   }
 
   .menu-backdrop {
